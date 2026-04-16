@@ -246,8 +246,8 @@ export const PARAMETRIC_MODELS: ModelConfig[] = [
     supportsVision: true,
   },
   {
-    id: 'anthropic/claude-opus-4.6',
-    name: 'Claude Opus 4.6',
+    id: 'anthropic/claude-opus-4.7',
+    name: 'Claude Opus 4.7',
     description: 'Most powerful Anthropic model for complex reasoning',
     provider: 'Anthropic',
     supportsTools: true,
