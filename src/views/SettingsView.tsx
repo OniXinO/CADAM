@@ -162,10 +162,10 @@ export default function SettingsView() {
         : 'bg-gradient-to-r from-adam-blue/20 to-fuchsia-500/20 text-adam-neutral-50';
 
   return (
-    <div className="flex h-full w-full flex-col overflow-y-auto bg-adam-background-1">
-      <div className="mx-auto w-full max-w-3xl px-6 py-12 sm:px-8 sm:py-16">
-        <header className="mb-10 flex flex-col gap-2">
-          <h1 className="text-3xl font-semibold tracking-tight text-adam-neutral-50">
+    <div className="min-h-full w-full bg-adam-background-1 px-6 py-6 sm:px-8 sm:py-8">
+      <div className="mx-auto w-full max-w-3xl">
+        <header className="mb-6 flex flex-col gap-1">
+          <h1 className="text-2xl font-semibold tracking-tight text-adam-neutral-50">
             Settings
           </h1>
           <p className="text-sm text-adam-neutral-200">
@@ -173,10 +173,10 @@ export default function SettingsView() {
           </p>
         </header>
 
-        <div className="flex flex-col gap-6">
+        <div className="flex flex-col gap-4">
           {/* Account */}
-          <section className="rounded-2xl border border-adam-neutral-800 bg-adam-background-2 p-6 sm:p-8">
-            <div className="mb-6 flex items-center gap-3">
+          <section className="rounded-2xl border border-adam-neutral-800 bg-adam-background-2 p-5">
+            <div className="mb-4 flex items-center gap-3">
               <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-adam-neutral-800">
                 <User className="h-4 w-4 text-adam-neutral-50" />
               </div>
@@ -191,7 +191,7 @@ export default function SettingsView() {
             </div>
 
             <div className="divide-y divide-adam-neutral-800">
-              <div className="flex items-center justify-between gap-4 py-5 first:pt-0">
+              <div className="flex items-center justify-between gap-4 py-3 first:pt-0">
                 <div className="flex min-w-0 flex-1 items-center gap-4">
                   <AvatarUpdateDialog />
                   <div className="min-w-0 flex-1">
@@ -257,7 +257,7 @@ export default function SettingsView() {
                 )}
               </div>
 
-              <div className="flex items-center justify-between gap-4 py-5">
+              <div className="flex items-center justify-between gap-4 py-3">
                 <div className="min-w-0">
                   <div className="mb-1 text-xs uppercase tracking-wide text-adam-neutral-300">
                     Email
@@ -268,7 +268,7 @@ export default function SettingsView() {
                 </div>
               </div>
 
-              <div className="flex items-center justify-between gap-4 py-5 last:pb-0">
+              <div className="flex items-center justify-between gap-4 py-3 last:pb-0">
                 <div>
                   <div className="text-sm font-medium text-adam-neutral-50">
                     Password
@@ -297,8 +297,8 @@ export default function SettingsView() {
           </section>
 
           {/* Notifications */}
-          <section className="rounded-2xl border border-adam-neutral-800 bg-adam-background-2 p-6 sm:p-8">
-            <div className="mb-6 flex items-center gap-3">
+          <section className="rounded-2xl border border-adam-neutral-800 bg-adam-background-2 p-5">
+            <div className="mb-4 flex items-center gap-3">
               <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-adam-neutral-800">
                 <Bell className="h-4 w-4 text-adam-neutral-50" />
               </div>
@@ -330,8 +330,8 @@ export default function SettingsView() {
           </section>
 
           {/* Billing */}
-          <section className="rounded-2xl border border-adam-neutral-800 bg-adam-background-2 p-6 sm:p-8">
-            <div className="mb-6 flex items-center gap-3">
+          <section className="rounded-2xl border border-adam-neutral-800 bg-adam-background-2 p-5">
+            <div className="mb-4 flex items-center gap-3">
               <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-adam-neutral-800">
                 <CreditCard className="h-4 w-4 text-adam-neutral-50" />
               </div>
@@ -345,9 +345,9 @@ export default function SettingsView() {
               </div>
             </div>
 
-            <div className="flex flex-col gap-6">
+            <div className="flex flex-col gap-4">
               {/* Plan card */}
-              <div className="rounded-xl border border-adam-neutral-800 bg-adam-background-1 p-5">
+              <div className="rounded-xl border border-adam-neutral-800 bg-adam-background-1 p-4">
                 <div className="mb-4 flex items-start justify-between gap-4">
                   <div className="flex items-center gap-2">
                     <span
@@ -510,8 +510,8 @@ export default function SettingsView() {
           </section>
 
           {/* Data & Privacy */}
-          <section className="rounded-2xl border border-adam-neutral-800 bg-adam-background-2 p-6 sm:p-8">
-            <div className="mb-6 flex items-center gap-3">
+          <section className="rounded-2xl border border-adam-neutral-800 bg-adam-background-2 p-5">
+            <div className="mb-4 flex items-center gap-3">
               <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-adam-neutral-800">
                 <ShieldAlert className="h-4 w-4 text-adam-neutral-50" />
               </div>
