@@ -23,14 +23,18 @@ export function PromptView() {
   const navigate = useNavigate();
   const { toast } = useToast();
   const { user, totalTokens, isLoading } = useAuth();
-  const { data: profile } = useProfile();
+  const { data: profile, isLoading: isProfileLoading } = useProfile();
   const { isSidebarOpen } = useOutletContext<{ isSidebarOpen: boolean }>();
   const queryClient = useQueryClient();
 
   const firstName = useMemo(() => {
+    // Wait until the profile query resolves for signed-in users so the
+    // greeting doesn't flash the email local-part before snapping to the
+    // real first name.
+    if (user && isProfileLoading) return '';
     const source = profile?.full_name || user?.email?.split('@')[0] || '';
-    return source.trim().split(/\s+/)[0] ?? '';
-  }, [profile?.full_name, user?.email]);
+    return source.trim().split(/\s+/)[0] || '';
+  }, [profile?.full_name, user, isProfileLoading]);
 
   const [type, setType] = useState<'parametric' | 'creative'>('parametric');
 
