@@ -367,23 +367,22 @@ handle_radius = 30;
 handle_thickness = 10;
 wall_thickness = 3;
 
+color("Ivory")
 difference() {
-    union() {
-        // Main cup body
-        cylinder(h=cup_height, r=cup_radius);
-
-        // Handle
-        translate([cup_radius-5, 0, cup_height/2])
-        rotate([90, 0, 0])
-        difference() {
-            torus(handle_radius, handle_thickness/2);
-            torus(handle_radius, handle_thickness/2 - wall_thickness);
-        }
-    }
+    // Main cup body
+    cylinder(h=cup_height, r=cup_radius);
 
     // Hollow out the cup
     translate([0, 0, wall_thickness])
     cylinder(h=cup_height, r=cup_radius-wall_thickness);
+}
+
+color("SteelBlue")
+translate([cup_radius-5, 0, cup_height/2])
+rotate([90, 0, 0])
+difference() {
+    torus(handle_radius, handle_thickness/2);
+    torus(handle_radius, handle_thickness/2 - wall_thickness);
 }
 
 module torus(r1, r2) {
