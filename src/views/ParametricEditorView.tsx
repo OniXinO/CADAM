@@ -27,7 +27,9 @@ export function ParametricEditorView() {
   const { currentMessage, setCurrentMessage } = useCurrentMessage();
   const { totalTokens } = useAuth();
   const [currentOutput, setCurrentOutput] = useState<Blob | undefined>();
-  const [color, setColor] = useState('#00A6FF');
+  // Brand fallback color used when OFF parsing fails and we drop back to
+  // the single-color STL mesh.
+  const color = '#00A6FF';
   const { cancelRequest } = useRequestCancellation();
   const isTabletOrMobile = useMediaQuery('(max-width: 1024px)');
 
@@ -197,7 +199,6 @@ export function ParametricEditorView() {
       currentOutput={currentOutput}
       setCurrentOutput={setCurrentOutput}
       color={color}
-      setColor={setColor}
       changeParameters={changeParameters}
       stopGenerating={stopGenerating}
       fixError={currentMessage?.id === lastMessage?.id ? fixError : undefined}

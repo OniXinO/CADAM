@@ -45,7 +45,6 @@ interface ParametricViewProps {
   setCurrentOutput: (output: Blob | undefined) => void;
   color: string;
   limitReached?: boolean;
-  setColor: (color: string) => void;
   changeParameters: (message: Message | null, parameters: Parameter[]) => void;
   stopGenerating?: () => void;
   fixError?: (error: OpenSCADError) => void;
@@ -62,7 +61,6 @@ export default function ParametricView({
   currentOutput,
   setCurrentOutput,
   color,
-  setColor,
   limitReached = false,
   changeParameters,
   stopGenerating,
@@ -332,8 +330,6 @@ export default function ParametricView({
                     }
                     onSubmit={changeParameters}
                     currentOutput={currentOutput}
-                    color={color}
-                    setColor={setColor}
                   />
                 </div>
               </Panel>

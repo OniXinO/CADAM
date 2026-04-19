@@ -16,7 +16,6 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { ParameterInput } from '@/components/parameter/ParameterInput';
-import { ColorPicker } from '@/components/parameter/ColorPicker';
 import { validateParameterValue } from '@/utils/parameterUtils';
 import { useCurrentMessage } from '@/contexts/CurrentMessageContext';
 import { downloadSTLFile, downloadOpenSCADFile } from '@/utils/downloadUtils';
@@ -25,16 +24,12 @@ interface ParameterSectionProps {
   parameters: Parameter[];
   onSubmit: (message: Message | null, parameters: Parameter[]) => void;
   currentOutput?: Blob;
-  color: string;
-  setColor: (color: string) => void;
 }
 
 export function ParameterSection({
   parameters,
   onSubmit,
   currentOutput,
-  color,
-  setColor,
 }: ParameterSectionProps) {
   const { currentMessage } = useCurrentMessage();
   const [selectedFormat, setSelectedFormat] = useState<'stl' | 'scad'>('stl');
@@ -153,9 +148,6 @@ export function ParameterSection({
           </div>
         </ScrollArea>
         <div className="flex flex-col gap-4 border-t border-adam-neutral-700 px-6 py-6">
-          <div>
-            <ColorPicker color={color} onChange={setColor} />
-          </div>
           <div className="flex">
             <Button
               onClick={handleDownload}
