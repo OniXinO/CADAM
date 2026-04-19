@@ -162,8 +162,8 @@ export default function SettingsView() {
         : 'bg-gradient-to-r from-adam-blue/20 to-fuchsia-500/20 text-adam-neutral-50';
 
   return (
-    <div className="min-h-full w-full bg-adam-background-1 px-6 py-6 sm:px-8 sm:py-8">
-      <div className="mx-auto w-full max-w-3xl">
+    <div className="flex min-h-full w-full items-center justify-center bg-adam-background-1 px-6 py-6 sm:px-8 sm:py-8">
+      <div className="w-full max-w-3xl">
         <header className="mb-6 flex flex-col gap-1">
           <h1 className="text-2xl font-semibold tracking-tight text-adam-neutral-50">
             Settings
