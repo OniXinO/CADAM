@@ -367,7 +367,7 @@ handle_radius = 30;
 handle_thickness = 10;
 wall_thickness = 3;
 
-color("Ivory")
+color("#00A6FF")
 difference() {
     // Main cup body
     cylinder(h=cup_height, r=cup_radius);
@@ -377,7 +377,7 @@ difference() {
     cylinder(h=cup_height, r=cup_radius-wall_thickness);
 }
 
-color("SteelBlue")
+color("Coral")
 translate([cup_radius-5, 0, cup_height/2])
 rotate([90, 0, 0])
 difference() {
