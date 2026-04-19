@@ -16,6 +16,12 @@ import {
   useTokenPackPurchase,
 } from '@/services/subscriptionService';
 import { useTokenPacks } from '@/hooks/useTokenPacks';
+import {
+  Cadence,
+  PRICING_PLANS,
+  PlanName,
+  creditsFeatureLine,
+} from '@/config/pricing';
 
 interface PricingTier {
   name: string;
@@ -28,71 +34,37 @@ interface PricingTier {
   lookupKey: string;
 }
 
-const freePlan: PricingTier = {
-  name: 'Free',
-  description: 'Get started with Adam',
-  price: '0',
-  features: ['50 tokens per day', 'All AI features', 'Community support'],
-  buttonText: 'Current Plan',
-  lookupKey: 'free',
-};
+// Build the tier list for a given cadence from the shared pricing config.
+// Display order (Free → Pro → Standard) is preserved from the original
+// layout so the "Popular" Pro card sits in the middle of the row.
+const DISPLAY_ORDER: PlanName[] = ['Free', 'Pro', 'Standard'];
 
-const standardFeatures = [
-  '1,000 tokens per month',
-  'All AI features',
-  'Buy additional token packs',
-];
+function buildTiers(cadence: Cadence): PricingTier[] {
+  return DISPLAY_ORDER.map((planName): PricingTier => {
+    const plan = PRICING_PLANS[planName];
+    const isFree = plan.name === 'Free';
+    const features = [creditsFeatureLine(plan), ...plan.extraFeatures];
 
-const proFeatures = [
-  '5,000 tokens per month',
-  'Phone number of founders',
-  'Exclusive access to new features',
-  'Good vibes',
-];
+    const base: PricingTier = {
+      name: plan.name,
+      description: plan.description,
+      price: cadence === 'yearly' ? plan.yearlyPrice : plan.monthlyPrice,
+      features,
+      buttonText: isFree ? 'Current Plan' : `Get ${plan.name}`,
+      popular: plan.popular,
+      lookupKey:
+        cadence === 'yearly' ? plan.yearlyLookupKey : plan.monthlyLookupKey,
+    };
+    // Yearly view shows the crossed-out monthly price above the discount price.
+    if (cadence === 'yearly' && !isFree) {
+      return { ...base, oldPrice: plan.monthlyPrice };
+    }
+    return base;
+  });
+}
 
-const yearlyPricingTiers: PricingTier[] = [
-  freePlan,
-  {
-    name: 'Pro',
-    description: 'For power users',
-    oldPrice: '29.99',
-    price: '17.99',
-    features: proFeatures,
-    buttonText: 'Get Pro',
-    popular: true,
-    lookupKey: 'pro_yearly',
-  },
-  {
-    name: 'Standard',
-    description: 'For regular use',
-    oldPrice: '9.99',
-    price: '5.99',
-    features: standardFeatures,
-    buttonText: 'Get Standard',
-    lookupKey: 'standard_yearly',
-  },
-];
-
-const monthlyPricingTiers: PricingTier[] = [
-  freePlan,
-  {
-    name: 'Pro',
-    description: 'For power users',
-    price: '29.99',
-    features: proFeatures,
-    buttonText: 'Get Pro',
-    popular: true,
-    lookupKey: 'pro_monthly',
-  },
-  {
-    name: 'Standard',
-    description: 'For regular use',
-    price: '9.99',
-    features: standardFeatures,
-    buttonText: 'Get Standard',
-    lookupKey: 'standard_monthly',
-  },
-];
+const yearlyPricingTiers: PricingTier[] = buildTiers('yearly');
+const monthlyPricingTiers: PricingTier[] = buildTiers('monthly');
 
 export function Subscriptions() {
   const navigate = useNavigate();

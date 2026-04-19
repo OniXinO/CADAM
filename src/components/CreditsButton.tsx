@@ -34,22 +34,36 @@ export function CreditsButton() {
   } = useAuth();
 
   const [open, setOpen] = useState(false);
+  // Card opened by click stays pinned — mouse-leave alone won't dismiss it.
+  // Only outside-click (or an explicit close action) clears this.
+  const [pinnedByClick, setPinnedByClick] = useState(false);
   const [upgradeOpen, setUpgradeOpen] = useState(false);
   const openTimer = useRef<number | null>(null);
   const closeTimer = useRef<number | null>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
 
-  // Close when clicking outside while open (pinned-by-click behavior)
+  // Close when clicking outside while open (dismisses both hover + click open states)
   useEffect(() => {
     if (!open) return;
     const onDocClick = (e: MouseEvent) => {
-      if (!wrapperRef.current?.contains(e.target as Node)) {
-        setOpen(false);
+      if (e.target instanceof Node && wrapperRef.current?.contains(e.target)) {
+        return;
       }
+      setOpen(false);
+      setPinnedByClick(false);
     };
     document.addEventListener('mousedown', onDocClick);
     return () => document.removeEventListener('mousedown', onDocClick);
   }, [open]);
+
+  // Clear any in-flight hover timers when the component unmounts (e.g. the
+  // user navigates away from `/` while a 300ms open-delay is still pending).
+  useEffect(() => {
+    return () => {
+      if (openTimer.current) window.clearTimeout(openTimer.current);
+      if (closeTimer.current) window.clearTimeout(closeTimer.current);
+    };
+  }, []);
 
   if (!user) return null;
 
@@ -73,8 +87,24 @@ export function CreditsButton() {
       window.clearTimeout(openTimer.current);
       openTimer.current = null;
     }
+    // If the user explicitly clicked to pin the card, don't auto-close on
+    // mouse-leave — they'll dismiss it themselves via outside-click.
+    if (pinnedByClick) return;
     // small delay so moving between pill and card doesn't flicker the card closed
     closeTimer.current = window.setTimeout(() => setOpen(false), 120);
+  };
+
+  const handlePillClick = () => {
+    setOpen(true);
+    setPinnedByClick(true);
+    if (openTimer.current) {
+      window.clearTimeout(openTimer.current);
+      openTimer.current = null;
+    }
+    if (closeTimer.current) {
+      window.clearTimeout(closeTimer.current);
+      closeTimer.current = null;
+    }
   };
 
   return (
@@ -88,7 +118,7 @@ export function CreditsButton() {
       >
         <button
           type="button"
-          onClick={() => setOpen(true)}
+          onClick={handlePillClick}
           aria-haspopup="dialog"
           aria-expanded={open}
           aria-label="View credits"
@@ -124,6 +154,7 @@ export function CreditsButton() {
                 size="sm"
                 onClick={() => {
                   setOpen(false);
+                  setPinnedByClick(false);
                   setUpgradeOpen(true);
                 }}
                 className="h-8 rounded-full bg-adam-neutral-10 px-4 text-xs font-medium text-adam-bg-dark [@media(hover:hover)]:hover:bg-white [@media(hover:hover)]:hover:text-adam-bg-dark"
