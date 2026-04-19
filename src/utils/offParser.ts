@@ -81,6 +81,10 @@ export function parseColoredOff(text: string): ParsedOff {
       color = [trailing[0] / 255, trailing[1] / 255, trailing[2] / 255, 1];
     }
 
+    // Guard against malformed OFF files: skip faces that reference a
+    // vertex index outside the declared vertex array.
+    if (verts.some((v) => v < 0 || v >= numVertices)) continue;
+
     if (n === 3) {
       faces.push({ vertices: [verts[0], verts[1], verts[2]], color });
     } else if (n > 3) {
@@ -95,9 +99,4 @@ export function parseColoredOff(text: string): ParsedOff {
   }
 
   return { vertices, faces };
-}
-
-/** Key an RGBA color into a stable string for grouping. */
-export function colorKey(color: [number, number, number, number]): string {
-  return color.join(',');
 }

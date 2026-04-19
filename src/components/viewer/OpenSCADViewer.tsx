@@ -164,9 +164,9 @@ export function OpenSCADPreview({
           const mat = new MeshStandardMaterial({
             color: useFallback
               ? color
-              : ((firstFace.color![0] * 255) << 16) |
-                ((firstFace.color![1] * 255) << 8) |
-                (firstFace.color![2] * 255),
+              : (Math.round(firstFace.color![0] * 255) << 16) |
+                (Math.round(firstFace.color![1] * 255) << 8) |
+                Math.round(firstFace.color![2] * 255),
             metalness: 0.6,
             roughness: 0.3,
             envMapIntensity: 0.3,
