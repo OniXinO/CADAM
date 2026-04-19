@@ -10,8 +10,10 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import { useManageSubscription } from '@/services/subscriptionService';
-import { useTokenPackPurchase } from '@/services/subscriptionService';
+import {
+  useManageSubscription,
+  useTokenPackPurchase,
+} from '@/services/subscriptionService';
 import {
   Tooltip,
   TooltipContent,
@@ -321,7 +323,7 @@ export default function SettingsView() {
                 </div>
               </div>
               <Switch
-                checked={profile?.notifications_enabled}
+                checked={profile?.notifications_enabled ?? false}
                 onCheckedChange={handleUpdateNotifications}
               />
             </div>
