@@ -2,8 +2,15 @@ import { useOpenSCAD } from '@/hooks/useOpenSCAD';
 import { useEffect, useState, useContext, useRef } from 'react';
 import { ThreeScene } from '@/components/viewer/ThreeScene';
 import { STLLoader } from 'three/addons/loaders/STLLoader.js';
-import { BufferGeometry } from 'three';
+import {
+  BufferGeometry,
+  Float32BufferAttribute,
+  Group,
+  Mesh,
+  MeshStandardMaterial,
+} from 'three';
 import { Loader2, CircleAlert, Wrench } from 'lucide-react';
+import { parseColoredOff } from '@/utils/offParser';
 import { Button } from '@/components/ui/button';
 import OpenSCADError from '@/lib/OpenSCADError';
 import { cn } from '@/lib/utils';
@@ -37,9 +44,17 @@ export function OpenSCADPreview({
   isMobile,
   backgroundColor,
 }: OpenSCADPreviewProps) {
-  const { compileScad, writeFile, isCompiling, output, isError, error } =
-    useOpenSCAD();
+  const {
+    compileScad,
+    writeFile,
+    isCompiling,
+    output,
+    offOutput,
+    isError,
+    error,
+  } = useOpenSCAD();
   const [geometry, setGeometry] = useState<BufferGeometry | null>(null);
+  const [coloredGroup, setColoredGroup] = useState<Group | null>(null);
   // Use context directly to avoid throwing if provider is not mounted (e.g. VisualCard)
   const meshFilesCtx = useContext(MeshFilesContext);
   // Track which files we've written to avoid re-writing unchanged blobs
@@ -92,6 +107,101 @@ export function OpenSCADPreview({
     }
   }, [output, onOutputChange]);
 
+  useEffect(() => {
+    let cancelled = false;
+    if (!(offOutput instanceof Blob)) {
+      setColoredGroup(null);
+      return;
+    }
+
+    offOutput
+      .text()
+      .then((text) => {
+        if (cancelled) return;
+
+        const parsed = parseColoredOff(text);
+
+        // OpenSCAD emits RGB for every face, using its default model color
+        // (#F9D72C ≈ 249,215,44) when the SCAD didn't call color(). Treat
+        // the default as "no user color" so the fallback `color` prop wins
+        // — matching the single-color STL preview when SCAD has no colors.
+        for (const face of parsed.faces) {
+          if (
+            face.color &&
+            Math.round(face.color[0] * 255) === 249 &&
+            Math.round(face.color[1] * 255) === 215 &&
+            Math.round(face.color[2] * 255) === 44
+          ) {
+            face.color = null;
+          }
+        }
+
+        // Group faces by color (null colors share one bucket and get the
+        // user's fallback `color` prop applied to their material).
+        const buckets = new Map<string, typeof parsed.faces>();
+        for (const face of parsed.faces) {
+          const key = face.color ? face.color.join(',') : '__default';
+          const bucket = buckets.get(key);
+          if (bucket) bucket.push(face);
+          else buckets.set(key, [face]);
+        }
+
+        const group = new Group();
+        for (const [key, faces] of buckets) {
+          const positions = new Float32Array(faces.length * 9);
+          for (let f = 0; f < faces.length; f++) {
+            const [a, b, c] = faces[f].vertices;
+            const va = parsed.vertices[a];
+            const vb = parsed.vertices[b];
+            const vc = parsed.vertices[c];
+            const base = f * 9;
+            positions[base + 0] = va[0];
+            positions[base + 1] = va[1];
+            positions[base + 2] = va[2];
+            positions[base + 3] = vb[0];
+            positions[base + 4] = vb[1];
+            positions[base + 5] = vb[2];
+            positions[base + 6] = vc[0];
+            positions[base + 7] = vc[1];
+            positions[base + 8] = vc[2];
+          }
+          const geom = new BufferGeometry();
+          geom.setAttribute(
+            'position',
+            new Float32BufferAttribute(positions, 3),
+          );
+          geom.computeVertexNormals();
+
+          const firstFace = faces[0];
+          const useFallback = !firstFace.color || key === '__default';
+          const mat = new MeshStandardMaterial({
+            color: useFallback
+              ? color
+              : ((firstFace.color![0] * 255) << 16) |
+                ((firstFace.color![1] * 255) << 8) |
+                (firstFace.color![2] * 255),
+            metalness: 0.6,
+            roughness: 0.3,
+            envMapIntensity: 0.3,
+            transparent: firstFace.color ? firstFace.color[3] < 1 : false,
+            opacity: firstFace.color ? firstFace.color[3] : 1,
+          });
+
+          group.add(new Mesh(geom, mat));
+        }
+
+        setColoredGroup(group);
+      })
+      .catch((err) => {
+        console.error('[OpenSCAD] Failed to parse OFF preview:', err);
+        if (!cancelled) setColoredGroup(null);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [offOutput, color]);
+
   return (
     <div className="h-full w-full bg-adam-neutral-700/50 shadow-lg backdrop-blur-sm transition-all duration-300 ease-in-out">
       <div className="h-full w-full">
@@ -99,6 +209,7 @@ export function OpenSCADPreview({
           <div className="h-full w-full">
             <ThreeScene
               geometry={geometry}
+              coloredGroup={coloredGroup}
               color={color}
               isMobile={isMobile}
               backgroundColor={backgroundColor}

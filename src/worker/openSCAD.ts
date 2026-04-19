@@ -161,10 +161,14 @@ class OpenSCADWrapper {
       })
       .filter((x) => !!x);
 
+    // In addition to the primary STL output (used for downloads), emit an
+    // OFF file — OpenSCAD's manifold backend preserves per-face colors in
+    // OFF (RGBA appended to each face line), which we parse client-side to
+    // render OpenSCAD color() calls. --backend=manifold is required to get
+    // the color-aware mesh; --enable=manifold was the old (now-default)
+    // experimental flag and does not alone enable color propagation.
     const exportParams = [
-      '--export-format=binstl',
-      '--enable=manifold',
-      '--enable=fast-csg',
+      '--backend=manifold',
       '--enable=lazy-union',
       '--enable=roof',
     ];
@@ -173,6 +177,7 @@ class OpenSCADWrapper {
       data.code,
       data.fileType,
       parameters.concat(exportParams),
+      [{ path: '/out.off', key: 'off' }],
     );
 
     // Check `render.log.stdErr` for "Current top level object is not a 3d object."
@@ -277,6 +282,7 @@ class OpenSCADWrapper {
     code: string,
     fileType: string,
     parameters: string[],
+    extraOutputs: { path: string; key: string }[] = [],
   ): Promise<OpenSCADWorkerResponseData> {
     const start = Date.now();
 
@@ -342,9 +348,17 @@ class OpenSCADWrapper {
       }
     }
 
-    const args = [inputFile, '-o', outputFile, ...parameters];
+    const extraOutputArgs = extraOutputs.flatMap(({ path }) => ['-o', path]);
+    const args = [
+      inputFile,
+      '-o',
+      outputFile,
+      ...extraOutputArgs,
+      ...parameters,
+    ];
     let exitCode;
     let output;
+    const extras: Record<string, Uint8Array> = {};
 
     try {
       exitCode = instance.callMain(args);
@@ -366,6 +380,14 @@ class OpenSCADWrapper {
           throw new Error('Adam cannot read created file');
         }
       }
+
+      for (const { path, key } of extraOutputs) {
+        try {
+          extras[key] = instance.FS.readFile(path, { encoding: 'binary' });
+        } catch {
+          // Missing extra output is non-fatal.
+        }
+      }
     } else {
       throw new OpenSCADError(
         'Adam did not exit correctly',
@@ -380,6 +402,7 @@ class OpenSCADWrapper {
       duration: Date.now() - start,
       log: this.log,
       fileType,
+      extraOutputs: Object.keys(extras).length > 0 ? extras : undefined,
     };
   }
 
