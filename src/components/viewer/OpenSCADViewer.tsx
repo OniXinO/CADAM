@@ -121,23 +121,10 @@ export function OpenSCADPreview({
 
         const parsed = parseColoredOff(text);
 
-        // OpenSCAD emits RGB for every face, using its default model color
-        // (#F9D72C ≈ 249,215,44) when the SCAD didn't call color(). Treat
-        // the default as "no user color" so the fallback `color` prop wins
-        // — matching the single-color STL preview when SCAD has no colors.
-        for (const face of parsed.faces) {
-          if (
-            face.color &&
-            Math.round(face.color[0] * 255) === 249 &&
-            Math.round(face.color[1] * 255) === 215 &&
-            Math.round(face.color[2] * 255) === 44
-          ) {
-            face.color = null;
-          }
-        }
-
-        // Group faces by color (null colors share one bucket and get the
-        // user's fallback `color` prop applied to their material).
+        // Honor SCAD colors verbatim — OpenSCAD's default model color counts
+        // as an expressive choice (it's the color the render shows when the
+        // SCAD author didn't override it). The picker only matters for the
+        // STL fallback when OFF parsing fails entirely.
         const buckets = new Map<string, typeof parsed.faces>();
         for (const face of parsed.faces) {
           const key = face.color ? face.color.join(',') : '__default';
