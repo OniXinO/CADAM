@@ -24,10 +24,13 @@ DECLARE
     v_is_free boolean;
     v_caller uuid;
 BEGIN
-    -- Allow service role (no auth context) or the user acting on themselves.
-    -- Prevents an authenticated client from poking other users' balances via rpc.
+    -- Only allow service role (server-side edge functions) or the user acting
+    -- on themselves. auth.role() = 'anon' with uid = NULL would otherwise slip
+    -- past a uid-only check. Silent return, not an exception, so that a
+    -- legitimate caller's outer flow (user_extradata, deduct_tokens) continues
+    -- on its own fallback path rather than erroring to the client.
     v_caller := auth.uid();
-    IF v_caller IS NOT NULL AND v_caller <> p_user_id THEN
+    IF auth.role() <> 'service_role' AND v_caller IS DISTINCT FROM p_user_id THEN
         RETURN;
     END IF;
 
@@ -87,6 +90,11 @@ BEGIN
     WHERE user_id = p_user_id AND source = 'subscription'
     FOR UPDATE;
 
+    -- Expired subscription tokens count as 0. For free-tier users this is
+    -- unreachable after ensure_free_tier_fresh (expires_at is always future).
+    -- It is load-bearing for paid users whose billing-cycle sub has lapsed,
+    -- and for the edge case where ensure_free_tier_fresh silently bailed
+    -- (auth-mismatch). Don't remove without preserving both cases.
     IF v_sub_expires IS NOT NULL AND v_sub_expires < now() THEN
         v_sub_balance := 0;
     END IF;
@@ -158,7 +166,11 @@ BEGIN
         SELECT 1 FROM public.subscriptions s
         WHERE s.user_id = tb.user_id
         AND s.status IN ('active', 'trialing')
-    );
+    )
+    -- Idempotency guard: don't re-credit users whose period is still live.
+    -- With expires_at pinned to the day boundary, the scheduled midnight run
+    -- satisfies `<=` exactly; manual or retried mid-day runs are safely no-ops.
+    AND (tb.expires_at IS NULL OR tb.expires_at <= now());
 END;
 $$;
 
@@ -197,6 +209,9 @@ BEGIN
     v_sub_balance := COALESCE(v_sub_balance, 0);
     v_pur_balance := COALESCE(v_pur_balance, 0);
 
+    -- See matching comment in deduct_tokens: this branch is load-bearing for
+    -- paid users whose billing-cycle sub has lapsed and as a fallback if
+    -- ensure_free_tier_fresh silently bailed. Do not remove.
     IF v_sub_expires IS NOT NULL AND v_sub_expires < now() THEN
         v_sub_balance := 0;
     END IF;
