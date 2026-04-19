@@ -159,7 +159,7 @@ export default function SettingsView() {
       ? 'bg-adam-neutral-700 text-adam-neutral-50'
       : subscription === 'standard'
         ? 'bg-adam-blue/15 text-adam-blue'
-        : 'bg-gradient-to-r from-adam-blue/20 to-fuchsia-500/20 text-adam-neutral-10';
+        : 'bg-gradient-to-r from-adam-blue/20 to-fuchsia-500/20 text-adam-neutral-50';
 
   return (
     <div className="flex h-full w-full flex-col overflow-y-auto bg-adam-background-1">
