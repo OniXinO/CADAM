@@ -1,5 +1,5 @@
 import { useNavigate, Link, useOutletContext } from 'react-router-dom';
-import { LogIn } from 'lucide-react';
+import { ArrowUpRight, LogIn } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
@@ -272,6 +272,29 @@ export function PromptView() {
                   </div>
                 )}
               </div>
+              {user && (
+                <div className="flex justify-center">
+                  <a
+                    href="https://cad.onshape.com/appstore/apps/Design%20&%20Documentation/690a8dc864e816c112aa66a0"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={() =>
+                      posthog.capture('onshape_banner_click', {
+                        location: 'prompt_view',
+                      })
+                    }
+                    className="group inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-1.5 text-sm text-adam-text-secondary transition-colors hover:border-adam-blue/40 hover:bg-adam-blue/10 hover:text-adam-text-primary"
+                  >
+                    <span>
+                      Try our{' '}
+                      <span className="font-medium text-adam-blue">
+                        Onshape extension
+                      </span>
+                    </span>
+                    <ArrowUpRight className="h-3.5 w-3.5 transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5" />
+                  </a>
+                </div>
+              )}
               {!user && (
                 <p className="text-center text-sm text-gray-500">
                   <Link
