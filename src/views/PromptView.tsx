@@ -17,13 +17,20 @@ import { SelectedItemsContext } from '@/contexts/SelectedItemsContext';
 import posthog from 'posthog-js';
 import * as Sentry from '@sentry/react';
 import { useSendContentMutation } from '@/services/messageService';
+import { useProfile } from '@/services/profileService';
 
 export function PromptView() {
   const navigate = useNavigate();
   const { toast } = useToast();
   const { user, totalTokens, isLoading } = useAuth();
+  const { data: profile } = useProfile();
   const { isSidebarOpen } = useOutletContext<{ isSidebarOpen: boolean }>();
   const queryClient = useQueryClient();
+
+  const firstName = useMemo(() => {
+    const source = profile?.full_name || user?.email?.split('@')[0] || '';
+    return source.trim().split(/\s+/)[0] ?? '';
+  }, [profile?.full_name, user?.email]);
 
   const [type, setType] = useState<'parametric' | 'creative'>('parametric');
 
@@ -213,7 +220,8 @@ export function PromptView() {
                 isLoaded ? 'opacity-100' : 'opacity-0',
               )}
             >
-              {getTimeBasedGreeting}!
+              {getTimeBasedGreeting}
+              {firstName ? `, ${firstName}` : ''}!
             </h1>
           </div>
           <div className="flex w-full flex-col items-center">
