@@ -201,7 +201,7 @@ export function AssistantMessage({
             <>
               {message.content.text ? (
                 <Streamdown
-                  className="px-1 [&_a]:text-adam-blue [&_a]:underline hover:[&_a]:opacity-80 [&_code]:rounded [&_code]:bg-adam-neutral-950 [&_code]:px-1 [&_code]:py-0.5 [&_ol]:list-decimal [&_ol]:pl-5 [&_p]:leading-relaxed [&_pre]:bg-adam-neutral-950 [&_ul]:list-disc [&_ul]:pl-5"
+                  className="px-1 [&_:not(pre)>code]:rounded [&_:not(pre)>code]:bg-adam-neutral-950 [&_:not(pre)>code]:px-1 [&_:not(pre)>code]:py-0.5 [&_a]:text-adam-blue [&_a]:underline hover:[&_a]:opacity-80 [&_h1]:mt-2 [&_h1]:text-xl [&_h1]:font-semibold [&_h2]:mt-2 [&_h2]:text-lg [&_h2]:font-semibold [&_h3]:mt-1 [&_h3]:font-semibold [&_ol]:list-decimal [&_ol]:pl-5 [&_p]:leading-relaxed [&_pre]:overflow-x-auto [&_pre]:rounded [&_pre]:bg-adam-neutral-950 [&_pre]:p-3 [&_pre_code]:bg-transparent [&_pre_code]:p-0 [&_ul]:list-disc [&_ul]:pl-5"
                   parseIncompleteMarkdown
                 >
                   {linkParametricMode(message.content.text)}
