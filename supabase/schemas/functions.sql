@@ -42,7 +42,7 @@ BEGIN
     -- legitimate caller's outer flow (user_extradata, deduct_tokens) continues
     -- on its own fallback path rather than erroring to the client.
     v_caller := auth.uid();
-    IF auth.role() <> 'service_role' AND v_caller IS DISTINCT FROM p_user_id THEN
+    IF auth.role() IS DISTINCT FROM 'service_role' AND v_caller IS DISTINCT FROM p_user_id THEN
         RETURN;
     END IF;
 
