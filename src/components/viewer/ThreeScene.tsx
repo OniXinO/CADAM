@@ -26,7 +26,7 @@ export function ThreeScene({
   isMobile = false,
   backgroundColor = '#3B3B3B',
 }: ThreeSceneProps) {
-  const [isOrthographic, setIsOrthographic] = useState(false);
+  const [isOrthographic, setIsOrthographic] = useState(true);
 
   // Store the initial isMobile value to prevent position changes during resize
   const [initialIsMobile] = useState(isMobile);
