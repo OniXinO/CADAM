@@ -278,11 +278,16 @@ export function PromptView() {
                     href="https://cad.onshape.com/appstore/apps/Design%20&%20Documentation/690a8dc864e816c112aa66a0"
                     target="_blank"
                     rel="noopener noreferrer"
-                    onClick={() =>
-                      posthog.capture('onshape_banner_click', {
-                        location: 'prompt_view',
-                      })
-                    }
+                    onClick={() => {
+                      try {
+                        posthog.capture('onshape_banner_click', {
+                          location: 'prompt_view',
+                        });
+                      } catch {
+                        // Analytics failures (e.g. blocked by ad-blocker)
+                        // must never block the link's navigation.
+                      }
+                    }}
                     className="group inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-1.5 text-sm text-adam-text-secondary transition-colors hover:border-adam-blue/40 hover:bg-adam-blue/10 hover:text-adam-text-primary"
                   >
                     <span>
