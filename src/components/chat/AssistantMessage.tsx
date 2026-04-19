@@ -12,6 +12,7 @@ import {
   ImageIcon,
   Sparkles,
 } from 'lucide-react';
+import { Streamdown } from 'streamdown';
 import { Button } from '@/components/ui/button';
 import { RefreshCw } from 'lucide-react';
 import { Avatar, AvatarImage } from '@/components/ui/avatar';
@@ -45,27 +46,11 @@ import { useMeshData } from '@/hooks/useMeshData';
 import { MeshImagePreview } from '@/components/viewer/MeshImagePreview';
 import { TreeNode } from '@shared/Tree';
 
-const renderTextWithParametricLink = (text: string) => {
-  const parts = text.split(/(parametric mode)/gi);
-
-  return parts.map((part, index) => {
-    if (part.toLowerCase() === 'parametric mode') {
-      return (
-        <a
-          key={index}
-          href="https://adam.new/cadam"
-          target="_blank"
-          rel="noopener noreferrer"
-          style={{ color: '#00A6FF' }}
-          className="underline hover:opacity-80"
-        >
-          {part}
-        </a>
-      );
-    }
-    return part;
-  });
-};
+const linkParametricMode = (text: string) =>
+  text.replace(
+    /parametric mode/gi,
+    (match) => `[${match}](https://adam.new/cadam)`,
+  );
 
 interface AssistantMessageProps {
   message: TreeNode<Message>;
@@ -215,9 +200,12 @@ export function AssistantMessage({
           ) : (
             <>
               {message.content.text ? (
-                <span className="px-1">
-                  {renderTextWithParametricLink(message.content.text)}
-                </span>
+                <Streamdown
+                  className="px-1 [&_a]:text-adam-blue [&_a]:underline hover:[&_a]:opacity-80 [&_code]:rounded [&_code]:bg-adam-neutral-950 [&_code]:px-1 [&_code]:py-0.5 [&_ol]:list-decimal [&_ol]:pl-5 [&_p]:leading-relaxed [&_pre]:bg-adam-neutral-950 [&_ul]:list-disc [&_ul]:pl-5"
+                  parseIncompleteMarkdown
+                >
+                  {linkParametricMode(message.content.text)}
+                </Streamdown>
               ) : null}
               {message.content.toolCalls &&
                 message.content.toolCalls.length > 0 && (
