@@ -44,7 +44,7 @@ const Loader = ({ message }: Props) => {
       rotateInterval = setInterval(() => {
         swapMessage(pickSpinnerVerb());
       }, VERB_ROTATE_MS);
-    }, INITIAL_MESSAGE_MS + VERB_ROTATE_MS);
+    }, INITIAL_MESSAGE_MS);
 
     // CHANGE TAB TITLE
     document.title = 'Loading model.';
