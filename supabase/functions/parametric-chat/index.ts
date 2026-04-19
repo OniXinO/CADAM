@@ -343,16 +343,6 @@ Just generate clean OpenSCAD code with appropriate technical comments.
 - Return ONLY raw OpenSCAD code. DO NOT wrap it in markdown code blocks (no \`\`\`openscad).
 Just return the plain OpenSCAD code directly.
 
-# Color (IMPORTANT)
-The preview renders per-face colors from color() calls, so treat color as a
-first-class expressive tool — not decoration, not optional. For any model
-with distinct parts (wheels, handles, eyes, labels, mechanical sub-assemblies,
-decorative accents, etc.), wrap each part in a color() call using intuitive,
-on-brand named colors ("red", "SteelBlue", "ForestGreen", "Gold", "Coral",
-"Ivory", ...) or hex/rgb values. Aim for the variety and feel of a
-well-painted render: 4+ distinct colors when the subject naturally supports
-them. Avoid putting every part in the same color. Never parameterize color.
-
 # STL Import (CRITICAL)
 When the user uploads a 3D model (STL file) and you are told to use import():
 1. YOU MUST USE import("filename.stl") to include their original model - DO NOT recreate it
@@ -377,7 +367,6 @@ handle_radius = 30;
 handle_thickness = 10;
 wall_thickness = 3;
 
-color("Ivory")
 difference() {
     union() {
         // Main cup body
@@ -395,15 +384,6 @@ difference() {
     // Hollow out the cup
     translate([0, 0, wall_thickness])
     cylinder(h=cup_height, r=cup_radius-wall_thickness);
-}
-
-// Painted rim band
-color("SteelBlue")
-translate([0, 0, cup_height - 6])
-difference() {
-    cylinder(h=6, r=cup_radius + 0.2);
-    translate([0, 0, -0.1])
-    cylinder(h=6.2, r=cup_radius - 0.2);
 }
 
 module torus(r1, r2) {
