@@ -23,6 +23,52 @@ BEGIN
     RETURN 50;
 END;
 $$;
+-- Just-in-time daily reset for free-tier users.
+-- Safe to call on every read/deduct: only touches the row when it's expired or missing.
+-- Decouples correctness from the cron firing on time — the cron is now a backstop.
+CREATE OR REPLACE FUNCTION "public"."ensure_free_tier_fresh"("p_user_id" uuid)
+RETURNS void
+LANGUAGE "plpgsql"
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+    v_is_free boolean;
+    v_caller uuid;
+BEGIN
+    -- Allow service role (no auth context) or the user acting on themselves.
+    -- Prevents an authenticated client from poking other users' balances via rpc.
+    v_caller := auth.uid();
+    IF v_caller IS NOT NULL AND v_caller <> p_user_id THEN
+        RETURN;
+    END IF;
+
+    SELECT NOT EXISTS (
+        SELECT 1 FROM public.subscriptions
+        WHERE user_id = p_user_id
+        AND status IN ('active', 'trialing')
+    ) INTO v_is_free;
+
+    IF NOT v_is_free THEN
+        RETURN;
+    END IF;
+
+    INSERT INTO public.token_balances (user_id, source, balance, expires_at, updated_at)
+    VALUES (
+        p_user_id,
+        'subscription',
+        50,
+        date_trunc('day', now()) + interval '1 day',
+        now()
+    )
+    ON CONFLICT (user_id, source) DO UPDATE
+    SET balance = 50,
+        expires_at = date_trunc('day', now()) + interval '1 day',
+        updated_at = now()
+    WHERE token_balances.expires_at IS NULL
+       OR token_balances.expires_at <= now();
+END;
+$$;
 
 -- Atomic token deduction
 CREATE OR REPLACE FUNCTION "public"."deduct_tokens"(
@@ -47,6 +93,8 @@ BEGIN
     IF v_cost IS NULL THEN
         RETURN jsonb_build_object('success', false, 'error', 'unknown_operation');
     END IF;
+
+    PERFORM public.ensure_free_tier_fresh(p_user_id);
 
     -- Lock and read subscription balance
     SELECT balance, expires_at INTO v_sub_balance, v_sub_expires
@@ -279,7 +327,11 @@ BEGIN
 END;
 $$;
 
--- Daily cron function to reset free-tier users
+-- Daily cron backstop for free-tier users.
+-- The JIT reset in ensure_free_tier_fresh is the primary mechanism; this cron
+-- keeps rows fresh for users who don't check in on a given day. We pin
+-- expires_at to the next UTC day boundary to avoid the drift that used to
+-- cause the cron to skip its own prior resets.
 CREATE OR REPLACE FUNCTION "public"."reset_free_tier_tokens"()
 RETURNS void
 LANGUAGE "plpgsql"
@@ -287,22 +339,21 @@ AS $$
 BEGIN
     UPDATE public.token_balances tb
     SET balance = 50,
-        expires_at = now() + interval '1 day',
+        expires_at = date_trunc('day', now()) + interval '1 day',
         updated_at = now()
     WHERE tb.source = 'subscription'
     AND NOT EXISTS (
         SELECT 1 FROM public.subscriptions s
         WHERE s.user_id = tb.user_id
         AND s.status IN ('active', 'trialing')
-    )
-    AND (tb.expires_at IS NULL OR tb.expires_at < now());
+    );
 END;
 $$;
 
 -- User extra data function (returns token balances)
 CREATE OR REPLACE FUNCTION "public"."user_extradata"("user_id_input" "uuid")
 RETURNS "public"."user_data"
-LANGUAGE "plpgsql" STABLE
+LANGUAGE "plpgsql"
 AS $$
 DECLARE
     hasTrialed boolean;
@@ -314,6 +365,8 @@ DECLARE
     v_sub_limit integer;
     ret user_data;
 BEGIN
+    PERFORM public.ensure_free_tier_fresh(user_id_input);
+
     -- Get trial status
     SELECT (
         (SELECT count(*) FROM public.trial_users WHERE user_id = user_id_input) > 0
