@@ -488,7 +488,7 @@ Deno.serve(async (req) => {
                 : Deno.env.get('SUPABASE_URL')
               )?.trim() ?? '';
 
-            await fal.queue.submit('fal-ai/hunyuan3d-v3/image-to-3d', {
+            await fal.queue.submit('fal-ai/hunyuan-3d/v3.1/pro/image-to-3d', {
               input: {
                 input_image_url: imageUrl,
                 enable_pbr: true,
@@ -497,7 +497,9 @@ Deno.serve(async (req) => {
               webhookUrl: `${supabaseHost}/functions/v1/fal-webhook?id=${newMeshData.id}`,
             });
 
-            debugLog('Successfully submitted to Hunyuan3D V3 for upscaling');
+            debugLog(
+              'Successfully submitted to Hunyuan3D v3.1 Pro for upscaling',
+            );
 
             // Create a preview for the upscaled mesh (non-blocking)
             createHunyuanPreview(
@@ -1401,22 +1403,23 @@ Output:`;
         throw new Error('No valid image found for textureless mesh generation');
       }
 
-      // Submit to Tripo with the generated image
+      // Submit to Tripo H3.1 with the generated image
       const tripoInput = {
         image_url: imageInputs[0],
-        texture: 'no' as const,
+        texture: false,
+        pbr: false,
         orientation: 'default' as const,
         // Cap face count for textureless generations at 50k
         ...(polygonCount !== undefined
           ? { face_limit: Math.min(polygonCount, TEXTURELESS_MAX_POLYGONS) }
           : { face_limit: TEXTURELESS_MAX_POLYGONS }),
       };
-      await fal.queue.submit('tripo3d/tripo/v2.5/image-to-3d', {
+      await fal.queue.submit('tripo3d/h3.1/image-to-3d', {
         input: tripoInput,
         webhookUrl: `${supabaseHost}/functions/v1/fal-webhook?id=${meshId}`,
       });
       debugLog(
-        'Successfully submitted to Tripo textureless with conversational context',
+        'Successfully submitted to Tripo H3.1 textureless with conversational context',
       );
 
       // Create preview using the generated image
