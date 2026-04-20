@@ -80,6 +80,14 @@ export function OpenSCADPreview({
   // fresh one, and even when OFF wins the render the STL still parses, so
   // the previous geometry's VRAM must be released on replacement.
   const mountedGeometryRef = useRef<BufferGeometry | null>(null);
+  // Capture the brand fallback color in a ref so the OFF-parse effect can
+  // read the current value without listing `color` as a dependency —
+  // otherwise every fallback-color change would rebuild the entire
+  // per-color mesh group, which gets expensive for large models.
+  const fallbackColorRef = useRef(color);
+  useEffect(() => {
+    fallbackColorRef.current = color;
+  }, [color]);
 
   useEffect(() => {
     if (!scadCode) return;
@@ -238,7 +246,7 @@ export function OpenSCADPreview({
           // highlights from the HDR environment.
           const mat = new MeshStandardMaterial({
             color: useFallback
-              ? color
+              ? fallbackColorRef.current
               : (Math.round(firstFace.color![0] * 255) << 16) |
                 (Math.round(firstFace.color![1] * 255) << 8) |
                 Math.round(firstFace.color![2] * 255),
@@ -274,7 +282,7 @@ export function OpenSCADPreview({
     return () => {
       cancelled = true;
     };
-  }, [offOutput, color]);
+  }, [offOutput]);
 
   // Release the last mounted group's and geometry's GPU resources on unmount.
   useEffect(() => {
@@ -366,9 +374,16 @@ function FixWithAIButton({
             'focus:outline-none focus:ring-2 focus:ring-adam-blue/30',
           )}
           onClick={() => {
-            if (error && error.name === 'OpenSCADError') {
-              fixError?.(error as OpenSCADError);
-            }
+            // error crosses the worker boundary as a plain object, so
+            // instanceof OpenSCADError won't narrow — check the name
+            // discriminator and narrow via a local type guard instead of
+            // a cast.
+            const isOpenSCADError = (e: unknown): e is OpenSCADError =>
+              !!e &&
+              typeof e === 'object' &&
+              'name' in e &&
+              e.name === 'OpenSCADError';
+            if (isOpenSCADError(error)) fixError?.(error);
           }}
         >
           <div className="absolute inset-0 rounded-lg bg-gradient-to-br from-adam-blue/20 to-transparent opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
