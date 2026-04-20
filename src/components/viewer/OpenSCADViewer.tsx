@@ -148,8 +148,20 @@ export function OpenSCADPreview({
 
   useEffect(() => {
     let cancelled = false;
-    if (!(offOutput instanceof Blob)) {
+
+    // Centralize the "clear colored group" path so the previous group's GPU
+    // resources are always released before we drop the reference, no matter
+    // which branch fires (no-OFF, parse error, empty-after-filtering).
+    const clearColoredGroup = () => {
+      if (mountedGroupRef.current) {
+        disposeGroup(mountedGroupRef.current);
+        mountedGroupRef.current = null;
+      }
       setColoredGroup(null);
+    };
+
+    if (!(offOutput instanceof Blob)) {
+      clearColoredGroup();
       return;
     }
 
@@ -237,7 +249,7 @@ export function OpenSCADPreview({
         // gate falls back to the single-color STL path instead of drawing
         // nothing.
         if (group.children.length === 0) {
-          if (!cancelled) setColoredGroup(null);
+          if (!cancelled) clearColoredGroup();
           return;
         }
 
@@ -248,7 +260,7 @@ export function OpenSCADPreview({
       })
       .catch((err) => {
         console.error('[OpenSCAD] Failed to parse OFF preview:', err);
-        if (!cancelled) setColoredGroup(null);
+        if (!cancelled) clearColoredGroup();
       });
 
     return () => {

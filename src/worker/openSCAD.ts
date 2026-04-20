@@ -169,6 +169,10 @@ class OpenSCADWrapper {
     // experimental flag and does not alone enable color propagation.
     const exportParams = [
       '--backend=manifold',
+      // Keep STL output binary — OpenSCAD defaults STL to ASCII otherwise,
+      // producing files 4-6× larger. The flag is applied via extension
+      // inference, so the /out.off companion output is unaffected.
+      '--export-format=binstl',
       '--enable=lazy-union',
       '--enable=roof',
     ];
