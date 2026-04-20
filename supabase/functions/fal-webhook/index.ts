@@ -149,11 +149,11 @@ Deno.serve(async (request) => {
 
     // Handle different model response formats
     if (payload.model_glb?.url) {
-      // SAM 3D Objects and Meshy v6 Preview format
+      // SAM 3D Objects, Meshy v6, Hunyuan v3.1 Pro format
       debugLog('Using model_glb.url:', payload.model_glb.url);
       modelUrl = payload.model_glb.url;
     } else if (payload.model_urls?.glb?.url) {
-      // Meshy v6 Preview alternative format
+      // Meshy v6 / Hunyuan v3.1 Pro alternative format
       debugLog('Using model_urls.glb.url:', payload.model_urls.glb.url);
       modelUrl = payload.model_urls.glb.url;
     } else if (payload.textured_glb?.url) {
@@ -173,15 +173,15 @@ Deno.serve(async (request) => {
       debugLog('Using glb (string):', payload.glb);
       modelUrl = payload.glb;
     } else if (payload.model_mesh?.url) {
-      // Tripo v2.5 and Trellis format
+      // Tripo H3.1 and Trellis format
       debugLog('Using model_mesh.url:', payload.model_mesh.url);
       modelUrl = payload.model_mesh.url;
     } else if (payload.base_model?.url) {
-      // Tripo v2.5 with texture='no' (textureless)
+      // Tripo H3.1 with texture=false (textureless)
       debugLog('Using base_model.url (textureless):', payload.base_model.url);
       modelUrl = payload.base_model.url;
     } else if (payload.pbr_model?.url) {
-      // Tripo v2.5 with PBR enabled
+      // Tripo H3.1 with pbr=true
       debugLog('Using pbr_model.url:', payload.pbr_model.url);
       modelUrl = payload.pbr_model.url;
     } else if (payload.model?.url) {
