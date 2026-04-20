@@ -814,6 +814,22 @@ Deno.serve(async (req) => {
             }
           }
 
+          // Safety net: if the outer LLM finished without emitting any text,
+          // tool call, or artifact, surface a retry hint instead of saving
+          // an empty bubble (otherwise isLoading flips false and the UI
+          // renders nothing visible).
+          const hasToolCalls =
+            !!content.toolCalls && content.toolCalls.length > 0;
+          if (!content.artifact && !content.text && !hasToolCalls) {
+            console.error(
+              '[parametric-chat] empty response from model — no text, tool call, or artifact',
+            );
+            content = {
+              ...content,
+              text: "I couldn't generate that — please try again.",
+            };
+          }
+
           let finalMessageData: Message | null = null;
           try {
             const { data } = await supabaseClient
