@@ -14,7 +14,7 @@ import { OrthographicPerspectiveToggle } from '@/components/viewer/OrthographicP
 import { cn } from '@/lib/utils';
 
 interface ThreeSceneProps {
-  geometry: THREE.BufferGeometry;
+  geometry: THREE.BufferGeometry | null;
   color: string;
   isMobile?: boolean;
   backgroundColor?: string;
@@ -80,7 +80,7 @@ export function ThreeScene({
                 position={groupCenterOffset.toArray()}
               />
             </group>
-          ) : (
+          ) : geometry ? (
             <mesh
               geometry={geometry}
               rotation={[-Math.PI / 2, 0, 0]}
@@ -93,7 +93,7 @@ export function ThreeScene({
                 envMapIntensity={0.3}
               />
             </mesh>
-          )}
+          ) : null}
         </Stage>
         {/* <Grid
           position={[0, 0, 0]}

@@ -6,6 +6,7 @@ import {
   BufferGeometry,
   Float32BufferAttribute,
   Group,
+  Material,
   Mesh,
   MeshStandardMaterial,
 } from 'three';
@@ -25,6 +26,20 @@ function extractImportFilenames(code: string): string[] {
     filenames.push(match[1]);
   }
   return filenames;
+}
+
+// Walk a Three.js Group and release GPU resources for each mesh's geometry
+// and material. Called whenever a compile produces a new group so the old
+// one doesn't pile up VRAM across frequent recompiles.
+function disposeGroup(group: Group) {
+  group.traverse((obj) => {
+    const mesh = obj as Mesh;
+    if (!mesh.isMesh) return;
+    mesh.geometry?.dispose();
+    const mat = mesh.material;
+    if (Array.isArray(mat)) mat.forEach((m: Material) => m.dispose());
+    else mat?.dispose();
+  });
 }
 
 interface OpenSCADPreviewProps {
@@ -59,6 +74,9 @@ export function OpenSCADPreview({
   const meshFilesCtx = useContext(MeshFilesContext);
   // Track which files we've written to avoid re-writing unchanged blobs
   const writtenFilesRef = useRef<Map<string, Blob>>(new Map());
+  // Hold on to the last colored group so its meshes' GPU resources can be
+  // released when a new compile replaces it (or the component unmounts).
+  const mountedGroupRef = useRef<Group | null>(null);
 
   useEffect(() => {
     if (!scadCode) return;
@@ -95,13 +113,24 @@ export function OpenSCADPreview({
   useEffect(() => {
     onOutputChange?.(output);
     if (output && output instanceof Blob) {
-      output.arrayBuffer().then((buffer) => {
-        const loader = new STLLoader();
-        const geom = loader.parse(buffer);
-        geom.center();
-        geom.computeVertexNormals();
-        setGeometry(geom);
-      });
+      let cancelled = false;
+      output
+        .arrayBuffer()
+        .then((buffer) => {
+          if (cancelled) return;
+          const loader = new STLLoader();
+          const geom = loader.parse(buffer);
+          geom.center();
+          geom.computeVertexNormals();
+          setGeometry(geom);
+        })
+        .catch((err) => {
+          console.error('[OpenSCAD] Failed to parse STL preview:', err);
+          if (!cancelled) setGeometry(null);
+        });
+      return () => {
+        cancelled = true;
+      };
     } else {
       setGeometry(null);
     }
@@ -193,6 +222,9 @@ export function OpenSCADPreview({
           group.add(new Mesh(geom, mat));
         }
 
+        // Release the previous group's GPU resources before swapping it in.
+        if (mountedGroupRef.current) disposeGroup(mountedGroupRef.current);
+        mountedGroupRef.current = group;
         setColoredGroup(group);
       })
       .catch((err) => {
@@ -205,10 +237,20 @@ export function OpenSCADPreview({
     };
   }, [offOutput, color]);
 
+  // Release the last mounted group's GPU resources on unmount.
+  useEffect(() => {
+    return () => {
+      if (mountedGroupRef.current) {
+        disposeGroup(mountedGroupRef.current);
+        mountedGroupRef.current = null;
+      }
+    };
+  }, []);
+
   return (
     <div className="h-full w-full bg-adam-neutral-700/50 shadow-lg backdrop-blur-sm transition-all duration-300 ease-in-out">
       <div className="h-full w-full">
-        {geometry ? (
+        {geometry || coloredGroup ? (
           <div className="h-full w-full">
             <ThreeScene
               geometry={geometry}

@@ -52,6 +52,13 @@ export function parseColoredOff(text: string): ParsedOff {
   if (!Number.isFinite(numVertices) || !Number.isFinite(numFaces)) {
     throw new Error('Invalid OFF header: vertex/face counts unreadable');
   }
+  // A truncated file would blow up with a confusing TypeError deep in the
+  // per-line split — fail fast with a clear message instead.
+  if (lines.length < cursor + numVertices + numFaces) {
+    throw new Error(
+      `OFF file truncated: expected ${cursor + numVertices + numFaces} non-blank lines, got ${lines.length}`,
+    );
+  }
 
   const vertices: [number, number, number][] = new Array(numVertices);
   for (let i = 0; i < numVertices; i++) {
@@ -81,9 +88,16 @@ export function parseColoredOff(text: string): ParsedOff {
       color = [trailing[0] / 255, trailing[1] / 255, trailing[2] / 255, 1];
     }
 
-    // Guard against malformed OFF files: skip faces that reference a
-    // vertex index outside the declared vertex array.
-    if (verts.some((v) => v < 0 || v >= numVertices)) continue;
+    // Guard against malformed OFF files: skip faces whose vertex count
+    // doesn't match the declared size, or whose indices aren't integers in
+    // range. Bad lines would otherwise produce phantom triangles referring
+    // to undefined vertices downstream.
+    if (
+      verts.length !== n ||
+      verts.some((v) => !Number.isInteger(v) || v < 0 || v >= numVertices)
+    ) {
+      continue;
+    }
 
     if (n === 3) {
       faces.push({ vertices: [verts[0], verts[1], verts[2]], color });
