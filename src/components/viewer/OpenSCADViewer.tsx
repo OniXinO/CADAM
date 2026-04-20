@@ -33,10 +33,9 @@ function extractImportFilenames(code: string): string[] {
 // one doesn't pile up VRAM across frequent recompiles.
 function disposeGroup(group: Group) {
   group.traverse((obj) => {
-    const mesh = obj as Mesh;
-    if (!mesh.isMesh) return;
-    mesh.geometry?.dispose();
-    const mat = mesh.material;
+    if (!(obj instanceof Mesh)) return;
+    obj.geometry?.dispose();
+    const mat = obj.material;
     if (Array.isArray(mat)) mat.forEach((m: Material) => m.dispose());
     else mat?.dispose();
   });

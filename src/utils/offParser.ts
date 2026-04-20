@@ -102,7 +102,11 @@ export function parseColoredOff(text: string): ParsedOff {
     if (n === 3) {
       faces.push({ vertices: [verts[0], verts[1], verts[2]], color });
     } else if (n > 3) {
-      // Fan-triangulate convex polygon faces.
+      // Fan-triangulate from vertex 0. Correct only for convex polygons —
+      // concave faces would self-intersect. OpenSCAD's manifold backend (our
+      // only producer) emits triangles exclusively, so n > 3 is effectively a
+      // defensive branch; if another OFF source ever feeds in non-convex
+      // n-gons we'd need earcut here.
       for (let j = 1; j < n - 1; j++) {
         faces.push({
           vertices: [verts[0], verts[j], verts[j + 1]],
