@@ -172,7 +172,7 @@ export function ParameterSection({
                 >
                   <span className="flex items-center gap-2">
                     Dimensions
-                    <span className="text-[10px] text-adam-neutral-400 transition-colors group-hover:text-adam-text-primary">
+                    <span className="text-[10px] text-adam-neutral-400">
                       {mainParameters.length}
                     </span>
                   </span>
@@ -207,7 +207,7 @@ export function ParameterSection({
                 >
                   <span className="flex items-center gap-2">
                     Colors
-                    <span className="text-[10px] text-adam-neutral-400 transition-colors group-hover:text-adam-text-primary">
+                    <span className="text-[10px] text-adam-neutral-400">
                       {colorParameters.length}
                     </span>
                   </span>
