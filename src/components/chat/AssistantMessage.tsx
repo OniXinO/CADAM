@@ -14,7 +14,6 @@ import {
 } from 'lucide-react';
 import { Streamdown } from 'streamdown';
 import { StreamingCodeBlock } from '@/components/chat/StreamingCodeBlock';
-import { generateDownloadFilename } from '@/utils/downloadUtils';
 import { Button } from '@/components/ui/button';
 import { RefreshCw } from 'lucide-react';
 import { Avatar, AvatarImage } from '@/components/ui/avatar';
@@ -251,10 +250,6 @@ export function AssistantMessage({
                             key={toolCall.id ?? `${toolCall.name}`}
                             code={streamingCode}
                             isStreaming={true}
-                            filename={generateDownloadFilename({
-                              currentMessage: message,
-                              extension: 'scad',
-                            })}
                           />
                         );
                       }
