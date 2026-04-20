@@ -299,15 +299,15 @@ export function HistoryView() {
 
             {/* View Toggle */}
             <div
-              role="tablist"
+              role="group"
               aria-label="View mode"
               className="flex items-center gap-1 rounded-lg border border-adam-neutral-700 bg-adam-background-2 p-1"
             >
               <Button
                 variant="ghost"
                 size="sm"
-                role="tab"
-                aria-selected={viewMode === 'list'}
+                aria-pressed={viewMode === 'list'}
+                aria-label="List view"
                 onClick={() => setViewMode('list')}
                 className={`h-8 px-3 transition-colors duration-150 ${
                   viewMode === 'list'
@@ -321,8 +321,8 @@ export function HistoryView() {
               <Button
                 variant="ghost"
                 size="sm"
-                role="tab"
-                aria-selected={viewMode === 'visual'}
+                aria-pressed={viewMode === 'visual'}
+                aria-label="Visual view"
                 onClick={() => setViewMode('visual')}
                 className={`h-8 px-3 transition-colors duration-150 ${
                   viewMode === 'visual'
