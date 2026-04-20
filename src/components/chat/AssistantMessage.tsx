@@ -207,7 +207,6 @@ export function AssistantMessage({
           ) : (
             <>
               {conversation.type === 'parametric' &&
-                isLoading &&
                 isLastMessage &&
                 !message.content.text &&
                 (!message.content.toolCalls ||
