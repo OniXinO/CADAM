@@ -101,13 +101,20 @@ export function ParameterInput({
     const hex = cssToHex(currentValue);
     const isColor = hex !== '';
     if (isColor) {
+      // Strip the redundant "Color" suffix — the whole color section groups
+      // these together and the swatch/hex already signal it's a color. Keeps
+      // the 80px label column from wrapping multi-word names to two lines.
+      const labelText =
+        paramState.displayName.replace(/\s*color$/i, '').trim() ||
+        paramState.displayName;
       return (
         <div className="grid w-full grid-cols-[80px_1fr] items-center gap-3">
           <Label
             className="overflow-hidden text-ellipsis text-xs font-normal text-adam-neutral-300"
             htmlFor={paramState.name}
+            title={paramState.displayName}
           >
-            {paramState.displayName}
+            {labelText}
           </Label>
           <ColorPicker
             color={hex}
