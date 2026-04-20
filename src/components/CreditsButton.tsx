@@ -5,6 +5,7 @@ import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { UpgradeModal } from '@/components/UpgradeModal';
 import { useAuth } from '@/contexts/AuthContext';
+import { useIsMobile } from '@/hooks/useIsMobile';
 import { cn } from '@/lib/utils';
 
 function formatCompact(n: number): string {
@@ -32,6 +33,7 @@ export function CreditsButton() {
     subscriptionTokens,
     subscriptionTokenLimit,
   } = useAuth();
+  const isMobile = useIsMobile();
 
   const [open, setOpen] = useState(false);
   // Card opened by click stays pinned — mouse-leave alone won't dismiss it.
@@ -66,6 +68,24 @@ export function CreditsButton() {
   }, []);
 
   if (!user) return null;
+
+  if (isMobile) {
+    return (
+      <Link
+        to="/subscription"
+        aria-label="View credits"
+        className={cn(
+          'inline-flex items-center gap-1.5 rounded-full',
+          'bg-adam-neutral-950 px-3 py-1.5 text-sm font-medium',
+          'text-adam-neutral-10 shadow-sm',
+          'border border-white/5',
+        )}
+      >
+        <Zap className="h-3.5 w-3.5" fill="currentColor" />
+        <span>{formatCompact(totalTokens)}</span>
+      </Link>
+    );
+  }
 
   const isFree = subscription === 'free';
   const periodLabel = isFree ? '/ day' : '/ mo';
