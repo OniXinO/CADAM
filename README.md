@@ -197,6 +197,20 @@ Components and attributions:
 
 ---
 
+## 🌟 Star History
+
+<div align="center">
+
+<a href="https://www.repostars.dev/?repos=Adam-CAD%2FCADAM&theme=forest">
+  <img src="./public/RepoStars.png" alt="CADAM Star History" width="800"/>
+</a>
+
+<sub>Chart by <a href="https://www.repostars.dev/?repos=Adam-CAD%2FCADAM&theme=forest">RepoStars</a> — click to view the live, interactive chart.</sub>
+
+</div>
+
+---
+
 <div align="center">
   
 **⭐ If you find CADAM useful, please consider giving it a star!**
