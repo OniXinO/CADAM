@@ -55,6 +55,7 @@ export function ParameterSection({
     return { mainParameters: main, colorParameters: color };
   }, [parameters]);
   const [colorsOpen, setColorsOpen] = useState(true);
+  const [dimensionsOpen, setDimensionsOpen] = useState(true);
 
   // Debounce timer for compilation
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -160,13 +161,40 @@ export function ParameterSection({
       <div className="flex h-[calc(100%-3.5rem)] flex-col justify-between overflow-hidden">
         <ScrollArea className="flex-1 px-6 py-6">
           <div className="flex flex-col gap-3">
-            {mainParameters.map((param) => (
-              <ParameterInput
-                key={param.name}
-                param={param}
-                handleCommit={handleCommit}
-              />
-            ))}
+            {mainParameters.length > 0 && (
+              <Collapsible
+                open={dimensionsOpen}
+                onOpenChange={setDimensionsOpen}
+              >
+                <CollapsibleTrigger
+                  aria-label={`${dimensionsOpen ? 'Collapse' : 'Expand'} dimension parameters`}
+                  className="group flex w-full items-center justify-between gap-2 rounded-md py-1 text-xs font-semibold text-adam-text-primary transition-colors focus:outline-none"
+                >
+                  <span className="flex items-center gap-2">
+                    Dimensions
+                    <span className="text-[10px] text-adam-neutral-400">
+                      {mainParameters.length}
+                    </span>
+                  </span>
+                  <ChevronDown
+                    className={`h-3.5 w-3.5 transition-transform duration-200 ${
+                      dimensionsOpen ? 'rotate-180' : ''
+                    }`}
+                  />
+                </CollapsibleTrigger>
+                <CollapsibleContent className="data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0">
+                  <div className="mt-3 flex flex-col gap-3">
+                    {mainParameters.map((param) => (
+                      <ParameterInput
+                        key={param.name}
+                        param={param}
+                        handleCommit={handleCommit}
+                      />
+                    ))}
+                  </div>
+                </CollapsibleContent>
+              </Collapsible>
+            )}
             {colorParameters.length > 0 && (
               <Collapsible
                 open={colorsOpen}
@@ -175,7 +203,7 @@ export function ParameterSection({
               >
                 <CollapsibleTrigger
                   aria-label={`${colorsOpen ? 'Collapse' : 'Expand'} color parameters`}
-                  className="group flex w-full items-center justify-between gap-2 rounded-md py-1 text-xs font-medium text-adam-neutral-300 transition-colors hover:text-adam-text-primary focus:outline-none"
+                  className="group flex w-full items-center justify-between gap-2 rounded-md py-1 text-xs font-semibold text-adam-text-primary transition-colors focus:outline-none"
                 >
                   <span className="flex items-center gap-2">
                     Colors
