@@ -54,9 +54,9 @@ export function ColorPicker({ color, onChange }: ColorPickerProps) {
         <button
           aria-label="Toggle color picker"
           ref={triggerRef}
-          className="relative flex h-6 w-full items-center justify-between gap-2 overflow-hidden rounded-md bg-adam-neutral-800 pl-2 pr-1 text-xs text-adam-neutral-10 transition-colors duration-200 ease-out focus:outline-none [@media(hover:hover)]:hover:bg-adam-neutral-700"
+          className="relative inline-flex h-6 w-fit items-center gap-2 overflow-hidden rounded-md bg-adam-neutral-800 pl-2 pr-1 text-xs text-adam-neutral-10 transition-colors duration-200 ease-out focus:outline-none [@media(hover:hover)]:hover:bg-adam-neutral-700"
         >
-          <div className="flex min-w-0 flex-1 items-center gap-2">
+          <div className="flex items-center gap-2">
             <div
               className="h-3.5 w-3.5 flex-shrink-0 rounded-full shadow-sm ring-1 ring-adam-neutral-700/60"
               style={{ backgroundColor: color }}
