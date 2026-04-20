@@ -8,26 +8,26 @@ import {
 } from '@/utils/parameterUtils';
 import { ParameterSlider } from '@/components/parameter/ParameterSlider';
 import { Label } from '@/components/ui/label';
+import { ColorPicker } from '@/components/parameter/ColorPicker';
 
-// CSS-color detection: leans on the browser — Option.style.color rejects
-// anything that isn't a valid CSS color, named or otherwise. Returns ''
-// for invalid input so we can tell apart "it's a color" from "it's text".
+// CSS-color detection + normalization. ctx.fillStyle rejects invalid input
+// by silently keeping the prior value, so seed it with a sentinel first.
+// Returns '' when the input isn't a color so callers can fall back to
+// rendering a plain text input.
 function cssToHex(value: string): string {
   if (!value) return '';
-  const probe = new Option().style;
-  probe.color = value;
-  if (!probe.color) return '';
-  // getComputedStyle isn't available on a detached element, so use a canvas
-  // to resolve named colors and rgb(...) strings to a #rrggbb hex we can
-  // feed into the native color input.
   const canvas = document.createElement('canvas');
   const ctx = canvas.getContext('2d');
   if (!ctx) return '';
-  ctx.fillStyle = '#000';
+  const sentinel = '#010101';
+  ctx.fillStyle = sentinel;
   ctx.fillStyle = value;
-  // ctx.fillStyle returns either '#rrggbb' or 'rgba(...)' — the 6-char hex
-  // form is what the native picker wants.
-  return /^#[0-9a-f]{6}$/i.test(ctx.fillStyle) ? ctx.fillStyle : '';
+  if (ctx.fillStyle === sentinel && value.toLowerCase() !== sentinel) {
+    return '';
+  }
+  return /^#[0-9a-f]{6}$/i.test(ctx.fillStyle)
+    ? ctx.fillStyle.toUpperCase()
+    : '';
 }
 
 export function ParameterInput({
@@ -119,6 +119,22 @@ export function ParameterInput({
     const currentValue = String(paramState.value);
     const hex = cssToHex(currentValue);
     const isColor = hex !== '';
+    if (isColor) {
+      return (
+        <div className="grid w-full grid-cols-[80px_1fr] items-center gap-3">
+          <Label
+            className="overflow-hidden text-ellipsis text-xs font-normal text-adam-neutral-300"
+            htmlFor={paramState.name}
+          >
+            {paramState.displayName}
+          </Label>
+          <ColorPicker
+            color={hex}
+            onChange={(next) => handleValueCommit(next.toUpperCase())}
+          />
+        </div>
+      );
+    }
     return (
       <div className="grid w-full grid-cols-[80px_1fr] items-center gap-3">
         <Label
@@ -127,29 +143,17 @@ export function ParameterInput({
         >
           {paramState.displayName}
         </Label>
-        <div className="flex w-full items-center gap-2">
-          {isColor && (
-            <input
-              type="color"
-              aria-label={`${paramState.displayName} color`}
-              className="h-6 w-8 flex-shrink-0 cursor-pointer rounded border border-adam-neutral-700 bg-adam-neutral-800 p-0"
-              value={hex}
-              onChange={(e) => handleValueChange(e.target.value)}
-              onBlur={() => handleValueCommit(paramState.value)}
-            />
-          )}
-          <Input
-            id={paramState.name}
-            name={paramState.name}
-            autoComplete="off"
-            className="h-6 w-full min-w-0 rounded-md bg-adam-neutral-800 px-2 text-left text-xs text-adam-text-primary transition-colors selection:bg-adam-blue/50 selection:text-white focus:outline-none [@media(hover:hover)]:hover:bg-adam-neutral-700"
-            value={currentValue}
-            onChange={(e) => handleValueChange(e.target.value)}
-            onFocus={(e) => e.target.select()}
-            onBlur={() => handleValueCommit(paramState.value)}
-            onKeyDown={onEnter}
-          />
-        </div>
+        <Input
+          id={paramState.name}
+          name={paramState.name}
+          autoComplete="off"
+          className="h-6 w-full min-w-0 rounded-md bg-adam-neutral-800 px-2 text-left text-xs text-adam-text-primary transition-colors selection:bg-adam-blue/50 selection:text-white focus:outline-none [@media(hover:hover)]:hover:bg-adam-neutral-700"
+          value={currentValue}
+          onChange={(e) => handleValueChange(e.target.value)}
+          onFocus={(e) => e.target.select()}
+          onBlur={() => handleValueCommit(paramState.value)}
+          onKeyDown={onEnter}
+        />
       </div>
     );
   }
