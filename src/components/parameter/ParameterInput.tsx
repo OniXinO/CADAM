@@ -5,30 +5,11 @@ import { Switch } from '@/components/ui/switch';
 import {
   validateParameterValue,
   isMeasurementParameter,
+  cssToHex,
 } from '@/utils/parameterUtils';
 import { ParameterSlider } from '@/components/parameter/ParameterSlider';
 import { Label } from '@/components/ui/label';
 import { ColorPicker } from '@/components/parameter/ColorPicker';
-
-// CSS-color detection + normalization. ctx.fillStyle rejects invalid input
-// by silently keeping the prior value, so seed it with a sentinel first.
-// Returns '' when the input isn't a color so callers can fall back to
-// rendering a plain text input.
-function cssToHex(value: string): string {
-  if (!value) return '';
-  const canvas = document.createElement('canvas');
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return '';
-  const sentinel = '#010101';
-  ctx.fillStyle = sentinel;
-  ctx.fillStyle = value;
-  if (ctx.fillStyle === sentinel && value.toLowerCase() !== sentinel) {
-    return '';
-  }
-  return /^#[0-9a-f]{6}$/i.test(ctx.fillStyle)
-    ? ctx.fillStyle.toUpperCase()
-    : '';
-}
 
 export function ParameterInput({
   param,

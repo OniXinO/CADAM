@@ -154,6 +154,38 @@ export function isMeasurementParameter(param: Parameter): boolean {
 }
 
 /**
+ * Resolve any CSS color value (named or hex) to a #RRGGBB hex string, or
+ * return '' when the input isn't a color. Used both to detect color-typed
+ * string parameters and to normalize the value for the native/hex picker.
+ */
+export function cssToHex(value: string): string {
+  if (typeof value !== 'string' || !value) return '';
+  const canvas =
+    typeof document !== 'undefined' ? document.createElement('canvas') : null;
+  const ctx = canvas?.getContext('2d');
+  if (!ctx) return '';
+  const sentinel = '#010101';
+  ctx.fillStyle = sentinel;
+  ctx.fillStyle = value;
+  if (ctx.fillStyle === sentinel && value.toLowerCase() !== sentinel) {
+    return '';
+  }
+  return /^#[0-9a-f]{6}$/i.test(ctx.fillStyle)
+    ? ctx.fillStyle.toUpperCase()
+    : '';
+}
+
+/**
+ * True when the parameter is a string whose value parses as a CSS color.
+ * Used to route rendering to the ColorPicker UI and to group color params
+ * together at the bottom of the parameter panel.
+ */
+export function isColorParameter(param: Parameter): boolean {
+  if (param.type !== 'string') return false;
+  return cssToHex(String(param.value ?? param.defaultValue ?? '')) !== '';
+}
+
+/**
  * Validates and sanitizes a parameter value
  */
 export function validateParameterValue(

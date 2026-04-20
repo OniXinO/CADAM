@@ -1,5 +1,5 @@
 import { RefreshCcw, Download, ChevronUp } from 'lucide-react';
-import { useEffect, useState, useRef, useCallback } from 'react';
+import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Message, Parameter } from '@shared/types';
@@ -16,7 +16,10 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { ParameterInput } from '@/components/parameter/ParameterInput';
-import { validateParameterValue } from '@/utils/parameterUtils';
+import {
+  validateParameterValue,
+  isColorParameter,
+} from '@/utils/parameterUtils';
 import { useCurrentMessage } from '@/contexts/CurrentMessageContext';
 import { downloadSTLFile, downloadOpenSCADFile } from '@/utils/downloadUtils';
 
@@ -33,6 +36,20 @@ export function ParameterSection({
 }: ParameterSectionProps) {
   const { currentMessage } = useCurrentMessage();
   const [selectedFormat, setSelectedFormat] = useState<'stl' | 'scad'>('stl');
+
+  // Keep non-color parameters in their declared order at the top of the
+  // panel, then append color params at the bottom (preserving their own
+  // relative order) — dimensions are what the user usually reaches for
+  // first, colors are the polish pass.
+  const orderedParameters = useMemo(() => {
+    const nonColor: Parameter[] = [];
+    const color: Parameter[] = [];
+    for (const p of parameters) {
+      if (isColorParameter(p)) color.push(p);
+      else nonColor.push(p);
+    }
+    return [...nonColor, ...color];
+  }, [parameters]);
 
   // Debounce timer for compilation
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -138,7 +155,7 @@ export function ParameterSection({
       <div className="flex h-[calc(100%-3.5rem)] flex-col justify-between overflow-hidden">
         <ScrollArea className="flex-1 px-6 py-6">
           <div className="flex flex-col gap-3">
-            {parameters.map((param) => (
+            {orderedParameters.map((param) => (
               <ParameterInput
                 key={param.name}
                 param={param}
