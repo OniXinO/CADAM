@@ -905,7 +905,7 @@ Deno.serve(async (req) => {
               ...finalUserMessage,
             ];
 
-            // Code generation request logic
+            // Code generation request logic (SSE streaming)
             const codeRequestBody: OpenRouterRequest = {
               model,
               messages: [
@@ -913,6 +913,7 @@ Deno.serve(async (req) => {
                 ...codeMessages,
               ],
               max_tokens: 16000,
+              stream: true,
             };
 
             // Also apply thinking to code generation if enabled
@@ -923,8 +924,21 @@ Deno.serve(async (req) => {
               codeRequestBody.max_tokens = 20000;
             }
 
-            const [codeResult, titleResult] = await Promise.allSettled([
-              fetch(OPENROUTER_API_URL, {
+            // Kick off title generation alongside the streamed code.
+            const titlePromise = generateTitleFromMessages(messagesToSend);
+
+            let rawCode = '';
+            let codeGenFailed = false;
+
+            const stripCodeFences = (s: string): string => {
+              let out = s;
+              out = out.replace(/^```(?:openscad)?\s*\n?/, '');
+              out = out.replace(/\n?```\s*$/, '');
+              return out;
+            };
+
+            try {
+              const codeResponse = await fetch(OPENROUTER_API_URL, {
                 method: 'POST',
                 headers: {
                   'Content-Type': 'application/json',
@@ -933,31 +947,76 @@ Deno.serve(async (req) => {
                   'X-Title': 'Adam CAD',
                 },
                 body: JSON.stringify(codeRequestBody),
-              }).then(async (r) => {
-                if (!r.ok) {
-                  const t = await r.text();
-                  throw new Error(`Code gen error: ${r.status} - ${t}`);
+              });
+
+              if (!codeResponse.ok) {
+                const t = await codeResponse.text();
+                throw new Error(
+                  `Code gen error: ${codeResponse.status} - ${t}`,
+                );
+              }
+
+              const codeReader = codeResponse.body?.getReader();
+              if (!codeReader) throw new Error('No code response body');
+
+              const codeDecoder = new TextDecoder();
+              let codeBuffer = '';
+
+              while (true) {
+                const { done, value } = await codeReader.read();
+                if (done) break;
+
+                codeBuffer += codeDecoder.decode(value, { stream: true });
+                const codeLines = codeBuffer.split('\n');
+                codeBuffer = codeLines.pop() || '';
+
+                for (const line of codeLines) {
+                  if (!line || line.startsWith(':')) continue;
+                  if (!line.startsWith('data: ')) continue;
+                  const data = line.slice(6);
+                  if (data === '[DONE]') continue;
+
+                  try {
+                    const chunk = JSON.parse(data);
+                    if (chunk.error) {
+                      throw new Error(
+                        chunk.error.message ||
+                          `OpenRouter error: ${JSON.stringify(chunk.error)}`,
+                      );
+                    }
+                    const deltaContent = chunk.choices?.[0]?.delta?.content;
+                    if (typeof deltaContent === 'string' && deltaContent) {
+                      rawCode += deltaContent;
+                      const streamed = stripCodeFences(rawCode);
+                      content = {
+                        ...content,
+                        artifact: {
+                          title: 'Adam Object',
+                          version: 'v1',
+                          code: streamed,
+                          parameters: [],
+                        },
+                      };
+                      streamMessage(controller, {
+                        ...newMessageData,
+                        content,
+                      });
+                    }
+                  } catch (e) {
+                    console.error('Error parsing code SSE chunk:', e);
+                  }
                 }
-                return r.json();
-              }),
-              generateTitleFromMessages(messagesToSend),
-            ]);
-
-            let code = '';
-            if (
-              codeResult.status === 'fulfilled' &&
-              codeResult.value.choices?.[0]?.message?.content
-            ) {
-              code = codeResult.value.choices[0].message.content.trim();
-            } else if (codeResult.status === 'rejected') {
-              console.error('Code generation failed:', codeResult.reason);
+              }
+            } catch (e) {
+              console.error('Code generation failed:', e);
+              codeGenFailed = true;
             }
 
-            const codeBlockRegex = /^```(?:openscad)?\n?([\s\S]*?)\n?```$/;
-            const match = code.match(codeBlockRegex);
-            if (match) {
-              code = match[1].trim();
-            }
+            const titleResult = await Promise.allSettled([titlePromise]).then(
+              (r) => r[0],
+            );
+
+            const code = stripCodeFences(rawCode.trim()).trim();
 
             let title =
               titleResult.status === 'fulfilled'
@@ -967,8 +1026,14 @@ Deno.serve(async (req) => {
             if (lower.includes('sorry') || lower.includes('apologize'))
               title = 'Adam Object';
 
-            if (!code) {
-              content = markToolAsError(content, toolCall.id);
+            if (codeGenFailed || !code) {
+              content = {
+                ...content,
+                artifact: undefined,
+                toolCalls: (content.toolCalls || []).map((c) =>
+                  c.id === toolCall.id ? { ...c, status: 'error' } : c,
+                ),
+              };
             } else {
               const artifact: ParametricArtifact = {
                 title,

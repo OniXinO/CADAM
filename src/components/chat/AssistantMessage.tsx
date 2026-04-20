@@ -13,6 +13,7 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { Streamdown } from 'streamdown';
+import { StreamingCodeBlock } from '@/components/chat/StreamingCodeBlock';
 import { Button } from '@/components/ui/button';
 import { RefreshCw } from 'lucide-react';
 import { Avatar, AvatarImage } from '@/components/ui/avatar';
@@ -205,6 +206,21 @@ export function AssistantMessage({
             </>
           ) : (
             <>
+              {conversation.type === 'parametric' &&
+                isLoading &&
+                isLastMessage &&
+                !message.content.text &&
+                (!message.content.toolCalls ||
+                  message.content.toolCalls.length === 0) &&
+                !message.content.artifact && (
+                  <div className="flex h-10 w-full items-center justify-between overflow-hidden rounded-md bg-adam-neutral-950 px-3">
+                    <div className="flex h-full items-center justify-center gap-2">
+                      <Box className="h-4 w-4 text-white" />
+                      <span>Building CAD...</span>
+                    </div>
+                    <Loader2 className="h-4 w-4 animate-spin text-white" />
+                  </div>
+                )}
               {message.content.text ? (
                 <Streamdown
                   className="px-1 [&_:not(pre)>code]:rounded [&_:not(pre)>code]:bg-adam-neutral-950 [&_:not(pre)>code]:px-1 [&_:not(pre)>code]:py-0.5 [&_a]:text-adam-blue [&_a]:underline hover:[&_a]:opacity-80 [&_h1]:mt-2 [&_h1]:text-xl [&_h1]:font-semibold [&_h2]:mt-2 [&_h2]:text-lg [&_h2]:font-semibold [&_h3]:mt-1 [&_h3]:font-semibold [&_ol]:list-decimal [&_ol]:pl-5 [&_p:not(:last-child)]:mb-2 [&_p]:leading-relaxed [&_pre]:overflow-x-auto [&_pre]:rounded [&_pre]:bg-adam-neutral-950 [&_pre]:p-3 [&_pre_code]:bg-transparent [&_pre_code]:p-0 [&_ul]:list-disc [&_ul]:pl-5"
@@ -216,56 +232,78 @@ export function AssistantMessage({
               {message.content.toolCalls &&
                 message.content.toolCalls.length > 0 && (
                   <div className="flex w-full flex-col gap-2">
-                    {message.content.toolCalls.map((toolCall) => (
-                      <div
-                        key={toolCall.id ?? `${toolCall.name}`}
-                        className="flex h-10 w-full items-center justify-between overflow-hidden rounded-md bg-adam-neutral-950 px-3 hover:bg-adam-neutral-900"
-                      >
-                        <div className="flex h-full items-center justify-center gap-2">
-                          {toolCall.name === 'create_image' && (
-                            <ImageIcon className="h-4 w-4 text-white" />
-                          )}
-                          {toolCall.name === 'create_mesh' && (
-                            <Box className="h-4 w-4 text-white" />
-                          )}
-                          {(toolCall.name === 'build_parametric_model' ||
-                            toolCall.name === 'apply_parameter_changes') && (
-                            <Box className="h-4 w-4 text-white" />
-                          )}
+                    {message.content.toolCalls.map((toolCall) => {
+                      // For a pending parametric build, once code starts
+                      // streaming swap the generic status row for the live
+                      // code. Before the first chunk we keep the original
+                      // "Building CAD..." row so the thinking state is clear.
+                      const streamingCode =
+                        message.content.artifact?.code ?? '';
+                      if (
+                        toolCall.name === 'build_parametric_model' &&
+                        toolCall.status === 'pending' &&
+                        streamingCode.length > 0
+                      ) {
+                        return (
+                          <StreamingCodeBlock
+                            key={toolCall.id ?? `${toolCall.name}`}
+                            code={streamingCode}
+                            isStreaming={true}
+                          />
+                        );
+                      }
+
+                      return (
+                        <div
+                          key={toolCall.id ?? `${toolCall.name}`}
+                          className="flex h-10 w-full items-center justify-between overflow-hidden rounded-md bg-adam-neutral-950 px-3 hover:bg-adam-neutral-900"
+                        >
+                          <div className="flex h-full items-center justify-center gap-2">
+                            {toolCall.name === 'create_image' && (
+                              <ImageIcon className="h-4 w-4 text-white" />
+                            )}
+                            {toolCall.name === 'create_mesh' && (
+                              <Box className="h-4 w-4 text-white" />
+                            )}
+                            {(toolCall.name === 'build_parametric_model' ||
+                              toolCall.name === 'apply_parameter_changes') && (
+                              <Box className="h-4 w-4 text-white" />
+                            )}
+                            {toolCall.status === 'pending' && (
+                              <span>
+                                {toolCall.name === 'create_image'
+                                  ? 'Queuing image...'
+                                  : toolCall.name === 'create_mesh'
+                                    ? 'Queuing mesh...'
+                                    : toolCall.name ===
+                                          'build_parametric_model' ||
+                                        toolCall.name ===
+                                          'apply_parameter_changes'
+                                      ? 'Building CAD...'
+                                      : `${toolCall.name}...`}
+                              </span>
+                            )}
+                            {toolCall.status === 'error' && (
+                              <span>
+                                {toolCall.name === 'create_image'
+                                  ? 'Failed to start image generation'
+                                  : toolCall.name === 'create_mesh'
+                                    ? 'Failed to start mesh generation'
+                                    : toolCall.name ===
+                                          'build_parametric_model' ||
+                                        toolCall.name ===
+                                          'apply_parameter_changes'
+                                      ? 'Failed to generate CAD'
+                                      : `${toolCall.name}...`}
+                              </span>
+                            )}
+                          </div>
                           {toolCall.status === 'pending' && (
-                            <span>
-                              {toolCall.name === 'create_image'
-                                ? 'Queuing image...'
-                                : toolCall.name === 'create_mesh'
-                                  ? 'Queuing mesh...'
-                                  : toolCall.name ===
-                                        'build_parametric_model' ||
-                                      toolCall.name ===
-                                        'apply_parameter_changes'
-                                    ? 'Building CAD...'
-                                    : `${toolCall.name}...`}
-                            </span>
-                          )}
-                          {toolCall.status === 'error' && (
-                            <span>
-                              {toolCall.name === 'create_image'
-                                ? 'Failed to start image generation'
-                                : toolCall.name === 'create_mesh'
-                                  ? 'Failed to start mesh generation'
-                                  : toolCall.name ===
-                                        'build_parametric_model' ||
-                                      toolCall.name ===
-                                        'apply_parameter_changes'
-                                    ? 'Failed to generate CAD'
-                                    : `${toolCall.name}...`}
-                            </span>
+                            <Loader2 className="h-4 w-4 animate-spin text-white" />
                           )}
                         </div>
-                        {toolCall.status === 'pending' && (
-                          <Loader2 className="h-4 w-4 animate-spin text-white" />
-                        )}
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
               <AssistantMessageImagesViewer message={message} />
