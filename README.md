@@ -202,10 +202,10 @@ Components and attributions:
 <div align="center">
 
 <a href="https://www.repostars.dev/?repos=Adam-CAD%2FCADAM&theme=forest">
-  <img src="./public/RepoStars.png" alt="CADAM Star History" width="800"/>
+  <img src="https://www.repostars.dev/api/embed?repo=Adam-CAD/CADAM&theme=forest" alt="CADAM Star History" width="700"/>
 </a>
 
-<sub>Chart by <a href="https://www.repostars.dev/?repos=Adam-CAD%2FCADAM&theme=forest">RepoStars</a> — click to view the live, interactive chart.</sub>
+<sub>Live chart by <a href="https://www.repostars.dev/?repos=Adam-CAD%2FCADAM&theme=forest">RepoStars</a> — click for the interactive version.</sub>
 
 </div>
 
