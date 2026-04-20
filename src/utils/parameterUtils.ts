@@ -160,9 +160,17 @@ export function isMeasurementParameter(param: Parameter): boolean {
  *
  * Called once per ParameterInput render, so we memoize by input value and
  * reuse a module-level canvas rather than allocating one each time.
+ *
+ * Detection trick: canvas fillStyle silently keeps the previous value on
+ * invalid input. We seed it with 'transparent' (normalizes to
+ * 'rgba(0, 0, 0, 0)' — never a 6-char hex, so no collision with any real
+ * color the user might declare) and check whether setting the user value
+ * changed the normalized form. Opaque colors round-trip to #rrggbb;
+ * rejected inputs leave the sentinel intact.
  */
 const cssHexCache = new Map<string, string>();
 let cssHexCtx: CanvasRenderingContext2D | null = null;
+let cssHexSentinelNormalized: string | null = null;
 
 export function cssToHex(value: string): string {
   if (typeof value !== 'string' || !value) return '';
@@ -172,16 +180,20 @@ export function cssToHex(value: string): string {
   if (typeof document === 'undefined') return '';
   if (!cssHexCtx) {
     cssHexCtx = document.createElement('canvas').getContext('2d');
+    if (cssHexCtx) {
+      cssHexCtx.fillStyle = 'transparent';
+      cssHexSentinelNormalized = cssHexCtx.fillStyle;
+    }
   }
-  if (!cssHexCtx) return '';
+  if (!cssHexCtx || cssHexSentinelNormalized === null) return '';
 
-  const sentinel = '#010101';
-  cssHexCtx.fillStyle = sentinel;
+  cssHexCtx.fillStyle = cssHexSentinelNormalized;
   cssHexCtx.fillStyle = value;
+  const normalized = cssHexCtx.fillStyle;
   let result = '';
-  if (cssHexCtx.fillStyle !== sentinel || value.toLowerCase() === sentinel) {
-    if (/^#[0-9a-f]{6}$/i.test(cssHexCtx.fillStyle)) {
-      result = cssHexCtx.fillStyle.toUpperCase();
+  if (normalized !== cssHexSentinelNormalized) {
+    if (/^#[0-9a-f]{6}$/i.test(normalized)) {
+      result = normalized.toUpperCase();
     }
   }
   cssHexCache.set(value, result);

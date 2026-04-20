@@ -239,22 +239,22 @@ export function OpenSCADPreview({
           geom.computeVertexNormals();
 
           const firstFace = faces[0];
-          const useFallback = !firstFace.color || key === '__default';
+          const faceColor = key === '__default' ? null : firstFace.color;
           // Keep the picker's metallic look when falling back, but render
           // SCAD-declared colors with a low-metalness matte finish so they
           // read as the author intended instead of picking up cool sky-tint
           // highlights from the HDR environment.
           const mat = new MeshStandardMaterial({
-            color: useFallback
-              ? fallbackColorRef.current
-              : (Math.round(firstFace.color![0] * 255) << 16) |
-                (Math.round(firstFace.color![1] * 255) << 8) |
-                Math.round(firstFace.color![2] * 255),
-            metalness: useFallback ? 0.6 : 0.05,
-            roughness: useFallback ? 0.3 : 0.7,
-            envMapIntensity: useFallback ? 0.3 : 0.15,
-            transparent: firstFace.color ? firstFace.color[3] < 1 : false,
-            opacity: firstFace.color ? firstFace.color[3] : 1,
+            color: faceColor
+              ? (Math.round(faceColor[0] * 255) << 16) |
+                (Math.round(faceColor[1] * 255) << 8) |
+                Math.round(faceColor[2] * 255)
+              : fallbackColorRef.current,
+            metalness: faceColor ? 0.05 : 0.6,
+            roughness: faceColor ? 0.7 : 0.3,
+            envMapIntensity: faceColor ? 0.15 : 0.3,
+            transparent: faceColor ? faceColor[3] < 1 : false,
+            opacity: faceColor ? faceColor[3] : 1,
           });
 
           group.add(new Mesh(geom, mat));
