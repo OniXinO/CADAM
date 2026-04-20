@@ -1420,11 +1420,12 @@ Output:`;
         throw new Error('No valid image found for textureless mesh generation');
       }
 
-      // Submit to Tripo H3.1 with the generated image
+      // Submit to Tripo v2.5 with the generated image
+      // NOTE: H3.1 (newer model) currently returns downstream_service_error on
+      // textureless requests (Tripo-side 500). Reverted to v2.5 until fixed.
       const tripoInput = {
         image_url: imageInputs[0],
-        texture: false,
-        pbr: false,
+        texture: 'no' as const,
         orientation: 'default' as const,
         // Cap face count for textureless generations at 50k
         ...(polygonCount !== undefined
@@ -1432,16 +1433,16 @@ Output:`;
           : { face_limit: TEXTURELESS_MAX_POLYGONS }),
       };
       try {
-        await fal.queue.submit('tripo3d/h3.1/image-to-3d', {
+        await fal.queue.submit('tripo3d/tripo/v2.5/image-to-3d', {
           input: tripoInput,
           webhookUrl: `${supabaseHost}/functions/v1/fal-webhook?id=${meshId}`,
         });
         debugLog(
-          'Successfully submitted to Tripo H3.1 textureless with conversational context',
+          'Successfully submitted to Tripo v2.5 textureless with conversational context',
         );
       } catch (submitError) {
         const errObj = submitError as { body?: unknown; status?: number };
-        console.error('Tripo H3.1 submit failed:', {
+        console.error('Tripo v2.5 submit failed:', {
           message:
             submitError instanceof Error
               ? submitError.message
