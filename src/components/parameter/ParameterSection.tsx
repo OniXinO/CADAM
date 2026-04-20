@@ -24,7 +24,6 @@ import { ParameterInput } from '@/components/parameter/ParameterInput';
 import {
   validateParameterValue,
   isColorParameter,
-  cssToHex,
 } from '@/utils/parameterUtils';
 import { useCurrentMessage } from '@/contexts/CurrentMessageContext';
 import { downloadSTLFile, downloadOpenSCADFile } from '@/utils/downloadUtils';
@@ -55,7 +54,7 @@ export function ParameterSection({
     }
     return { mainParameters: main, colorParameters: color };
   }, [parameters]);
-  const [colorsOpen, setColorsOpen] = useState(false);
+  const [colorsOpen, setColorsOpen] = useState(true);
 
   // Debounce timer for compilation
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -182,23 +181,6 @@ export function ParameterSection({
                     Colors
                     <span className="text-[10px] text-adam-neutral-400">
                       {colorParameters.length}
-                    </span>
-                    <span className="flex items-center gap-1">
-                      {colorParameters.slice(0, 5).map((p) => {
-                        const hex = cssToHex(String(p.value ?? ''));
-                        return (
-                          <span
-                            key={p.name}
-                            className="h-2.5 w-2.5 rounded-full ring-1 ring-adam-neutral-700/60"
-                            style={{ backgroundColor: hex || 'transparent' }}
-                          />
-                        );
-                      })}
-                      {colorParameters.length > 5 && (
-                        <span className="text-[10px] text-adam-neutral-400">
-                          +{colorParameters.length - 5}
-                        </span>
-                      )}
                     </span>
                   </span>
                   <ChevronDown
