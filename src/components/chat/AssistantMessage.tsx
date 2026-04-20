@@ -326,14 +326,19 @@ export function AssistantMessage({
                   <MeshImagePreview meshId={message.content.mesh.id} />
                 </div>
               )}
-              {message.content.artifact && (
-                <ObjectButton
-                  message={message}
-                  currentMessage={currentMessage}
-                  setCurrentMessage={setCurrentMessage}
-                  currentVersion={currentVersion}
-                />
-              )}
+              {message.content.artifact &&
+                !message.content.toolCalls?.some(
+                  (c) =>
+                    c.name === 'build_parametric_model' &&
+                    c.status === 'pending',
+                ) && (
+                  <ObjectButton
+                    message={message}
+                    currentMessage={currentMessage}
+                    setCurrentMessage={setCurrentMessage}
+                    currentVersion={currentVersion}
+                  />
+                )}
             </>
           )}
 

@@ -20,11 +20,13 @@ export function StreamingCodeBlock({
   const stickToBottomRef = useRef(true);
   const [visibleCount, setVisibleCount] = useState(0);
 
-  // Catch up to the incoming stream at a readable pace.
+  // Catch up to the incoming stream at a readable pace. Scale with backlog
+  // so very long responses finish in ~1.5s rather than tens of seconds.
   useEffect(() => {
     if (visibleCount >= code.length) return;
+    const backlog = code.length - visibleCount;
     const step = isStreaming
-      ? REVEAL_CHARS_PER_TICK
+      ? Math.max(REVEAL_CHARS_PER_TICK, Math.ceil(backlog / 60))
       : Math.max(REVEAL_CHARS_PER_TICK, Math.ceil(code.length / 40));
     const id = window.setTimeout(() => {
       setVisibleCount((prev) => Math.min(prev + step, code.length));

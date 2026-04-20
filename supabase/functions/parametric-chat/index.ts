@@ -675,90 +675,94 @@ Deno.serve(async (req) => {
             buffer = lines.pop() || '';
 
             for (const line of lines) {
-              if (line.startsWith('data: ')) {
-                const data = line.slice(6);
-                if (data === '[DONE]') continue;
+              if (!line.startsWith('data: ')) continue;
+              const data = line.slice(6);
+              if (data === '[DONE]') continue;
 
-                try {
-                  const chunk = JSON.parse(data);
+              let chunk: {
+                error?: { message?: string };
+                choices?: Array<{
+                  delta?: {
+                    content?: string;
+                    reasoning?: string;
+                    tool_calls?: Array<{
+                      index?: number;
+                      id?: string;
+                      function?: { name?: string; arguments?: string };
+                    }>;
+                  };
+                  finish_reason?: string;
+                }>;
+              };
+              try {
+                chunk = JSON.parse(data);
+              } catch (e) {
+                // Malformed chunk — log and skip, don't abort the stream.
+                console.error('Error parsing SSE chunk:', e);
+                continue;
+              }
 
-                  // Detect OpenRouter error responses in the SSE stream
-                  if (chunk.error) {
-                    console.error('OpenRouter stream error:', chunk.error);
-                    throw new Error(
-                      chunk.error.message ||
-                        `OpenRouter error: ${JSON.stringify(chunk.error)}`,
-                    );
-                  }
+              // Surface API errors so the outer catch can mark tools as errored
+              // — never swallow them in the parse-tolerance block above.
+              if (chunk.error) {
+                console.error('OpenRouter stream error:', chunk.error);
+                throw new Error(
+                  chunk.error.message ||
+                    `OpenRouter error: ${JSON.stringify(chunk.error)}`,
+                );
+              }
 
-                  const delta = chunk.choices?.[0]?.delta;
+              const delta = chunk.choices?.[0]?.delta;
+              if (!delta) continue;
 
-                  if (!delta) continue;
+              if (delta.content) {
+                content = {
+                  ...content,
+                  text: (content.text || '') + delta.content,
+                };
+                streamMessage(controller, { ...newMessageData, content });
+              }
 
-                  // Handle text content
-                  if (delta.content) {
+              // delta.reasoning is consumed silently; we don't surface internal
+              // reasoning tokens in the final message.
+
+              if (delta.tool_calls) {
+                for (const toolCall of delta.tool_calls) {
+                  if (toolCall.id) {
+                    currentToolCall = {
+                      id: toolCall.id,
+                      name: toolCall.function?.name || '',
+                      arguments: '',
+                    };
                     content = {
                       ...content,
-                      text: (content.text || '') + delta.content,
+                      toolCalls: [
+                        ...(content.toolCalls || []),
+                        {
+                          name: currentToolCall.name,
+                          id: currentToolCall.id,
+                          status: 'pending',
+                        },
+                      ],
                     };
-                    streamMessage(controller, { ...newMessageData, content });
+                    streamMessage(controller, {
+                      ...newMessageData,
+                      content,
+                    });
                   }
 
-                  // Handle reasoning content (if returned by OpenRouter)
-                  if (delta.reasoning) {
-                    // We can optionally display this, but for now we just consume it so it doesn't break anything
-                    // Or append to text if we want to show it?
-                    // Usually we don't show internal reasoning in the final message unless explicitly requested.
+                  if (toolCall.function?.arguments && currentToolCall) {
+                    currentToolCall.arguments += toolCall.function.arguments;
                   }
-
-                  // Handle tool calls
-                  if (delta.tool_calls) {
-                    for (const toolCall of delta.tool_calls) {
-                      const _index = toolCall.index || 0;
-
-                      // Start of new tool call
-                      if (toolCall.id) {
-                        currentToolCall = {
-                          id: toolCall.id,
-                          name: toolCall.function?.name || '',
-                          arguments: '',
-                        };
-                        content = {
-                          ...content,
-                          toolCalls: [
-                            ...(content.toolCalls || []),
-                            {
-                              name: currentToolCall.name,
-                              id: currentToolCall.id,
-                              status: 'pending',
-                            },
-                          ],
-                        };
-                        streamMessage(controller, {
-                          ...newMessageData,
-                          content,
-                        });
-                      }
-
-                      // Accumulate arguments
-                      if (toolCall.function?.arguments && currentToolCall) {
-                        currentToolCall.arguments +=
-                          toolCall.function.arguments;
-                      }
-                    }
-                  }
-
-                  // Check if tool call is complete (when we get finish_reason)
-                  if (
-                    chunk.choices?.[0]?.finish_reason === 'tool_calls' &&
-                    currentToolCall
-                  ) {
-                    await handleToolCall(currentToolCall);
-                    currentToolCall = null;
-                  }
-                } catch (e) {
-                  console.error('Error parsing SSE chunk:', e);
                 }
+              }
+
+              if (
+                chunk.choices?.[0]?.finish_reason === 'tool_calls' &&
+                currentToolCall
+              ) {
+                await handleToolCall(currentToolCall);
+                currentToolCall = null;
               }
             }
           }
@@ -1040,16 +1044,9 @@ Deno.serve(async (req) => {
               codeGenFailed = true;
             }
 
-            const titleResult = await Promise.allSettled([titlePromise]).then(
-              (r) => r[0],
-            );
-
             const code = stripCodeFences(rawCode.trim()).trim();
 
-            let title =
-              titleResult.status === 'fulfilled'
-                ? titleResult.value
-                : 'Adam Object';
+            let title = await titlePromise.catch(() => 'Adam Object');
             const lower = title.toLowerCase();
             if (lower.includes('sorry') || lower.includes('apologize'))
               title = 'Adam Object';
