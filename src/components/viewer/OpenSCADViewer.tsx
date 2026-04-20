@@ -121,10 +121,22 @@ export function OpenSCADPreview({
 
         const parsed = parseColoredOff(text);
 
-        // Honor SCAD colors verbatim — OpenSCAD's default model color counts
-        // as an expressive choice (it's the color the render shows when the
-        // SCAD author didn't override it). The picker only matters for the
-        // STL fallback when OFF parsing fails entirely.
+        // OpenSCAD paints any face without an explicit color() call with its
+        // built-in model yellow (#F9D72C ≈ 249,215,44). That's a noisy
+        // default for our preview — strip it so those faces fall through to
+        // the brand fallback color instead. Manifold also emits a secondary
+        // yellow-green (#9DCB51 ≈ 157,203,81) for CSG-cut faces; treat that
+        // the same. Explicit color() values pass through untouched.
+        for (const face of parsed.faces) {
+          if (!face.color) continue;
+          const r = Math.round(face.color[0] * 255);
+          const g = Math.round(face.color[1] * 255);
+          const b = Math.round(face.color[2] * 255);
+          const isOpenscadDefault = r === 249 && g === 215 && b === 44;
+          const isManifoldCutDefault = r === 157 && g === 203 && b === 81;
+          if (isOpenscadDefault || isManifoldCutDefault) face.color = null;
+        }
+
         const buckets = new Map<string, typeof parsed.faces>();
         for (const face of parsed.faces) {
           const key = face.color ? face.color.join(',') : '__default';
