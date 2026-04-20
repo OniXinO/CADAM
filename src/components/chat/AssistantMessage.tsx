@@ -207,11 +207,13 @@ export function AssistantMessage({
           ) : (
             <>
               {conversation.type === 'parametric' &&
-                isLastMessage &&
                 !message.content.text &&
                 (!message.content.toolCalls ||
                   message.content.toolCalls.length === 0) &&
-                !message.content.artifact && (
+                !message.content.artifact &&
+                !message.content.mesh &&
+                (!message.content.images ||
+                  message.content.images.length === 0) && (
                   <div className="flex h-10 w-full items-center justify-between overflow-hidden rounded-md bg-adam-neutral-950 px-3">
                     <div className="flex h-full items-center justify-center gap-2">
                       <Box className="h-4 w-4 text-white" />
