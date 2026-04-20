@@ -976,34 +976,46 @@ Deno.serve(async (req) => {
                   const data = line.slice(6);
                   if (data === '[DONE]') continue;
 
+                  let chunk: {
+                    error?: { message?: string };
+                    choices?: Array<{
+                      delta?: { content?: string };
+                    }>;
+                  };
                   try {
-                    const chunk = JSON.parse(data);
-                    if (chunk.error) {
-                      throw new Error(
-                        chunk.error.message ||
-                          `OpenRouter error: ${JSON.stringify(chunk.error)}`,
-                      );
-                    }
-                    const deltaContent = chunk.choices?.[0]?.delta?.content;
-                    if (typeof deltaContent === 'string' && deltaContent) {
-                      rawCode += deltaContent;
-                      const streamed = stripCodeFences(rawCode);
-                      content = {
-                        ...content,
-                        artifact: {
-                          title: 'Adam Object',
-                          version: 'v1',
-                          code: streamed,
-                          parameters: [],
-                        },
-                      };
-                      streamMessage(controller, {
-                        ...newMessageData,
-                        content,
-                      });
-                    }
+                    chunk = JSON.parse(data);
                   } catch (e) {
+                    // Malformed chunk — log and skip, don't abort the stream.
                     console.error('Error parsing code SSE chunk:', e);
+                    continue;
+                  }
+
+                  // Surfaced API errors must abort code-gen so the outer
+                  // catch can mark the tool call as failed — never swallow.
+                  if (chunk.error) {
+                    throw new Error(
+                      chunk.error.message ||
+                        `OpenRouter error: ${JSON.stringify(chunk.error)}`,
+                    );
+                  }
+
+                  const deltaContent = chunk.choices?.[0]?.delta?.content;
+                  if (typeof deltaContent === 'string' && deltaContent) {
+                    rawCode += deltaContent;
+                    const streamed = stripCodeFences(rawCode);
+                    content = {
+                      ...content,
+                      artifact: {
+                        title: 'Adam Object',
+                        version: 'v1',
+                        code: streamed,
+                        parameters: [],
+                      },
+                    };
+                    streamMessage(controller, {
+                      ...newMessageData,
+                      content,
+                    });
                   }
                 }
               }
