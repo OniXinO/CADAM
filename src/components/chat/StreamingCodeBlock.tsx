@@ -3,6 +3,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 interface StreamingCodeBlockProps {
   code: string;
   isStreaming: boolean;
+  filename?: string;
 }
 
 // Keep it compact — stays inside the chat bubble without swallowing the view.
@@ -15,6 +16,7 @@ const REVEAL_TICK_MS = 28;
 export function StreamingCodeBlock({
   code,
   isStreaming,
+  filename = 'model.scad',
 }: StreamingCodeBlockProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const stickToBottomRef = useRef(true);
@@ -63,8 +65,8 @@ export function StreamingCodeBlock({
     <div className="w-full overflow-hidden rounded-lg border border-white/[0.06] bg-adam-neutral-950/90 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
       <div className="flex h-7 items-center justify-between border-b border-white/[0.06] px-3">
         <div className="flex items-center gap-1.5 text-[10.5px] font-medium uppercase tracking-[0.08em] text-adam-neutral-400">
-          <span className="h-1.5 w-1.5 rounded-full bg-adam-blue/80" />
-          model.scad
+          <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-adam-blue/80" />
+          <span className="truncate">{filename}</span>
         </div>
         {showCaret && (
           <div className="flex items-center gap-1.5 text-[10.5px] text-adam-neutral-500">
