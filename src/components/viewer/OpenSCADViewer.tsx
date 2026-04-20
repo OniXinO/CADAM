@@ -77,6 +77,10 @@ export function OpenSCADPreview({
   // Hold on to the last colored group so its meshes' GPU resources can be
   // released when a new compile replaces it (or the component unmounts).
   const mountedGroupRef = useRef<Group | null>(null);
+  // Same story for the STL-path BufferGeometry — every compile produces a
+  // fresh one, and even when OFF wins the render the STL still parses, so
+  // the previous geometry's VRAM must be released on replacement.
+  const mountedGeometryRef = useRef<BufferGeometry | null>(null);
 
   useEffect(() => {
     if (!scadCode) return;
@@ -122,6 +126,12 @@ export function OpenSCADPreview({
           const geom = loader.parse(buffer);
           geom.center();
           geom.computeVertexNormals();
+          // Release the previous geometry's vertex buffers before swapping
+          // it in. Without this, recompiles accumulate orphaned VRAM —
+          // especially when the OFF path wins the render gate and the STL
+          // geometry never even gets drawn.
+          if (mountedGeometryRef.current) mountedGeometryRef.current.dispose();
+          mountedGeometryRef.current = geom;
           setGeometry(geom);
         })
         .catch((err) => {
@@ -222,6 +232,15 @@ export function OpenSCADPreview({
           group.add(new Mesh(geom, mat));
         }
 
+        // If every face was rejected (malformed OFF, empty mesh, etc.) the
+        // group has zero children — leave coloredGroup null so the render
+        // gate falls back to the single-color STL path instead of drawing
+        // nothing.
+        if (group.children.length === 0) {
+          if (!cancelled) setColoredGroup(null);
+          return;
+        }
+
         // Release the previous group's GPU resources before swapping it in.
         if (mountedGroupRef.current) disposeGroup(mountedGroupRef.current);
         mountedGroupRef.current = group;
@@ -237,12 +256,16 @@ export function OpenSCADPreview({
     };
   }, [offOutput, color]);
 
-  // Release the last mounted group's GPU resources on unmount.
+  // Release the last mounted group's and geometry's GPU resources on unmount.
   useEffect(() => {
     return () => {
       if (mountedGroupRef.current) {
         disposeGroup(mountedGroupRef.current);
         mountedGroupRef.current = null;
+      }
+      if (mountedGeometryRef.current) {
+        mountedGeometryRef.current.dispose();
+        mountedGeometryRef.current = null;
       }
     };
   }, []);
