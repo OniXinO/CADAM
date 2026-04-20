@@ -488,18 +488,35 @@ Deno.serve(async (req) => {
                 : Deno.env.get('SUPABASE_URL')
               )?.trim() ?? '';
 
-            await fal.queue.submit('fal-ai/hunyuan-3d/v3.1/pro/image-to-3d', {
-              input: {
-                input_image_url: imageUrl,
-                enable_pbr: true,
-                face_count: 500000,
-              },
-              webhookUrl: `${supabaseHost}/functions/v1/fal-webhook?id=${newMeshData.id}`,
-            });
-
-            debugLog(
-              'Successfully submitted to Hunyuan3D v3.1 Pro for upscaling',
-            );
+            const hunyuanInput = {
+              input_image_url: imageUrl,
+              enable_pbr: true,
+              face_count: 500000,
+            };
+            try {
+              await fal.queue.submit('fal-ai/hunyuan-3d/v3.1/pro/image-to-3d', {
+                input: hunyuanInput,
+                webhookUrl: `${supabaseHost}/functions/v1/fal-webhook?id=${newMeshData.id}`,
+              });
+              debugLog(
+                'Successfully submitted to Hunyuan3D v3.1 Pro for upscaling',
+              );
+            } catch (submitError) {
+              const errObj = submitError as {
+                body?: unknown;
+                status?: number;
+              };
+              console.error('Hunyuan v3.1 Pro submit failed:', {
+                message:
+                  submitError instanceof Error
+                    ? submitError.message
+                    : String(submitError),
+                status: errObj?.status,
+                body: errObj?.body,
+                input: hunyuanInput,
+              });
+              throw submitError;
+            }
 
             // Create a preview for the upscaled mesh (non-blocking)
             createHunyuanPreview(
@@ -1414,13 +1431,27 @@ Output:`;
           ? { face_limit: Math.min(polygonCount, TEXTURELESS_MAX_POLYGONS) }
           : { face_limit: TEXTURELESS_MAX_POLYGONS }),
       };
-      await fal.queue.submit('tripo3d/h3.1/image-to-3d', {
-        input: tripoInput,
-        webhookUrl: `${supabaseHost}/functions/v1/fal-webhook?id=${meshId}`,
-      });
-      debugLog(
-        'Successfully submitted to Tripo H3.1 textureless with conversational context',
-      );
+      try {
+        await fal.queue.submit('tripo3d/h3.1/image-to-3d', {
+          input: tripoInput,
+          webhookUrl: `${supabaseHost}/functions/v1/fal-webhook?id=${meshId}`,
+        });
+        debugLog(
+          'Successfully submitted to Tripo H3.1 textureless with conversational context',
+        );
+      } catch (submitError) {
+        const errObj = submitError as { body?: unknown; status?: number };
+        console.error('Tripo H3.1 submit failed:', {
+          message:
+            submitError instanceof Error
+              ? submitError.message
+              : String(submitError),
+          status: errObj?.status,
+          body: errObj?.body,
+          input: tripoInput,
+        });
+        throw submitError;
+      }
 
       // Create preview using the generated image
       await createHunyuanPreview(
