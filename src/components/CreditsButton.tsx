@@ -67,6 +67,22 @@ export function CreditsButton() {
     };
   }, []);
 
+  // Drop any pinned/hover state when crossing into the mobile renderer so
+  // resizing back to desktop doesn't re-surface a stale popover.
+  useEffect(() => {
+    if (!isMobile) return;
+    setOpen(false);
+    setPinnedByClick(false);
+    if (openTimer.current) {
+      window.clearTimeout(openTimer.current);
+      openTimer.current = null;
+    }
+    if (closeTimer.current) {
+      window.clearTimeout(closeTimer.current);
+      closeTimer.current = null;
+    }
+  }, [isMobile]);
+
   if (!user) return null;
 
   if (isMobile) {
