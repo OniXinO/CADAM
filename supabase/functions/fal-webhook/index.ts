@@ -153,7 +153,7 @@ Deno.serve(async (request) => {
       debugLog('Using model_glb.url:', payload.model_glb.url);
       modelUrl = payload.model_glb.url;
     } else if (payload.model_urls?.glb?.url) {
-      // Meshy v6 / Hunyuan v3.1 Pro alternative format
+      // Meshy v6 / Hunyuan v3.1 Pro / Tripo H3.1 alternative format
       debugLog('Using model_urls.glb.url:', payload.model_urls.glb.url);
       modelUrl = payload.model_urls.glb.url;
     } else if (payload.textured_glb?.url) {
