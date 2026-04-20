@@ -185,14 +185,15 @@ class OpenSCADWrapper {
     if (
       render.log.stdErr.includes('Current top level object is not a 3D object.')
     ) {
-      // Create the SVG, which will internally be saved as out.svg
+      // Create the SVG, which will internally be saved as out.svg.
+      // Use the same flag set as the 3D path — the 2025.x build dropped
+      // --enable=manifold / --enable=fast-csg in favor of --backend=manifold.
       const svgExport = await this.executeOpenscad(
         data.code,
         'svg',
         parameters.concat([
           '--export-format=svg',
-          '--enable=manifold',
-          '--enable=fast-csg',
+          '--backend=manifold',
           '--enable=lazy-union',
           '--enable=roof',
         ]),
