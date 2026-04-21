@@ -2,6 +2,7 @@ import { Buffer } from 'node:buffer';
 import { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.49.9';
 import { GoogleGenAI, Modality } from 'npm:@google/genai';
 import { fal } from 'npm:@fal-ai/client';
+import OpenAI from 'npm:openai';
 import { reformatSignedUrl } from './messageUtils.ts';
 
 const DEBUG_LOGS =
@@ -103,6 +104,75 @@ export const generateImageWithGemini = async (
   return imageBytes;
 };
 */
+
+/**
+ * Generates an image with gpt-image-2 via the OpenAI Responses API.
+ * This is the default image model for mesh mode.
+ */
+export const generateImageWithGptImage2 = async (
+  supabaseClient: SupabaseClient,
+  openAI: OpenAI,
+  userId: string,
+  conversationId: string,
+  prompt: string,
+  images: string[],
+): Promise<Buffer> => {
+  debugLog('Generating image with gpt-image-2 via Responses API', {
+    userId,
+    conversationId,
+    prompt,
+    imagesCount: images.length,
+  });
+
+  const content: Array<
+    | { type: 'input_text'; text: string }
+    | { type: 'input_image'; image_url: string; detail: 'auto' }
+  > = [{ type: 'input_text', text: prompt || 'Generate an image' }];
+
+  if (images.length > 0) {
+    const latestImageId = images[images.length - 1];
+    const { data: imageData } = await supabaseClient.storage
+      .from('images')
+      .download(`${userId}/${conversationId}/${latestImageId}`);
+
+    if (!imageData) {
+      throw new Error(`Failed to download image ${latestImageId}`);
+    }
+
+    const imageArrayBuffer = await imageData.arrayBuffer();
+    const base64Image = Buffer.from(imageArrayBuffer).toString('base64');
+
+    content.push({
+      type: 'input_image',
+      image_url: `data:image/png;base64,${base64Image}`,
+      detail: 'auto',
+    });
+  }
+
+  // deno-lint-ignore no-explicit-any
+  const response = await (openAI as any).responses.create({
+    model: 'gpt-5.1',
+    input: [{ role: 'user', content }],
+    tools: [{ type: 'image_generation', model: 'gpt-image-2' }],
+  });
+
+  const outputItems: Array<{ type: string; result?: string }> = Array.isArray(
+    response?.output,
+  )
+    ? response.output
+    : [];
+  const imageCalls = outputItems.filter(
+    (item) => item.type === 'image_generation_call',
+  );
+  const base64Result = imageCalls[imageCalls.length - 1]?.result;
+
+  if (!base64Result) {
+    throw new Error('No generated image data from gpt-image-2');
+  }
+
+  debugLog('Successfully generated image with gpt-image-2');
+  return Buffer.from(base64Result, 'base64');
+};
 
 export const generateImageWithGeminiMultiTurn = async (
   supabaseClient: SupabaseClient,

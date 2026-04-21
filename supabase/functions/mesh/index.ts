@@ -3,11 +3,13 @@ import { corsHeaders } from '../_shared/cors.ts';
 import { fal } from 'npm:@fal-ai/client';
 import { GoogleGenAI } from 'npm:@google/genai';
 import Anthropic from 'npm:@anthropic-ai/sdk';
+import OpenAI from 'npm:openai';
 import {
   generateImageWithFalFlux,
   generateImageWithGeminiMultiTurn,
   generateImageWithGeminiFlash,
   generateImageWithGeminiFlashEdit,
+  generateImageWithGptImage2,
 } from '../_shared/imageGen.ts';
 import { Model, MeshFileType } from '@shared/types.ts';
 import {
@@ -134,6 +136,11 @@ fal.config({
 // Initialize Google GenAI client
 const googleGenAI = new GoogleGenAI({
   apiKey: Deno.env.get('GOOGLE_API_KEY') ?? '',
+});
+
+// Initialize OpenAI client for gpt-image-2 via Responses API
+const openAI = new OpenAI({
+  apiKey: Deno.env.get('OPENAI_API_KEY') ?? '',
 });
 
 const supabaseClient = getServiceRoleSupabaseClient();
@@ -845,30 +852,45 @@ async function submitMeshJob(
         let imageBytes: Buffer;
 
         try {
-          // Try Gemini Multi-Turn first
-          debugLog('Attempting image generation with Gemini Multi-Turn');
-          imageBytes = await generateImageWithGeminiMultiTurn(
+          // Default: gpt-image-2 via OpenAI Responses API
+          debugLog('Attempting image generation with gpt-image-2');
+          imageBytes = await generateImageWithGptImage2(
             supabaseClient,
-            googleGenAI,
+            openAI,
             userId,
             conversationId,
             newPrompt,
             allImages,
           );
-          debugLog('Successfully generated image with Gemini Multi-Turn');
-        } catch (geminiError) {
+          debugLog('Successfully generated image with gpt-image-2');
+        } catch (gptImageError) {
           debugLog(
-            'Gemini Multi-Turn failed, falling back to Flux:',
-            geminiError,
+            'gpt-image-2 failed, falling back to Gemini Multi-Turn (nano banana pro):',
+            gptImageError,
           );
-          // Fall back to Flux
-          imageBytes = await generateImageWithFalFlux(
-            supabaseClient,
-            userId,
-            conversationId,
-            newPrompt,
-            allImages,
-          );
+          try {
+            imageBytes = await generateImageWithGeminiMultiTurn(
+              supabaseClient,
+              googleGenAI,
+              userId,
+              conversationId,
+              newPrompt,
+              allImages,
+            );
+            debugLog('Successfully generated image with Gemini Multi-Turn');
+          } catch (geminiError) {
+            debugLog(
+              'Gemini Multi-Turn failed, falling back to Flux:',
+              geminiError,
+            );
+            imageBytes = await generateImageWithFalFlux(
+              supabaseClient,
+              userId,
+              conversationId,
+              newPrompt,
+              allImages,
+            );
+          }
         }
 
         const { error: imageUploadError } = await supabaseClient.storage
@@ -1116,22 +1138,34 @@ async function submitMeshJob(
             : `${instructions3D} Enhance and optimize the previous generation`;
 
         try {
-          imageBytes = await generateImageWithGeminiMultiTurn(
+          // Default: gpt-image-2 via OpenAI Responses API
+          imageBytes = await generateImageWithGptImage2(
             supabaseClient,
-            googleGenAI,
+            openAI,
             userId,
             conversationId,
             conversationalPrompt,
             allImages,
           );
-        } catch (_fallbackError) {
-          imageBytes = await generateImageWithFalFlux(
-            supabaseClient,
-            userId,
-            conversationId,
-            conversationalPrompt,
-            allImages,
-          );
+        } catch (_gptImageError) {
+          try {
+            imageBytes = await generateImageWithGeminiMultiTurn(
+              supabaseClient,
+              googleGenAI,
+              userId,
+              conversationId,
+              conversationalPrompt,
+              allImages,
+            );
+          } catch (_fallbackError) {
+            imageBytes = await generateImageWithFalFlux(
+              supabaseClient,
+              userId,
+              conversationId,
+              conversationalPrompt,
+              allImages,
+            );
+          }
         }
       }
 
