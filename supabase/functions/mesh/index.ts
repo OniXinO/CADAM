@@ -8,6 +8,7 @@ import {
   generateImageWithFalFlux,
   generateImageWithGeminiMultiTurn,
   generateImageWithGptImage2,
+  INSTRUCTIONS_3D as instructions3D,
 } from '../_shared/imageGen.ts';
 import { Model, MeshFileType } from '@shared/types.ts';
 import {
@@ -56,11 +57,18 @@ async function getPriorImageCallId(
   preferMeshId: string | undefined,
 ): Promise<string | null> {
   if (preferMeshId) {
+    // CRITICAL: filter by user_id + conversation_id here. preferMeshId comes
+    // from the untrusted request body, and the service-role client bypasses
+    // RLS. Without this filter, a user could pass another user's mesh UUID
+    // to thread the victim's OpenAI multi-turn continuity ID into their own
+    // gpt-image-2 call.
     const { data: meshRow } = await supabaseClient
       .from('meshes')
       .select('images')
       .eq('id', preferMeshId)
-      .single();
+      .eq('user_id', userId)
+      .eq('conversation_id', conversationId)
+      .maybeSingle();
     const meshImageIds = Array.isArray(meshRow?.images)
       ? (meshRow.images as string[])
       : [];
@@ -69,6 +77,8 @@ async function getPriorImageCallId(
         .from('images')
         .select('image_generation_call_id')
         .in('id', meshImageIds)
+        .eq('user_id', userId)
+        .eq('conversation_id', conversationId)
         .eq('status', 'success')
         .order('created_at', { ascending: false })
         .limit(1);
@@ -187,18 +197,33 @@ async function generateMeshImage(
         ...sentryContext,
         additionalContext: {
           stage: 'nano_banana_pro_fallback',
+          hasFreshUserImages,
+          priorImageCallIdStatus,
           ...sentryStage,
         },
       });
-      const imageBytes = await generateImageWithFalFlux(
-        supabaseClient,
-        userId,
-        conversationId,
-        prompt,
-        gptImageReferenceImages,
-      );
-      result = { imageBytes, imageCallId: null };
-      provider = 'flux';
+      try {
+        const imageBytes = await generateImageWithFalFlux(
+          supabaseClient,
+          userId,
+          conversationId,
+          prompt,
+          gptImageReferenceImages,
+        );
+        result = { imageBytes, imageCallId: null };
+        provider = 'flux';
+      } catch (fluxError) {
+        logError(fluxError, {
+          ...sentryContext,
+          additionalContext: {
+            stage: 'flux_fallback',
+            hasFreshUserImages,
+            priorImageCallIdStatus,
+            ...sentryStage,
+          },
+        });
+        throw fluxError;
+      }
     }
   }
 
@@ -967,9 +992,6 @@ async function submitMeshJob(
           })
           .eq('id', meshId);
 
-        const instructions3D =
-          'You are generating a fully textured and rendered 3D model. Output one centered 3D model or multiple centered objects, no text. Plain white background (or an empty background which provides optimal contrast with the textures of the 3D model), neutral lighting, and a soft shadow directly under the 3D model. Keep the entire object fully in-frame with 5–10% padding; no cropping. Make sure the description strongly impacts the form and shape of the 3D Model not just the surface texture';
-
         const newPrompt =
           allImages.length > 0
             ? `${instructions3D} Edit the provided image(s) to: ${text}`
@@ -1043,9 +1065,6 @@ async function submitMeshJob(
             images: [imageData.id],
           })
           .eq('id', meshId);
-
-        const instructions3D =
-          'You are generating a fully textured and rendered 3D model. Output one centered 3D model or multiple centered objects, no text. Plain white background (or an empty background which provides optimal contrast with the textures of the 3D model), neutral lighting, and a soft shadow directly under the 3D model. Keep the entire object fully in-frame with 5–10% padding; no cropping. Make sure the description strongly impacts the form and shape of the 3D Model not just the surface texture';
 
         const newPrompt =
           allImages.length > 0
@@ -1189,9 +1208,7 @@ async function submitMeshJob(
         })
         .eq('id', meshId);
 
-      // Use consistent instructions for base image generation
-      const instructions3D =
-        'You are generating a fully textured and rendered 3D model. Output one centered 3D model or multiple centered objects, no text. Plain white background (or an empty background which provides optimal contrast with the textures of the 3D model), neutral lighting, and a soft shadow directly under the 3D model. Keep the entire object fully in-frame with 5–10% padding; no cropping. Make sure the description strongly impacts the form and shape of the 3D Model not just the surface texture';
+      // Use the shared INSTRUCTIONS_3D preamble (imported as instructions3D).
 
       // Build the prompt based on conversation stage.
       let ultraPrompt: string;
