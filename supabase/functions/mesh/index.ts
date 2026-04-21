@@ -87,10 +87,13 @@ async function getSignedImageUrl(
   return reformatSignedUrl(signedUrlData.signedUrl);
 }
 
-// Returns the image_generation_call_id of the most recent gpt-image-2
-// generation in this conversation, or null if none exists. Used to thread
-// prior image state into multi-turn edits via the canonical Responses API
-// pattern instead of re-encoding the image as base64.
+// Returns the image_generation_call_id of the *immediately* previous image
+// in this conversation, or null if that image was produced by a fallback
+// (Gemini/Flux) and has no call ID. Crucially, we do NOT filter for
+// non-null call IDs here: if the last turn fell back, skipping its null
+// row and surfacing an older gpt-image-2 call ID would make gpt-image-2
+// edit an image two turns ago while the user is looking at the fallback
+// output.
 async function getLatestGptImageCallId(
   supabaseClient: SupabaseClient,
   userId: string,
@@ -102,7 +105,6 @@ async function getLatestGptImageCallId(
     .eq('conversation_id', conversationId)
     .eq('user_id', userId)
     .eq('status', 'success')
-    .not('image_generation_call_id', 'is', null)
     .order('created_at', { ascending: false })
     .limit(1);
 
