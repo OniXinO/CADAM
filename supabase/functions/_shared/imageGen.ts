@@ -105,9 +105,19 @@ export const generateImageWithGemini = async (
 };
 */
 
+export type GptImage2Result = {
+  imageBytes: Buffer;
+  imageCallId: string | null;
+};
+
 /**
  * Generates an image with gpt-image-2 via the OpenAI Responses API.
  * This is the default image model for mesh mode.
+ *
+ * Multi-turn: when `priorImageCallId` is provided, the prior
+ * image_generation_call is referenced by ID (the canonical edit pattern)
+ * instead of re-encoding the image as base64. Newly uploaded references
+ * (no prior call ID) fall through to input_image base64.
  */
 export const generateImageWithGptImage2 = async (
   supabaseClient: SupabaseClient,
@@ -116,12 +126,14 @@ export const generateImageWithGptImage2 = async (
   conversationId: string,
   prompt: string,
   images: string[],
-): Promise<Buffer> => {
+  priorImageCallId: string | null,
+): Promise<GptImage2Result> => {
   debugLog('Generating image with gpt-image-2 via Responses API', {
     userId,
     conversationId,
     prompt,
     imagesCount: images.length,
+    priorImageCallId,
   });
 
   const content: Array<
@@ -129,7 +141,11 @@ export const generateImageWithGptImage2 = async (
     | { type: 'input_image'; image_url: string; detail: 'auto' }
   > = [{ type: 'input_text', text: prompt || 'Generate an image' }];
 
-  if (images.length > 0) {
+  // Base64 path is only used when we have no prior gpt-image-2 call to
+  // reference (e.g. a freshly uploaded user image).
+  const shouldEncodeReference = !priorImageCallId && images.length > 0;
+
+  if (shouldEncodeReference) {
     const latestImageId = images[images.length - 1];
     const { data: imageData } = await supabaseClient.storage
       .from('images')
@@ -153,25 +169,61 @@ export const generateImageWithGptImage2 = async (
     });
   }
 
+  const input: Array<
+    | { role: 'user'; content: typeof content }
+    | {
+        type: 'image_generation_call';
+        id: string;
+        result: string | null;
+        status: 'completed';
+      }
+  > = [{ role: 'user', content }];
+
+  if (priorImageCallId) {
+    input.push({
+      type: 'image_generation_call',
+      id: priorImageCallId,
+      result: null,
+      status: 'completed',
+    });
+  }
+
   // gpt-4o is the lightweight orchestrator for the Responses API
   // image_generation tool; gpt-image-2 is the actual image model invoked.
   const response = await openAI.responses.create({
     model: 'gpt-4o',
-    input: [{ role: 'user', content }],
-    tools: [{ type: 'image_generation', model: 'gpt-image-2' }],
+    input,
+    tools: [
+      {
+        type: 'image_generation',
+        model: 'gpt-image-2',
+        quality: 'high',
+        size: '1024x1024',
+        output_format: 'png',
+        background: 'opaque',
+        moderation: 'low',
+      },
+    ],
   });
 
   const imageCalls = response.output.flatMap((item) =>
     item.type === 'image_generation_call' ? [item] : [],
   );
-  const base64Result = imageCalls[imageCalls.length - 1]?.result;
+  const latestCall = imageCalls[imageCalls.length - 1];
 
-  if (!base64Result) {
+  if (!latestCall?.result) {
     throw new Error('No generated image data from gpt-image-2');
   }
 
-  debugLog('Successfully generated image with gpt-image-2');
-  return Buffer.from(base64Result, 'base64');
+  debugLog('Successfully generated image with gpt-image-2', {
+    imageCallId: latestCall.id,
+    status: latestCall.status,
+  });
+
+  return {
+    imageBytes: Buffer.from(latestCall.result, 'base64'),
+    imageCallId: latestCall.id,
+  };
 };
 
 export const generateImageWithGeminiMultiTurn = async (

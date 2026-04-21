@@ -87,6 +87,28 @@ async function getSignedImageUrl(
   return reformatSignedUrl(signedUrlData.signedUrl);
 }
 
+// Returns the image_generation_call_id of the most recent gpt-image-2
+// generation in this conversation, or null if none exists. Used to thread
+// prior image state into multi-turn edits via the canonical Responses API
+// pattern instead of re-encoding the image as base64.
+async function getLatestGptImageCallId(
+  supabaseClient: SupabaseClient,
+  userId: string,
+  conversationId: string,
+): Promise<string | null> {
+  const { data } = await supabaseClient
+    .from('images')
+    .select('image_generation_call_id')
+    .eq('conversation_id', conversationId)
+    .eq('user_id', userId)
+    .eq('status', 'success')
+    .not('image_generation_call_id', 'is', null)
+    .order('created_at', { ascending: false })
+    .limit(1);
+
+  return data?.[0]?.image_generation_call_id ?? null;
+}
+
 // Helper function to get the most recent mesh preview from the conversation
 async function getRecentMeshPreview(
   supabaseClient: SupabaseClient,
@@ -850,18 +872,35 @@ async function submitMeshJob(
             : `${instructions3D} Generate a new image: ${text}`;
 
         let imageBytes: Buffer;
+        let imageCallId: string | null = null;
+
+        // Prefer the canonical Responses API multi-turn pattern: reference the
+        // prior gpt-image-2 call by ID instead of re-encoding base64. A fresh
+        // user upload in this turn overrides — treat it as new reference
+        // material via input_image.
+        const hasFreshUserImages = (images ?? []).length > 0;
+        const priorImageCallId = hasFreshUserImages
+          ? null
+          : await getLatestGptImageCallId(
+              supabaseClient,
+              userId,
+              conversationId,
+            );
 
         try {
           // Default: gpt-image-2 via OpenAI Responses API
           debugLog('Attempting image generation with gpt-image-2');
-          imageBytes = await generateImageWithGptImage2(
+          const result = await generateImageWithGptImage2(
             supabaseClient,
             openAI,
             userId,
             conversationId,
             newPrompt,
             allImages,
+            priorImageCallId,
           );
+          imageBytes = result.imageBytes;
+          imageCallId = result.imageCallId;
           debugLog('Successfully generated image with gpt-image-2');
         } catch (gptImageError) {
           debugLog(
@@ -907,6 +946,7 @@ async function submitMeshJob(
           .from('images')
           .update({
             status: 'success',
+            image_generation_call_id: imageCallId,
           })
           .eq('id', imageData.id);
 
@@ -1105,6 +1145,7 @@ async function submitMeshJob(
         'You are generating a fully textured and rendered 3D model. Output one centered 3D model or multiple centered objects, no text. Plain white background (or an empty background which provides optimal contrast with the textures of the 3D model), neutral lighting, and a soft shadow directly under the 3D model. Keep the entire object fully in-frame with 5–10% padding; no cropping. Make sure the description strongly impacts the form and shape of the 3D Model not just the surface texture';
 
       let imageBytes: Buffer;
+      let imageCallId: string | null = null;
 
       if (useGeminiFlash) {
         const flashPrompt = `${instructions3D} Generate: ${text}`;
@@ -1137,16 +1178,31 @@ async function submitMeshJob(
             ? `${instructions3D} Edit/modify the previous generation: ${text}`
             : `${instructions3D} Enhance and optimize the previous generation`;
 
+        // Prefer referencing the prior gpt-image-2 call by ID for true
+        // conversational continuity; fall back to base64 only when the user
+        // just uploaded fresh reference material.
+        const hasFreshUserImages = (images ?? []).length > 0;
+        const priorImageCallId = hasFreshUserImages
+          ? null
+          : await getLatestGptImageCallId(
+              supabaseClient,
+              userId,
+              conversationId,
+            );
+
         try {
           // Default: gpt-image-2 via OpenAI Responses API
-          imageBytes = await generateImageWithGptImage2(
+          const result = await generateImageWithGptImage2(
             supabaseClient,
             openAI,
             userId,
             conversationId,
             conversationalPrompt,
             allImages,
+            priorImageCallId,
           );
+          imageBytes = result.imageBytes;
+          imageCallId = result.imageCallId;
         } catch (gptImageError) {
           debugLog(
             'gpt-image-2 failed, falling back to Gemini Multi-Turn (nano banana pro):',
@@ -1190,7 +1246,10 @@ async function submitMeshJob(
 
       await supabaseClient
         .from('images')
-        .update({ status: 'success' })
+        .update({
+          status: 'success',
+          image_generation_call_id: imageCallId,
+        })
         .eq('id', imageData.id);
 
       // Get signed URL for the base image to send to Meshy
