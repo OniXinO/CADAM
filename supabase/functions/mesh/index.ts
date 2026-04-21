@@ -147,8 +147,11 @@ async function generateMeshImage(
     conversationId,
   };
 
+  let provider: 'gpt-image-2' | 'nano-banana-pro' | 'flux';
+  let result: { imageBytes: Buffer; imageCallId: string | null };
+
   try {
-    return await generateImageWithGptImage2(
+    result = await generateImageWithGptImage2(
       supabaseClient,
       openAI,
       userId,
@@ -157,6 +160,7 @@ async function generateMeshImage(
       gptImageReferenceImages,
       priorImageCallId,
     );
+    provider = 'gpt-image-2';
   } catch (gptImageError) {
     logError(gptImageError, {
       ...sentryContext,
@@ -176,7 +180,8 @@ async function generateMeshImage(
         prompt,
         gptImageReferenceImages,
       );
-      return { imageBytes, imageCallId: null };
+      result = { imageBytes, imageCallId: null };
+      provider = 'nano-banana-pro';
     } catch (geminiError) {
       logError(geminiError, {
         ...sentryContext,
@@ -192,9 +197,20 @@ async function generateMeshImage(
         prompt,
         gptImageReferenceImages,
       );
-      return { imageBytes, imageCallId: null };
+      result = { imageBytes, imageCallId: null };
+      provider = 'flux';
     }
   }
+
+  // One line per mesh generation — low noise, high signal. Grep for
+  // "provider=flux" etc. in Supabase function logs to audit fallback rate.
+  console.log(
+    `[mesh] image_gen provider=${provider} meshModel=${sentryStage.meshModel}` +
+      (sentryStage.subStage ? ` subStage=${sentryStage.subStage}` : '') +
+      ` callId=${result.imageCallId ?? 'none'}`,
+  );
+
+  return result;
 }
 
 // Helper function to get the most recent mesh preview from the conversation
