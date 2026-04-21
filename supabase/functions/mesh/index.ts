@@ -1022,13 +1022,55 @@ async function submitMeshJob(
             ? `${instructions3D} Edit the provided image(s) to: ${text}`
             : `${instructions3D} Generate a new image: ${text}`;
 
-        const imageBytes = await generateImageWithFalFlux(
-          supabaseClient,
-          userId,
-          conversationId,
-          newPrompt,
-          allImages,
-        );
+        const hasFreshUserImages = (images ?? []).length > 0;
+        const priorImageCallId = hasFreshUserImages
+          ? null
+          : await getLatestGptImageCallId(
+              supabaseClient,
+              userId,
+              conversationId,
+            );
+        const gptImageReferenceImages = hasFreshUserImages
+          ? (images ?? [])
+          : allImages;
+
+        let imageBytes: Buffer;
+        let imageCallId: string | null = null;
+
+        try {
+          // Default: gpt-image-2 via OpenAI Responses API
+          const result = await generateImageWithGptImage2(
+            supabaseClient,
+            openAI,
+            userId,
+            conversationId,
+            newPrompt,
+            gptImageReferenceImages,
+            priorImageCallId,
+          );
+          imageBytes = result.imageBytes;
+          imageCallId = result.imageCallId;
+        } catch (gptImageError) {
+          logError(gptImageError, {
+            functionName: 'mesh',
+            statusCode: 500,
+            userId,
+            conversationId,
+            additionalContext: {
+              stage: 'gpt_image_2_fallback',
+              meshModel: 'fast',
+              hasFreshUserImages,
+              usedPriorImageCallId: priorImageCallId !== null,
+            },
+          });
+          imageBytes = await generateImageWithFalFlux(
+            supabaseClient,
+            userId,
+            conversationId,
+            newPrompt,
+            allImages,
+          );
+        }
 
         const { error: imageUploadError } = await supabaseClient.storage
           .from('images')
@@ -1042,7 +1084,10 @@ async function submitMeshJob(
 
         await supabaseClient
           .from('images')
-          .update({ status: 'success' })
+          .update({
+            status: 'success',
+            image_generation_call_id: imageCallId,
+          })
           .eq('id', imageData.id);
 
         const { data: imageSignedUrl, error: imageSignedUrlError } =
@@ -1171,27 +1216,79 @@ async function submitMeshJob(
       let imageCallId: string | null = null;
 
       if (useGeminiFlash) {
-        const flashPrompt = `${instructions3D} Generate: ${text}`;
-        imageBytes = await generateImageWithGeminiFlash(
-          googleGenAI,
-          flashPrompt,
-        );
+        const gptPrompt = `${instructions3D} Generate: ${text}`;
+        try {
+          // Default: gpt-image-2 via OpenAI Responses API (text-only)
+          const result = await generateImageWithGptImage2(
+            supabaseClient,
+            openAI,
+            userId,
+            conversationId,
+            gptPrompt,
+            [],
+            null,
+          );
+          imageBytes = result.imageBytes;
+          imageCallId = result.imageCallId;
+        } catch (gptImageError) {
+          logError(gptImageError, {
+            functionName: 'mesh',
+            statusCode: 500,
+            userId,
+            conversationId,
+            additionalContext: {
+              stage: 'gpt_image_2_fallback',
+              meshModel: 'ultra',
+              subStage: 'first_gen_text_only',
+            },
+          });
+          imageBytes = await generateImageWithGeminiFlash(
+            googleGenAI,
+            gptPrompt,
+          );
+        }
       } else if (useGeminiFlashEdit) {
         const uploadedImage = allImages[0];
-        const baseImageUrl = await getSignedImageUrl(
-          supabaseClient,
-          userId,
-          conversationId,
-          uploadedImage,
-        );
-        const flashEditPrompt = hasText
+        const gptPrompt = hasText
           ? `${instructions3D} Edit this image to: ${text}`
           : `${instructions3D} Enhance and optimize this image for 3D model generation`;
-        imageBytes = await generateImageWithGeminiFlashEdit(
-          googleGenAI,
-          flashEditPrompt,
-          baseImageUrl,
-        );
+        try {
+          // Default: gpt-image-2 via OpenAI Responses API (with uploaded image)
+          const result = await generateImageWithGptImage2(
+            supabaseClient,
+            openAI,
+            userId,
+            conversationId,
+            gptPrompt,
+            [uploadedImage],
+            null,
+          );
+          imageBytes = result.imageBytes;
+          imageCallId = result.imageCallId;
+        } catch (gptImageError) {
+          logError(gptImageError, {
+            functionName: 'mesh',
+            statusCode: 500,
+            userId,
+            conversationId,
+            additionalContext: {
+              stage: 'gpt_image_2_fallback',
+              meshModel: 'ultra',
+              subStage: 'first_gen_with_upload',
+            },
+          });
+          const baseImageUrl = await getSignedImageUrl(
+            supabaseClient,
+            userId,
+            conversationId,
+            uploadedImage,
+          );
+          imageBytes = await generateImageWithGeminiFlashEdit(
+            googleGenAI,
+            gptPrompt,
+            baseImageUrl,
+          );
+        }
       } else {
         const conversationalPrompt = hasUploadedImages
           ? hasText
