@@ -886,6 +886,13 @@ async function submitMeshJob(
               userId,
               conversationId,
             );
+        // When the user uploaded fresh reference images this turn, the
+        // base64 path must pick from those — not from allImages (which
+        // trails with meshImages / recentMeshPreview and would shadow
+        // the upload with an older image).
+        const gptImageReferenceImages = hasFreshUserImages
+          ? (images ?? [])
+          : allImages;
 
         try {
           // Default: gpt-image-2 via OpenAI Responses API
@@ -896,7 +903,7 @@ async function submitMeshJob(
             userId,
             conversationId,
             newPrompt,
-            allImages,
+            gptImageReferenceImages,
             priorImageCallId,
           );
           imageBytes = result.imageBytes;
@@ -1189,6 +1196,12 @@ async function submitMeshJob(
               userId,
               conversationId,
             );
+        // When the user uploaded fresh reference images this turn, the
+        // base64 path must pick from those — not from allImages (which
+        // trails with meshImages and would shadow the upload).
+        const gptImageReferenceImages = hasFreshUserImages
+          ? (images ?? [])
+          : allImages;
 
         try {
           // Default: gpt-image-2 via OpenAI Responses API
@@ -1198,7 +1211,7 @@ async function submitMeshJob(
             userId,
             conversationId,
             conversationalPrompt,
-            allImages,
+            gptImageReferenceImages,
             priorImageCallId,
           );
           imageBytes = result.imageBytes;
