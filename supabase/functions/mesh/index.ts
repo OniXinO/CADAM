@@ -3,7 +3,7 @@ import { corsHeaders } from '../_shared/cors.ts';
 import { fal } from 'npm:@fal-ai/client';
 import { GoogleGenAI } from 'npm:@google/genai';
 import Anthropic from 'npm:@anthropic-ai/sdk';
-import OpenAI from 'npm:openai';
+import OpenAI from 'npm:openai@^6.34.0';
 import {
   generateImageWithFalFlux,
   generateImageWithGeminiMultiTurn,
@@ -1147,7 +1147,11 @@ async function submitMeshJob(
             conversationalPrompt,
             allImages,
           );
-        } catch (_gptImageError) {
+        } catch (gptImageError) {
+          debugLog(
+            'gpt-image-2 failed, falling back to Gemini Multi-Turn (nano banana pro):',
+            gptImageError,
+          );
           try {
             imageBytes = await generateImageWithGeminiMultiTurn(
               supabaseClient,
@@ -1157,7 +1161,11 @@ async function submitMeshJob(
               conversationalPrompt,
               allImages,
             );
-          } catch (_fallbackError) {
+          } catch (geminiError) {
+            debugLog(
+              'Gemini Multi-Turn failed, falling back to Flux:',
+              geminiError,
+            );
             imageBytes = await generateImageWithFalFlux(
               supabaseClient,
               userId,

@@ -2,7 +2,7 @@ import { Buffer } from 'node:buffer';
 import { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.49.9';
 import { GoogleGenAI, Modality } from 'npm:@google/genai';
 import { fal } from 'npm:@fal-ai/client';
-import OpenAI from 'npm:openai';
+import OpenAI from 'npm:openai@^6.34.0';
 import { reformatSignedUrl } from './messageUtils.ts';
 
 const DEBUG_LOGS =
@@ -141,28 +141,26 @@ export const generateImageWithGptImage2 = async (
 
     const imageArrayBuffer = await imageData.arrayBuffer();
     const base64Image = Buffer.from(imageArrayBuffer).toString('base64');
+    const mimeType =
+      imageData.type && imageData.type.startsWith('image/')
+        ? imageData.type
+        : 'image/png';
 
     content.push({
       type: 'input_image',
-      image_url: `data:image/png;base64,${base64Image}`,
+      image_url: `data:${mimeType};base64,${base64Image}`,
       detail: 'auto',
     });
   }
 
-  // deno-lint-ignore no-explicit-any
-  const response = await (openAI as any).responses.create({
-    model: 'gpt-5.1',
+  const response = await openAI.responses.create({
+    model: 'gpt-5',
     input: [{ role: 'user', content }],
     tools: [{ type: 'image_generation', model: 'gpt-image-2' }],
   });
 
-  const outputItems: Array<{ type: string; result?: string }> = Array.isArray(
-    response?.output,
-  )
-    ? response.output
-    : [];
-  const imageCalls = outputItems.filter(
-    (item) => item.type === 'image_generation_call',
+  const imageCalls = response.output.flatMap((item) =>
+    item.type === 'image_generation_call' ? [item] : [],
   );
   const base64Result = imageCalls[imageCalls.length - 1]?.result;
 
