@@ -193,7 +193,7 @@ async function generateTitleFromMessages(
         'X-Title': 'Adam CAD',
       },
       body: JSON.stringify({
-        model: 'anthropic/claude-3.5-haiku',
+        model: 'anthropic/claude-haiku-4.5',
         max_tokens: 30,
         messages: [
           { role: 'system', content: titleSystemPrompt },
