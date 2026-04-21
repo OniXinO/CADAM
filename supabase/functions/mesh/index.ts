@@ -34,18 +34,48 @@ const debugLog = (...args: unknown[]) => {
   if (DEBUG_LOGS) console.log(...args);
 };
 
-// Returns the image_generation_call_id of the *immediately* previous image
-// in this conversation, or null if that image was produced by a fallback
-// (Gemini/Flux) and has no call ID. Crucially, we do NOT filter for
-// non-null call IDs here: if the last turn fell back, skipping its null
-// row and surfacing an older gpt-image-2 call ID would make gpt-image-2
-// edit an image two turns ago while the user is looking at the fallback
-// output.
-async function getLatestGptImageCallId(
+// Returns the image_generation_call_id to thread into the next gpt-image-2
+// call, or null when the prior image was produced by a fallback (Gemini/Flux)
+// and has no call ID.
+//
+// Branch-aware: when the user is editing a specific mesh (via the `mesh`
+// request param), we prefer that mesh's latest image — otherwise a global
+// "most recent in conversation" lookup would grab a sibling-branch image the
+// user isn't looking at, and gpt-image-2 would silently edit the wrong
+// output. Without a specific mesh in focus, fall back to conversation-wide
+// latest (linear editing flow).
+//
+// We do NOT filter for non-null call IDs: if the last turn fell back,
+// skipping its null row and surfacing an older gpt-image-2 call ID would
+// make gpt-image-2 edit an image two turns ago while the user is looking
+// at the fallback output.
+async function getPriorImageCallId(
   supabaseClient: SupabaseClient,
   userId: string,
   conversationId: string,
+  preferMeshId: string | undefined,
 ): Promise<string | null> {
+  if (preferMeshId) {
+    const { data: meshRow } = await supabaseClient
+      .from('meshes')
+      .select('images')
+      .eq('id', preferMeshId)
+      .single();
+    const meshImageIds = Array.isArray(meshRow?.images)
+      ? (meshRow.images as string[])
+      : [];
+    if (meshImageIds.length > 0) {
+      const { data } = await supabaseClient
+        .from('images')
+        .select('image_generation_call_id')
+        .in('id', meshImageIds)
+        .eq('status', 'success')
+        .order('created_at', { ascending: false })
+        .limit(1);
+      return data?.[0]?.image_generation_call_id ?? null;
+    }
+  }
+
   const { data } = await supabaseClient
     .from('images')
     .select('image_generation_call_id')
@@ -75,6 +105,9 @@ async function generateMeshImage(
   // All available reference images in the conversation (includes mesh
   // previews and prior mesh images) — used when no fresh upload.
   allImages: string[],
+  // The specific mesh the user is editing from (branch anchor), if any.
+  // Makes the multi-turn lookup branch-aware.
+  priorMeshId: string | undefined,
   sentryStage: { meshModel: 'fast' | 'quality' | 'ultra'; subStage?: string },
 ): Promise<{ imageBytes: Buffer; imageCallId: string | null }> {
   const hasFreshUserImages = freshUserImages.length > 0;
@@ -83,7 +116,12 @@ async function generateMeshImage(
   // prior turn's output.
   const priorImageCallId = hasFreshUserImages
     ? null
-    : await getLatestGptImageCallId(supabaseClient, userId, conversationId);
+    : await getPriorImageCallId(
+        supabaseClient,
+        userId,
+        conversationId,
+        priorMeshId,
+      );
   const gptImageReferenceImages = hasFreshUserImages
     ? freshUserImages
     : allImages;
@@ -913,6 +951,7 @@ async function submitMeshJob(
           newPrompt,
           images ?? [],
           allImages,
+          mesh,
           { meshModel: 'quality' },
         );
 
@@ -989,6 +1028,7 @@ async function submitMeshJob(
           newPrompt,
           images ?? [],
           allImages,
+          mesh,
           { meshModel: 'fast' },
         );
 
@@ -1151,6 +1191,7 @@ async function submitMeshJob(
         ultraPrompt,
         images ?? [],
         allImages,
+        mesh,
         { meshModel: 'ultra', subStage: ultraSubStage },
       );
 
