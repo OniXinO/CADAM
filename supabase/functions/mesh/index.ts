@@ -114,14 +114,28 @@ async function generateMeshImage(
   // Skip the call-id lookup when the user is providing fresh reference
   // material — we want gpt-image-2 to anchor on the new upload, not a
   // prior turn's output.
-  const priorImageCallId = hasFreshUserImages
-    ? null
-    : await getPriorImageCallId(
-        supabaseClient,
-        userId,
-        conversationId,
-        priorMeshId,
-      );
+  let priorImageCallId: string | null;
+  // Tri-state for observability so Sentry breadcrumbs distinguish
+  // "threaded a prior id", "no prior existed" (or prior was a fallback),
+  // and "prior existed but we suppressed it because the user uploaded
+  // fresh reference material this turn".
+  let priorImageCallIdStatus:
+    | 'threaded'
+    | 'none_available'
+    | 'suppressed_by_fresh_upload';
+  if (hasFreshUserImages) {
+    priorImageCallId = null;
+    priorImageCallIdStatus = 'suppressed_by_fresh_upload';
+  } else {
+    priorImageCallId = await getPriorImageCallId(
+      supabaseClient,
+      userId,
+      conversationId,
+      priorMeshId,
+    );
+    priorImageCallIdStatus =
+      priorImageCallId !== null ? 'threaded' : 'none_available';
+  }
   const gptImageReferenceImages = hasFreshUserImages
     ? freshUserImages
     : allImages;
@@ -149,7 +163,7 @@ async function generateMeshImage(
       additionalContext: {
         stage: 'gpt_image_2_fallback',
         hasFreshUserImages,
-        usedPriorImageCallId: priorImageCallId !== null,
+        priorImageCallIdStatus,
         ...sentryStage,
       },
     });
