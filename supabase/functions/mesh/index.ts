@@ -912,10 +912,18 @@ async function submitMeshJob(
           imageCallId = result.imageCallId;
           debugLog('Successfully generated image with gpt-image-2');
         } catch (gptImageError) {
-          debugLog(
-            'gpt-image-2 failed, falling back to Gemini Multi-Turn (nano banana pro):',
-            gptImageError,
-          );
+          logError(gptImageError, {
+            functionName: 'mesh',
+            statusCode: 500,
+            userId,
+            conversationId,
+            additionalContext: {
+              stage: 'gpt_image_2_fallback',
+              meshModel: 'quality',
+              hasFreshUserImages,
+              usedPriorImageCallId: priorImageCallId !== null,
+            },
+          });
           try {
             imageBytes = await generateImageWithGeminiMultiTurn(
               supabaseClient,
@@ -927,10 +935,16 @@ async function submitMeshJob(
             );
             debugLog('Successfully generated image with Gemini Multi-Turn');
           } catch (geminiError) {
-            debugLog(
-              'Gemini Multi-Turn failed, falling back to Flux:',
-              geminiError,
-            );
+            logError(geminiError, {
+              functionName: 'mesh',
+              statusCode: 500,
+              userId,
+              conversationId,
+              additionalContext: {
+                stage: 'gemini_multi_turn_fallback',
+                meshModel: 'quality',
+              },
+            });
             imageBytes = await generateImageWithFalFlux(
               supabaseClient,
               userId,
@@ -1219,10 +1233,18 @@ async function submitMeshJob(
           imageBytes = result.imageBytes;
           imageCallId = result.imageCallId;
         } catch (gptImageError) {
-          debugLog(
-            'gpt-image-2 failed, falling back to Gemini Multi-Turn (nano banana pro):',
-            gptImageError,
-          );
+          logError(gptImageError, {
+            functionName: 'mesh',
+            statusCode: 500,
+            userId,
+            conversationId,
+            additionalContext: {
+              stage: 'gpt_image_2_fallback',
+              meshModel: 'ultra',
+              hasFreshUserImages,
+              usedPriorImageCallId: priorImageCallId !== null,
+            },
+          });
           try {
             imageBytes = await generateImageWithGeminiMultiTurn(
               supabaseClient,
@@ -1233,10 +1255,16 @@ async function submitMeshJob(
               allImages,
             );
           } catch (geminiError) {
-            debugLog(
-              'Gemini Multi-Turn failed, falling back to Flux:',
-              geminiError,
-            );
+            logError(geminiError, {
+              functionName: 'mesh',
+              statusCode: 500,
+              userId,
+              conversationId,
+              additionalContext: {
+                stage: 'gemini_multi_turn_fallback',
+                meshModel: 'ultra',
+              },
+            });
             imageBytes = await generateImageWithFalFlux(
               supabaseClient,
               userId,
