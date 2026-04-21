@@ -7,8 +7,6 @@ import OpenAI from 'npm:openai@^6.34.0';
 import {
   generateImageWithFalFlux,
   generateImageWithGeminiMultiTurn,
-  generateImageWithGeminiFlash,
-  generateImageWithGeminiFlashEdit,
   generateImageWithGptImage2,
 } from '../_shared/imageGen.ts';
 import { Model, MeshFileType } from '@shared/types.ts';
@@ -36,57 +34,6 @@ const debugLog = (...args: unknown[]) => {
   if (DEBUG_LOGS) console.log(...args);
 };
 
-// Helper function to get a signed URL for an image, with existence verification
-async function getSignedImageUrl(
-  supabaseClient: SupabaseClient,
-  userId: string,
-  conversationId: string,
-  imageIdOrUrl: string,
-): Promise<string> {
-  // If it's already a URL, return it as-is
-  if (imageIdOrUrl.startsWith('http')) {
-    return imageIdOrUrl;
-  }
-
-  // It's a filename/ID, verify the image exists and get a signed URL
-  const imagePath = `${userId}/${conversationId}/${imageIdOrUrl}`;
-  debugLog(`Checking if image exists at path: ${imagePath}`);
-
-  // First verify the image exists
-  const existsResult = await supabaseClient.storage
-    .from('images')
-    .exists(imagePath);
-
-  if (existsResult.error) {
-    debugLog(`Failed to check image existence: ${existsResult.error.message}`);
-    throw new Error(
-      `Failed to check image existence: ${existsResult.error.message}`,
-    );
-  }
-
-  if (!existsResult.data) {
-    debugLog(`Image not found at path: ${imagePath}`);
-    throw new Error(`Image not found: ${imageIdOrUrl}`);
-  }
-
-  // Create a signed URL for the image (external APIs need publicly accessible URLs)
-  // 1 hour expiry is sufficient for image processing operations
-  const { data: signedUrlData, error: signedUrlError } =
-    await supabaseClient.storage
-      .from('images')
-      .createSignedUrl(imagePath, 60 * 60);
-
-  if (signedUrlError || !signedUrlData?.signedUrl) {
-    debugLog(`Failed to create signed URL: ${signedUrlError?.message}`);
-    throw new Error(
-      `Failed to create signed URL for image: ${signedUrlError?.message}`,
-    );
-  }
-
-  // Use reformatSignedUrl to ensure the URL is properly formatted for external access
-  return reformatSignedUrl(signedUrlData.signedUrl);
-}
-
 // Returns the image_generation_call_id of the *immediately* previous image
 // in this conversation, or null if that image was produced by a fallback
 // (Gemini/Flux) and has no call ID. Crucially, we do NOT filter for
@@ -109,6 +56,93 @@ async function getLatestGptImageCallId(
     .limit(1);
 
   return data?.[0]?.image_generation_call_id ?? null;
+}
+
+// Unified mesh-image generation. Every mesh mode goes through this helper:
+//   1. Primary: gpt-image-2 via OpenAI Responses API (canonical per OpenAI
+//      docs, supports multi-turn via image_generation_call id)
+//   2. Fallback 1: Gemini 3 Pro Image Preview (nano banana pro)
+//   3. Fallback 2: Flux (fal-ai)
+//
+// Flux is also the sole provider for mesh previews (see submitPreviewJob),
+// which intentionally does not go through this chain.
+async function generateMeshImage(
+  userId: string,
+  conversationId: string,
+  prompt: string,
+  // Fresh references uploaded in *this* turn — take precedence for base64.
+  freshUserImages: string[],
+  // All available reference images in the conversation (includes mesh
+  // previews and prior mesh images) — used when no fresh upload.
+  allImages: string[],
+  sentryStage: { meshModel: 'fast' | 'quality' | 'ultra'; subStage?: string },
+): Promise<{ imageBytes: Buffer; imageCallId: string | null }> {
+  const hasFreshUserImages = freshUserImages.length > 0;
+  // Skip the call-id lookup when the user is providing fresh reference
+  // material — we want gpt-image-2 to anchor on the new upload, not a
+  // prior turn's output.
+  const priorImageCallId = hasFreshUserImages
+    ? null
+    : await getLatestGptImageCallId(supabaseClient, userId, conversationId);
+  const gptImageReferenceImages = hasFreshUserImages
+    ? freshUserImages
+    : allImages;
+
+  const sentryContext = {
+    functionName: 'mesh' as const,
+    statusCode: 500,
+    userId,
+    conversationId,
+  };
+
+  try {
+    return await generateImageWithGptImage2(
+      supabaseClient,
+      openAI,
+      userId,
+      conversationId,
+      prompt,
+      gptImageReferenceImages,
+      priorImageCallId,
+    );
+  } catch (gptImageError) {
+    logError(gptImageError, {
+      ...sentryContext,
+      additionalContext: {
+        stage: 'gpt_image_2_fallback',
+        hasFreshUserImages,
+        usedPriorImageCallId: priorImageCallId !== null,
+        ...sentryStage,
+      },
+    });
+    try {
+      const imageBytes = await generateImageWithGeminiMultiTurn(
+        supabaseClient,
+        googleGenAI,
+        userId,
+        conversationId,
+        prompt,
+        gptImageReferenceImages,
+      );
+      return { imageBytes, imageCallId: null };
+    } catch (geminiError) {
+      logError(geminiError, {
+        ...sentryContext,
+        additionalContext: {
+          stage: 'nano_banana_pro_fallback',
+          ...sentryStage,
+        },
+      });
+      const imageBytes = await generateImageWithFalFlux(
+        supabaseClient,
+        userId,
+        conversationId,
+        prompt,
+        gptImageReferenceImages,
+      );
+      return { imageBytes, imageCallId: null };
+    }
+  }
 }
 
 // Helper function to get the most recent mesh preview from the conversation
@@ -873,73 +907,14 @@ async function submitMeshJob(
             ? `${instructions3D} Edit the provided image(s) to: ${text}`
             : `${instructions3D} Generate a new image: ${text}`;
 
-        let imageBytes: Buffer;
-        let imageCallId: string | null = null;
-
-        // Prefer the canonical Responses API multi-turn pattern: reference the
-        // prior gpt-image-2 call by ID instead of re-encoding base64. A fresh
-        // user upload in this turn overrides — treat it as new reference
-        // material via input_image.
-        const hasFreshUserImages = (images ?? []).length > 0;
-        const priorImageCallId = hasFreshUserImages
-          ? null
-          : await getLatestGptImageCallId(
-              supabaseClient,
-              userId,
-              conversationId,
-            );
-        // When the user uploaded fresh reference images this turn, the
-        // base64 path must pick from those — not from allImages (which
-        // trails with meshImages / recentMeshPreview and would shadow
-        // the upload with an older image).
-        const gptImageReferenceImages = hasFreshUserImages
-          ? (images ?? [])
-          : allImages;
-
-        try {
-          // Default: gpt-image-2 via OpenAI Responses API
-          debugLog('Attempting image generation with gpt-image-2');
-          const result = await generateImageWithGptImage2(
-            supabaseClient,
-            openAI,
-            userId,
-            conversationId,
-            newPrompt,
-            gptImageReferenceImages,
-            priorImageCallId,
-          );
-          imageBytes = result.imageBytes;
-          imageCallId = result.imageCallId;
-          debugLog('Successfully generated image with gpt-image-2');
-        } catch (gptImageError) {
-          debugLog(
-            'gpt-image-2 failed, falling back to Gemini Multi-Turn (nano banana pro):',
-            gptImageError,
-          );
-          try {
-            imageBytes = await generateImageWithGeminiMultiTurn(
-              supabaseClient,
-              googleGenAI,
-              userId,
-              conversationId,
-              newPrompt,
-              allImages,
-            );
-            debugLog('Successfully generated image with Gemini Multi-Turn');
-          } catch (geminiError) {
-            debugLog(
-              'Gemini Multi-Turn failed, falling back to Flux:',
-              geminiError,
-            );
-            imageBytes = await generateImageWithFalFlux(
-              supabaseClient,
-              userId,
-              conversationId,
-              newPrompt,
-              allImages,
-            );
-          }
-        }
+        const { imageBytes, imageCallId } = await generateMeshImage(
+          userId,
+          conversationId,
+          newPrompt,
+          images ?? [],
+          allImages,
+          { meshModel: 'quality' },
+        );
 
         const { error: imageUploadError } = await supabaseClient.storage
           .from('images')
@@ -1008,12 +983,13 @@ async function submitMeshJob(
             ? `${instructions3D} Edit the provided image(s) to: ${text}`
             : `${instructions3D} Generate a new image: ${text}`;
 
-        const imageBytes = await generateImageWithFalFlux(
-          supabaseClient,
+        const { imageBytes, imageCallId } = await generateMeshImage(
           userId,
           conversationId,
           newPrompt,
+          images ?? [],
           allImages,
+          { meshModel: 'fast' },
         );
 
         const { error: imageUploadError } = await supabaseClient.storage
@@ -1028,7 +1004,10 @@ async function submitMeshJob(
 
         await supabaseClient
           .from('images')
-          .update({ status: 'success' })
+          .update({
+            status: 'success',
+            image_generation_call_id: imageCallId,
+          })
           .eq('id', imageData.id);
 
         const { data: imageSignedUrl, error: imageSignedUrlError } =
@@ -1104,17 +1083,8 @@ async function submitMeshJob(
       const hasUploadedImages = allImages.length > 0;
       const hasText = text && text.trim() !== '';
 
-      // Determine generation method
-      // First generation: Use Gemini Flash for text-only, Gemini Flash edit for image uploads
-      // Conversational edits: Use Gemini Multi-Turn to maintain full context
-      const useGeminiFlash = isFirstGeneration && !hasUploadedImages && hasText;
-      const useGeminiFlashEdit = isFirstGeneration && hasUploadedImages;
-
       debugLog(
         `Ultra generation type: First=${isFirstGeneration}, HasImages=${hasUploadedImages}, HasText=${hasText}`,
-      );
-      debugLog(
-        `Using: ${useGeminiFlash ? 'Gemini Flash (first text-only)' : useGeminiFlashEdit ? 'Gemini Flash edit (first with images)' : 'Gemini Multi-Turn (conversational)'}`,
       );
 
       // Validate we have something to work with
@@ -1153,100 +1123,36 @@ async function submitMeshJob(
       const instructions3D =
         'You are generating a fully textured and rendered 3D model. Output one centered 3D model or multiple centered objects, no text. Plain white background (or an empty background which provides optimal contrast with the textures of the 3D model), neutral lighting, and a soft shadow directly under the 3D model. Keep the entire object fully in-frame with 5–10% padding; no cropping. Make sure the description strongly impacts the form and shape of the 3D Model not just the surface texture';
 
-      let imageBytes: Buffer;
-      let imageCallId: string | null = null;
-
-      if (useGeminiFlash) {
-        const flashPrompt = `${instructions3D} Generate: ${text}`;
-        imageBytes = await generateImageWithGeminiFlash(
-          googleGenAI,
-          flashPrompt,
-        );
-      } else if (useGeminiFlashEdit) {
-        const uploadedImage = allImages[0];
-        const baseImageUrl = await getSignedImageUrl(
-          supabaseClient,
-          userId,
-          conversationId,
-          uploadedImage,
-        );
-        const flashEditPrompt = hasText
+      // Build the prompt based on conversation stage.
+      let ultraPrompt: string;
+      let ultraSubStage: string;
+      if (isFirstGeneration && !hasUploadedImages && hasText) {
+        ultraPrompt = `${instructions3D} Generate: ${text}`;
+        ultraSubStage = 'first_gen_text_only';
+      } else if (isFirstGeneration && hasUploadedImages) {
+        ultraPrompt = hasText
           ? `${instructions3D} Edit this image to: ${text}`
           : `${instructions3D} Enhance and optimize this image for 3D model generation`;
-        imageBytes = await generateImageWithGeminiFlashEdit(
-          googleGenAI,
-          flashEditPrompt,
-          baseImageUrl,
-        );
+        ultraSubStage = 'first_gen_with_upload';
       } else {
-        const conversationalPrompt = hasUploadedImages
+        ultraPrompt = hasUploadedImages
           ? hasText
             ? `${instructions3D} Edit the provided image(s) to: ${text}`
             : `${instructions3D} Enhance and optimize the provided image(s) for 3D model generation`
           : hasText
             ? `${instructions3D} Edit/modify the previous generation: ${text}`
             : `${instructions3D} Enhance and optimize the previous generation`;
-
-        // Prefer referencing the prior gpt-image-2 call by ID for true
-        // conversational continuity; fall back to base64 only when the user
-        // just uploaded fresh reference material.
-        const hasFreshUserImages = (images ?? []).length > 0;
-        const priorImageCallId = hasFreshUserImages
-          ? null
-          : await getLatestGptImageCallId(
-              supabaseClient,
-              userId,
-              conversationId,
-            );
-        // When the user uploaded fresh reference images this turn, the
-        // base64 path must pick from those — not from allImages (which
-        // trails with meshImages and would shadow the upload).
-        const gptImageReferenceImages = hasFreshUserImages
-          ? (images ?? [])
-          : allImages;
-
-        try {
-          // Default: gpt-image-2 via OpenAI Responses API
-          const result = await generateImageWithGptImage2(
-            supabaseClient,
-            openAI,
-            userId,
-            conversationId,
-            conversationalPrompt,
-            gptImageReferenceImages,
-            priorImageCallId,
-          );
-          imageBytes = result.imageBytes;
-          imageCallId = result.imageCallId;
-        } catch (gptImageError) {
-          debugLog(
-            'gpt-image-2 failed, falling back to Gemini Multi-Turn (nano banana pro):',
-            gptImageError,
-          );
-          try {
-            imageBytes = await generateImageWithGeminiMultiTurn(
-              supabaseClient,
-              googleGenAI,
-              userId,
-              conversationId,
-              conversationalPrompt,
-              allImages,
-            );
-          } catch (geminiError) {
-            debugLog(
-              'Gemini Multi-Turn failed, falling back to Flux:',
-              geminiError,
-            );
-            imageBytes = await generateImageWithFalFlux(
-              supabaseClient,
-              userId,
-              conversationId,
-              conversationalPrompt,
-              allImages,
-            );
-          }
-        }
+        ultraSubStage = 'conversational';
       }
+
+      const { imageBytes, imageCallId } = await generateMeshImage(
+        userId,
+        conversationId,
+        ultraPrompt,
+        images ?? [],
+        allImages,
+        { meshModel: 'ultra', subStage: ultraSubStage },
+      );
 
       // Upload the generated base image
       const { error: imageUploadError } = await supabaseClient.storage
