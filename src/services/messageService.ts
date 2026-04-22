@@ -177,11 +177,9 @@ export function useCreativeChatMutation({
     mutationFn: async ({
       model,
       messageId,
-      conversationId,
     }: {
       model: Model;
       messageId: string;
-      conversationId: string;
     }) => {
       const newMessageId = crypto.randomUUID();
       let initialized = false;
@@ -342,10 +340,10 @@ export function useCreativeChatMutation({
         return finalMessage;
       } catch (error) {
         if (isAbortError(error)) {
-          // Client-initiated cancellation. If we captured any partial message,
-          // resolve with it so the leaf state is preserved; otherwise surface
-          // a tagged AbortError so onError can drop it silently.
-          if (finalMessage) return finalMessage;
+          // Client-initiated cancellation. Always surface as AbortError so
+          // onError drops it silently and onSuccess does not run — avoids
+          // writing a partial message as the conversation leaf into the
+          // sidebar cache when the server may not have persisted it.
           const abortError = new Error('Stream aborted');
           abortError.name = 'AbortError';
           throw abortError;
@@ -418,11 +416,9 @@ export function useParametricChatMutation({
     mutationFn: async ({
       model,
       messageId,
-      conversationId,
     }: {
       model: Model;
       messageId: string;
-      conversationId: string;
     }) => {
       const newMessageId = crypto.randomUUID();
       let initialized = false;
@@ -583,7 +579,10 @@ export function useParametricChatMutation({
         return finalMessage;
       } catch (error) {
         if (isAbortError(error)) {
-          if (finalMessage) return finalMessage;
+          // Client-initiated cancellation. Always surface as AbortError so
+          // onError drops it silently and onSuccess does not run — avoids
+          // writing a partial message as the conversation leaf into the
+          // sidebar cache when the server may not have persisted it.
           const abortError = new Error('Stream aborted');
           abortError.name = 'AbortError';
           throw abortError;
@@ -723,13 +722,11 @@ export function useSendContentMutation({
         await sendToCreativeChat({
           model: content.model ?? conversation.settings?.model ?? 'quality',
           messageId: userMessage.id,
-          conversationId: conversation.id,
         });
       } else {
         await sendToParametricChat({
           model: content.model ?? conversation.settings?.model ?? 'fast',
           messageId: userMessage.id,
-          conversationId: conversation.id,
         });
       }
     },
@@ -822,13 +819,11 @@ export function useEditMessageMutation({
         sendToCreativeChat({
           model: conversation.settings?.model ?? 'quality',
           messageId: userMessage.id,
-          conversationId: conversation.id,
         });
       } else {
         sendToParametricChat({
           model: conversation.settings?.model ?? 'fast',
           messageId: userMessage.id,
-          conversationId: conversation.id,
         });
       }
     },
@@ -885,13 +880,11 @@ export function useRetryMessageMutation({
         sendToCreativeChat({
           model: model,
           messageId: id,
-          conversationId: conversation.id,
         });
       } else {
         sendToParametricChat({
           model: model,
           messageId: id,
-          conversationId: conversation.id,
         });
       }
     },
