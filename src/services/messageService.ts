@@ -27,11 +27,7 @@ export function abortActiveStream(conversationId: string) {
 }
 
 function isAbortError(error: unknown): boolean {
-  return (
-    !!error &&
-    typeof error === 'object' &&
-    (error as { name?: string }).name === 'AbortError'
-  );
+  return error instanceof Error && error.name === 'AbortError';
 }
 
 function messageSentConversationUpdate(
@@ -345,7 +341,7 @@ export function useCreativeChatMutation({
 
         return finalMessage;
       } catch (error) {
-        if (isAbortError(error) || controller.signal.aborted) {
+        if (isAbortError(error)) {
           // Client-initiated cancellation. If we captured any partial message,
           // resolve with it so the leaf state is preserved; otherwise surface
           // a tagged AbortError so onError can drop it silently.
@@ -586,7 +582,7 @@ export function useParametricChatMutation({
 
         return finalMessage;
       } catch (error) {
-        if (isAbortError(error) || controller.signal.aborted) {
+        if (isAbortError(error)) {
           if (finalMessage) return finalMessage;
           const abortError = new Error('Stream aborted');
           abortError.name = 'AbortError';
