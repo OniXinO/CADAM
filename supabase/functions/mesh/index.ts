@@ -553,12 +553,26 @@ Deno.serve(async (req) => {
         );
       }
 
-      // Upload to FAL storage
-      const imageFile = new File([imageBlob], 'seed-image.png', {
-        type: 'image/png',
+      // Upload to FAL storage. Preserve the blob's actual MIME — seed
+      // images from gpt-image-2 are jpeg, seeds from Gemini/Flux are png.
+      // FAL serves the uploaded bytes with the Content-Type we give it,
+      // and Hunyuan3D's image decoder relies on extension + MIME matching
+      // the actual bytes; hardcoding png would fail on jpeg seeds.
+      const seedMime =
+        imageBlob.type && imageBlob.type.startsWith('image/')
+          ? imageBlob.type
+          : 'image/png';
+      const seedExt =
+        seedMime === 'image/jpeg'
+          ? 'jpg'
+          : seedMime === 'image/webp'
+            ? 'webp'
+            : 'png';
+      const imageFile = new File([imageBlob], `seed-image.${seedExt}`, {
+        type: seedMime,
       });
       const imageUrl = await fal.storage.upload(imageFile);
-      debugLog('Uploaded seed image to FAL:', imageUrl);
+      debugLog('Uploaded seed image to FAL:', imageUrl, { seedMime });
 
       // Create new mesh entry for upscaled result
       const { data: newMeshData, error: newMeshError } = await supabaseClient
