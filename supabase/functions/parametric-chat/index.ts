@@ -958,7 +958,7 @@ Deno.serve(async (req) => {
                 { role: 'system', content: STRICT_CODE_PROMPT },
                 ...codeMessages,
               ],
-              max_tokens: 16000,
+              max_tokens: 48000,
               stream: true,
             };
 
@@ -967,7 +967,7 @@ Deno.serve(async (req) => {
               codeRequestBody.reasoning = {
                 max_tokens: 12000,
               };
-              codeRequestBody.max_tokens = 20000;
+              codeRequestBody.max_tokens = 60000;
             }
 
             // Kick off title generation alongside the streamed code.
