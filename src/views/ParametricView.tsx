@@ -209,9 +209,15 @@ export default function ParametricView({
         </div>
       ) : (
         <PanelGroup
+          // Remount cleanly when the parameters panel appears/disappears.
+          // Without this, react-resizable-panels' internal registry
+          // desyncs and throws `Panel data not found for index 2`.
+          key={hasArtifact ? 'editor-panels-with-params' : 'editor-panels'}
           direction="horizontal"
           className="h-full w-full"
-          autoSaveId="editor-panels"
+          autoSaveId={
+            hasArtifact ? 'editor-panels-with-params' : 'editor-panels'
+          }
         >
           <Panel
             collapsible
