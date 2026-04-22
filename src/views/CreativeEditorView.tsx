@@ -4,6 +4,7 @@ import { CreativeView } from './CreativeView';
 import { useConversation } from '@/contexts/ConversationContext';
 import { useCurrentMessage } from '@/contexts/CurrentMessageContext';
 import {
+  abortActiveStream,
   useMessagesQuery,
   useSendContentMutation,
   useEditMessageMutation,
@@ -97,13 +98,14 @@ export function CreativeEditorView() {
   const stopGenerating = useCallback(async () => {
     if (currentProcessingMessageRef.current) {
       try {
+        abortActiveStream(conversation.id);
         await cancelRequest(currentProcessingMessageRef.current);
         currentProcessingMessageRef.current = null;
       } catch (error) {
         console.error('Failed to cancel request:', error);
       }
     }
-  }, [cancelRequest]);
+  }, [cancelRequest, conversation.id]);
 
   useEffect(() => {
     setCurrentMessage(null);

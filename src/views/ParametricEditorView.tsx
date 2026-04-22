@@ -7,6 +7,7 @@ import { useConversation } from '@/contexts/ConversationContext';
 import OpenSCADError from '@/lib/OpenSCADError';
 import { useCurrentMessage } from '@/contexts/CurrentMessageContext';
 import {
+  abortActiveStream,
   useEditMessageMutation,
   useMessagesQuery,
   useRestoreMessageMutation,
@@ -98,13 +99,14 @@ export function ParametricEditorView() {
   const stopGenerating = useCallback(async () => {
     if (currentProcessingMessageRef.current) {
       try {
+        abortActiveStream(conversation.id);
         await cancelRequest(currentProcessingMessageRef.current);
         currentProcessingMessageRef.current = null;
       } catch (error) {
         console.error('Failed to cancel request:', error);
       }
     }
-  }, [cancelRequest]);
+  }, [cancelRequest, conversation.id]);
 
   useEffect(() => {
     setCurrentMessage(null);

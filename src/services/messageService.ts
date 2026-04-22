@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { useConversation } from '@/contexts/ConversationContext';
 import { supabase } from '@/lib/supabase';
 import { Content, Conversation, Message, Model } from '@shared/types';
@@ -10,6 +11,28 @@ import {
   useQueryClient,
 } from '@tanstack/react-query';
 import * as Sentry from '@sentry/react';
+
+// Per-conversation registry of in-flight stream AbortControllers. Shared so
+// that multiple hook instances (useSendContent, useRetry, useEdit) that all
+// wrap the same chat mutation can coordinate cancellation, and so the View
+// can abort via abortActiveStream(conversationId).
+const activeStreamControllers = new Map<string, AbortController>();
+
+export function abortActiveStream(conversationId: string) {
+  const controller = activeStreamControllers.get(conversationId);
+  if (controller) {
+    controller.abort();
+    activeStreamControllers.delete(conversationId);
+  }
+}
+
+function isAbortError(error: unknown): boolean {
+  return (
+    !!error &&
+    typeof error === 'object' &&
+    (error as { name?: string }).name === 'AbortError'
+  );
+}
 
 function messageSentConversationUpdate(
   newMessage: Message,
@@ -147,6 +170,12 @@ export function useCreativeChatMutation({
   const queryClient = useQueryClient();
   const { mutateAsync: insertMessageAsync } = useInsertMessageMutation();
 
+  useEffect(() => {
+    return () => {
+      abortActiveStream(conversationId);
+    };
+  }, [conversationId]);
+
   return useMutation({
     mutationKey: ['creative-chat', conversationId],
     mutationFn: async ({
@@ -160,87 +189,129 @@ export function useCreativeChatMutation({
     }) => {
       const newMessageId = crypto.randomUUID();
       let initialized = false;
-
-      // Start streaming request
-      const response = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/creative-chat`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${
-              (await supabase.auth.getSession()).data.session?.access_token
-            }`,
-          },
-          body: JSON.stringify({
-            conversationId,
-            messageId,
-            model,
-            newMessageId,
-          }),
-        },
-      );
-
-      if (!response.ok) {
-        throw new Error(
-          `Network response was not ok: ${response.status} ${response.statusText}`,
-        );
-      }
-
-      if (response.headers.get('Content-Type')?.includes('application/json')) {
-        const data = await response.json();
-        if (data.message) {
-          return data.message;
-        } else {
-          throw new Error('No message received');
-        }
-      }
-
-      async function initialize() {
-        // Cancel any pending queries and update conversation leaf ID
-        await queryClient.cancelQueries({
-          queryKey: ['conversation', conversationId],
-        });
-        queryClient.setQueryData(
-          ['conversation', conversationId],
-          (oldConversation: Conversation) => ({
-            ...oldConversation,
-            current_message_leaf_id: newMessageId,
-          }),
-        );
-      }
-
-      const reader = response.body?.getReader();
-      if (!reader) {
-        throw new Error('No reader available');
-      }
-
-      const decoder = new TextDecoder();
-      let leftover = '';
-
       let finalMessage: Message | null = null;
 
+      // Abort any prior in-flight stream for this conversation and register
+      // our own controller so stopGenerating / unmount can cancel.
+      activeStreamControllers.get(conversationId)?.abort();
+      const controller = new AbortController();
+      activeStreamControllers.set(conversationId, controller);
+
       try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
+        const response = await fetch(
+          `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/creative-chat`,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${
+                (await supabase.auth.getSession()).data.session?.access_token
+              }`,
+            },
+            body: JSON.stringify({
+              conversationId,
+              messageId,
+              model,
+              newMessageId,
+            }),
+            signal: controller.signal,
+          },
+        );
 
-          // Append decoded chunk to leftover buffer
-          leftover += decoder.decode(value, { stream: true });
+        if (!response.ok) {
+          throw new Error(
+            `Network response was not ok: ${response.status} ${response.statusText}`,
+          );
+        }
 
-          // Split into lines; keep the last partial line in leftover
-          const lines = leftover.split('\n');
-          leftover = lines.pop() ?? '';
+        if (
+          response.headers.get('Content-Type')?.includes('application/json')
+        ) {
+          const data = await response.json();
+          if (data.message) {
+            return data.message;
+          } else {
+            throw new Error('No message received');
+          }
+        }
 
-          for (const rawLine of lines) {
-            const line = rawLine.trim();
-            if (!line) continue;
+        async function initialize() {
+          // Cancel any pending queries and update conversation leaf ID
+          await queryClient.cancelQueries({
+            queryKey: ['conversation', conversationId],
+          });
+          queryClient.setQueryData(
+            ['conversation', conversationId],
+            (oldConversation: Conversation) => ({
+              ...oldConversation,
+              current_message_leaf_id: newMessageId,
+            }),
+          );
+        }
+
+        const reader = response.body?.getReader();
+        if (!reader) {
+          throw new Error('No reader available');
+        }
+
+        const decoder = new TextDecoder();
+        let leftover = '';
+
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            // Append decoded chunk to leftover buffer
+            leftover += decoder.decode(value, { stream: true });
+
+            // Split into lines; keep the last partial line in leftover
+            const lines = leftover.split('\n');
+            leftover = lines.pop() ?? '';
+
+            for (const rawLine of lines) {
+              const line = rawLine.trim();
+              if (!line) continue;
+              try {
+                const data: Message = JSON.parse(line);
+
+                finalMessage = data;
+
+                // Update existing streaming message
+                queryClient.setQueryData(
+                  ['messages', conversationId],
+                  (oldMessages: Message[] | undefined) => {
+                    if (!oldMessages || oldMessages.length === 0) {
+                      return [data];
+                    }
+                    if (oldMessages.find((msg) => msg.id === data.id)) {
+                      return oldMessages.map((msg) =>
+                        msg.id === data.id ? data : msg,
+                      );
+                    } else {
+                      return [...oldMessages, data];
+                    }
+                  },
+                );
+
+                if (!initialized) {
+                  await initialize();
+                  initialized = true;
+                }
+              } catch (parseError) {
+                console.error('Error parsing streaming data:', parseError);
+              }
+            }
+          }
+
+          // Flush decoder and process any remaining buffered content
+          const flushRemainder = decoder.decode();
+          if (flushRemainder) leftover += flushRemainder;
+          const tail = leftover.trim();
+          if (tail) {
             try {
-              const data: Message = JSON.parse(line);
-
+              const data: Message = JSON.parse(tail);
               finalMessage = data;
-
-              // Update existing streaming message
               queryClient.setQueryData(
                 ['messages', conversationId],
                 (oldMessages: Message[] | undefined) => {
@@ -256,53 +327,39 @@ export function useCreativeChatMutation({
                   }
                 },
               );
-
-              if (!initialized) {
-                await initialize();
-                initialized = true;
-              }
             } catch (parseError) {
-              console.error('Error parsing streaming data:', parseError);
+              console.error('Error parsing final streaming data:', parseError);
             }
           }
-        }
-
-        // Flush decoder and process any remaining buffered content
-        const flushRemainder = decoder.decode();
-        if (flushRemainder) leftover += flushRemainder;
-        const tail = leftover.trim();
-        if (tail) {
+        } finally {
           try {
-            const data: Message = JSON.parse(tail);
-            finalMessage = data;
-            queryClient.setQueryData(
-              ['messages', conversationId],
-              (oldMessages: Message[] | undefined) => {
-                if (!oldMessages || oldMessages.length === 0) {
-                  return [data];
-                }
-                if (oldMessages.find((msg) => msg.id === data.id)) {
-                  return oldMessages.map((msg) =>
-                    msg.id === data.id ? data : msg,
-                  );
-                } else {
-                  return [...oldMessages, data];
-                }
-              },
-            );
-          } catch (parseError) {
-            console.error('Error parsing final streaming data:', parseError);
+            reader.releaseLock();
+          } catch {
+            // Reader may already be released/cancelled after abort.
           }
         }
+
+        if (!finalMessage) {
+          throw new Error('No final message received');
+        }
+
+        return finalMessage;
+      } catch (error) {
+        if (isAbortError(error) || controller.signal.aborted) {
+          // Client-initiated cancellation. If we captured any partial message,
+          // resolve with it so the leaf state is preserved; otherwise surface
+          // a tagged AbortError so onError can drop it silently.
+          if (finalMessage) return finalMessage;
+          const abortError = new Error('Stream aborted');
+          abortError.name = 'AbortError';
+          throw abortError;
+        }
+        throw error;
       } finally {
-        reader.releaseLock();
+        if (activeStreamControllers.get(conversationId) === controller) {
+          activeStreamControllers.delete(conversationId);
+        }
       }
-
-      if (!finalMessage) {
-        throw new Error('No final message received');
-      }
-
-      return finalMessage;
     },
     onSuccess: (newMessage) => {
       messageInsertedConversationUpdate(
@@ -315,6 +372,7 @@ export function useCreativeChatMutation({
       queryClient.invalidateQueries({ queryKey: ['userExtraData'] });
     },
     onError: async (error, { messageId }) => {
+      if (isAbortError(error)) return;
       Sentry.captureException(error, {
         extra: {
           hook: 'useCreativeChatMutation',
@@ -353,6 +411,12 @@ export function useParametricChatMutation({
   const queryClient = useQueryClient();
   const { mutateAsync: insertMessageAsync } = useInsertMessageMutation();
 
+  useEffect(() => {
+    return () => {
+      abortActiveStream(conversationId);
+    };
+  }, [conversationId]);
+
   return useMutation({
     mutationKey: ['parametric-chat', conversationId],
     mutationFn: async ({
@@ -366,87 +430,129 @@ export function useParametricChatMutation({
     }) => {
       const newMessageId = crypto.randomUUID();
       let initialized = false;
-
-      // Start streaming request
-      const response = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/parametric-chat`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${
-              (await supabase.auth.getSession()).data.session?.access_token
-            }`,
-          },
-          body: JSON.stringify({
-            conversationId,
-            messageId,
-            model,
-            newMessageId,
-          }),
-        },
-      );
-
-      if (!response.ok) {
-        throw new Error(
-          `Network response was not ok: ${response.status} ${response.statusText}`,
-        );
-      }
-
-      if (response.headers.get('Content-Type')?.includes('application/json')) {
-        const data = await response.json();
-        if (data.message) {
-          return data.message;
-        } else {
-          throw new Error('No message received');
-        }
-      }
-
-      async function initialize() {
-        // Cancel any pending queries and update conversation leaf ID
-        await queryClient.cancelQueries({
-          queryKey: ['conversation', conversationId],
-        });
-        queryClient.setQueryData(
-          ['conversation', conversationId],
-          (oldConversation: Conversation) => ({
-            ...oldConversation,
-            current_message_leaf_id: newMessageId,
-          }),
-        );
-      }
-
-      const reader = response.body?.getReader();
-      if (!reader) {
-        throw new Error('No reader available');
-      }
-
-      const decoder = new TextDecoder();
-      let leftover = '';
-
       let finalMessage: Message | null = null;
 
+      // Abort any prior in-flight stream for this conversation and register
+      // our own controller so stopGenerating / unmount can cancel.
+      activeStreamControllers.get(conversationId)?.abort();
+      const controller = new AbortController();
+      activeStreamControllers.set(conversationId, controller);
+
       try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
+        const response = await fetch(
+          `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/parametric-chat`,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${
+                (await supabase.auth.getSession()).data.session?.access_token
+              }`,
+            },
+            body: JSON.stringify({
+              conversationId,
+              messageId,
+              model,
+              newMessageId,
+            }),
+            signal: controller.signal,
+          },
+        );
 
-          // Append decoded chunk to leftover buffer
-          leftover += decoder.decode(value, { stream: true });
+        if (!response.ok) {
+          throw new Error(
+            `Network response was not ok: ${response.status} ${response.statusText}`,
+          );
+        }
 
-          // Split into lines; keep the last partial line in leftover
-          const lines = leftover.split('\n');
-          leftover = lines.pop() ?? '';
+        if (
+          response.headers.get('Content-Type')?.includes('application/json')
+        ) {
+          const data = await response.json();
+          if (data.message) {
+            return data.message;
+          } else {
+            throw new Error('No message received');
+          }
+        }
 
-          for (const rawLine of lines) {
-            const line = rawLine.trim();
-            if (!line) continue;
+        async function initialize() {
+          // Cancel any pending queries and update conversation leaf ID
+          await queryClient.cancelQueries({
+            queryKey: ['conversation', conversationId],
+          });
+          queryClient.setQueryData(
+            ['conversation', conversationId],
+            (oldConversation: Conversation) => ({
+              ...oldConversation,
+              current_message_leaf_id: newMessageId,
+            }),
+          );
+        }
+
+        const reader = response.body?.getReader();
+        if (!reader) {
+          throw new Error('No reader available');
+        }
+
+        const decoder = new TextDecoder();
+        let leftover = '';
+
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            // Append decoded chunk to leftover buffer
+            leftover += decoder.decode(value, { stream: true });
+
+            // Split into lines; keep the last partial line in leftover
+            const lines = leftover.split('\n');
+            leftover = lines.pop() ?? '';
+
+            for (const rawLine of lines) {
+              const line = rawLine.trim();
+              if (!line) continue;
+              try {
+                const data: Message = JSON.parse(line);
+
+                finalMessage = data;
+
+                // Update existing streaming message
+                queryClient.setQueryData(
+                  ['messages', conversationId],
+                  (oldMessages: Message[] | undefined) => {
+                    if (!oldMessages || oldMessages.length === 0) {
+                      return [data];
+                    }
+                    if (oldMessages.find((msg) => msg.id === data.id)) {
+                      return oldMessages.map((msg) =>
+                        msg.id === data.id ? data : msg,
+                      );
+                    } else {
+                      return [...oldMessages, data];
+                    }
+                  },
+                );
+
+                if (!initialized) {
+                  await initialize();
+                  initialized = true;
+                }
+              } catch (parseError) {
+                console.error('Error parsing streaming data:', parseError);
+              }
+            }
+          }
+
+          // Flush decoder and process any remaining buffered content
+          const flushRemainder = decoder.decode();
+          if (flushRemainder) leftover += flushRemainder;
+          const tail = leftover.trim();
+          if (tail) {
             try {
-              const data: Message = JSON.parse(line);
-
+              const data: Message = JSON.parse(tail);
               finalMessage = data;
-
-              // Update existing streaming message
               queryClient.setQueryData(
                 ['messages', conversationId],
                 (oldMessages: Message[] | undefined) => {
@@ -462,53 +568,36 @@ export function useParametricChatMutation({
                   }
                 },
               );
-
-              if (!initialized) {
-                await initialize();
-                initialized = true;
-              }
             } catch (parseError) {
-              console.error('Error parsing streaming data:', parseError);
+              console.error('Error parsing final streaming data:', parseError);
             }
           }
-        }
-
-        // Flush decoder and process any remaining buffered content
-        const flushRemainder = decoder.decode();
-        if (flushRemainder) leftover += flushRemainder;
-        const tail = leftover.trim();
-        if (tail) {
+        } finally {
           try {
-            const data: Message = JSON.parse(tail);
-            finalMessage = data;
-            queryClient.setQueryData(
-              ['messages', conversationId],
-              (oldMessages: Message[] | undefined) => {
-                if (!oldMessages || oldMessages.length === 0) {
-                  return [data];
-                }
-                if (oldMessages.find((msg) => msg.id === data.id)) {
-                  return oldMessages.map((msg) =>
-                    msg.id === data.id ? data : msg,
-                  );
-                } else {
-                  return [...oldMessages, data];
-                }
-              },
-            );
-          } catch (parseError) {
-            console.error('Error parsing final streaming data:', parseError);
+            reader.releaseLock();
+          } catch {
+            // Reader may already be released/cancelled after abort.
           }
         }
+
+        if (!finalMessage) {
+          throw new Error('No final message received');
+        }
+
+        return finalMessage;
+      } catch (error) {
+        if (isAbortError(error) || controller.signal.aborted) {
+          if (finalMessage) return finalMessage;
+          const abortError = new Error('Stream aborted');
+          abortError.name = 'AbortError';
+          throw abortError;
+        }
+        throw error;
       } finally {
-        reader.releaseLock();
+        if (activeStreamControllers.get(conversationId) === controller) {
+          activeStreamControllers.delete(conversationId);
+        }
       }
-
-      if (!finalMessage) {
-        throw new Error('No final message received');
-      }
-
-      return finalMessage;
     },
     onSuccess: (newMessage) => {
       messageInsertedConversationUpdate(
@@ -521,6 +610,7 @@ export function useParametricChatMutation({
       queryClient.invalidateQueries({ queryKey: ['userExtraData'] });
     },
     onError: async (error, { messageId }) => {
+      if (isAbortError(error)) return;
       Sentry.captureException(error, {
         extra: {
           hook: 'useParametricChatMutation',
