@@ -1107,9 +1107,15 @@ Deno.serve(async (req) => {
               title = 'Adam Object';
 
             if (codeGenFailed || !code) {
+              // Preserve whatever partial artifact was streamed rather than
+              // unsetting it. Clearing `artifact` here flipped `hasArtifact`
+              // back to false on the client mid-stream, which crashed the
+              // conditional parameters Panel in react-resizable-panels. The
+              // `toolCalls[].status === 'error'` signal already carries the
+              // failure; keeping the partial code lets the user see what was
+              // generated before the error.
               content = {
                 ...content,
-                artifact: undefined,
                 toolCalls: (content.toolCalls || []).map((c) =>
                   c.id === toolCall.id ? { ...c, status: 'error' } : c,
                 ),
