@@ -1007,6 +1007,12 @@ Deno.serve(async (req) => {
 
               const codeDecoder = new TextDecoder();
               let codeBuffer = '';
+              // Throttle SSE flushes to avoid O(n^2) memory blow-up on long
+              // generations — without this, each of hundreds of deltas
+              // re-serializes the full accumulated artifact.
+              let lastFlushTime = 0;
+              let lastFlushedLen = 0;
+              const FLUSH_INTERVAL_MS = 120;
 
               while (true) {
                 const { done, value } = await codeReader.read();
@@ -1049,20 +1055,28 @@ Deno.serve(async (req) => {
                   const deltaContent = chunk.choices?.[0]?.delta?.content;
                   if (typeof deltaContent === 'string' && deltaContent) {
                     rawCode += deltaContent;
-                    const streamed = stripCodeFences(rawCode);
-                    content = {
-                      ...content,
-                      artifact: {
-                        title: 'Adam Object',
-                        version: 'v1',
-                        code: streamed,
-                        parameters: [],
-                      },
-                    };
-                    streamMessage(controller, {
-                      ...newMessageData,
-                      content,
-                    });
+                    const now = Date.now();
+                    if (
+                      now - lastFlushTime >= FLUSH_INTERVAL_MS &&
+                      rawCode.length > lastFlushedLen
+                    ) {
+                      const streamed = stripCodeFences(rawCode);
+                      content = {
+                        ...content,
+                        artifact: {
+                          title: 'Adam Object',
+                          version: 'v1',
+                          code: streamed,
+                          parameters: [],
+                        },
+                      };
+                      streamMessage(controller, {
+                        ...newMessageData,
+                        content,
+                      });
+                      lastFlushTime = now;
+                      lastFlushedLen = rawCode.length;
+                    }
                   }
                 }
               }
