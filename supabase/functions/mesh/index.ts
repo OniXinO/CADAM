@@ -254,10 +254,13 @@ async function generateMeshImage(
   }
 
   // One line per mesh generation — low noise, high signal. Grep for
-  // "provider=flux" etc. in Supabase function logs to audit fallback rate.
+  // "provider=flux" or "quality=low" etc. in Supabase function logs to
+  // audit fallback + cost-tier distribution.
   console.log(
     `[mesh] image_gen provider=${provider} meshModel=${sentryStage.meshModel}` +
       (sentryStage.subStage ? ` subStage=${sentryStage.subStage}` : '') +
+      ` quality=${QUALITY_BY_MESH_MODEL[sentryStage.meshModel]}` +
+      ` contentType=${result.contentType}` +
       ` callId=${result.imageCallId ?? 'none'}`,
   );
 

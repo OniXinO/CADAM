@@ -276,10 +276,18 @@ export const generateImageWithGeminiMultiTurn = async (
     const imageArrayBuffer = await imageData.arrayBuffer();
     const buffer = Buffer.from(imageArrayBuffer);
     const base64Image = buffer.toString('base64');
+    // Derive mimeType from the blob rather than hardcoding png —
+    // gpt-image-2 stores jpeg, so a Gemini fallback on a later turn
+    // would otherwise send jpeg bytes declared as png and get rejected
+    // (or produce corrupt output).
+    const mimeType =
+      imageData.type && imageData.type.startsWith('image/')
+        ? imageData.type
+        : 'image/png';
 
     imagePart = {
       inlineData: {
-        mimeType: 'image/png',
+        mimeType,
         data: base64Image,
       },
     };
