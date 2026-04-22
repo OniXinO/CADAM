@@ -256,10 +256,17 @@ async function generateMeshImage(
   // One line per mesh generation — low noise, high signal. Grep for
   // "provider=flux" or "quality=low" etc. in Supabase function logs to
   // audit fallback + cost-tier distribution.
+  //
+  // `quality` is only logged when gpt-image-2 actually ran — it's a
+  // gpt-image-2 tool parameter, not a concept that applies to the
+  // Gemini/Flux fallbacks, so including it on fallback rows would be
+  // misleading.
   console.log(
     `[mesh] image_gen provider=${provider} meshModel=${sentryStage.meshModel}` +
       (sentryStage.subStage ? ` subStage=${sentryStage.subStage}` : '') +
-      ` quality=${QUALITY_BY_MESH_MODEL[sentryStage.meshModel]}` +
+      (provider === 'gpt-image-2'
+        ? ` quality=${QUALITY_BY_MESH_MODEL[sentryStage.meshModel]}`
+        : '') +
       ` contentType=${result.contentType}` +
       ` callId=${result.imageCallId ?? 'none'}`,
   );
