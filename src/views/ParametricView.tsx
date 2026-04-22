@@ -3,7 +3,7 @@ import { ParameterSection } from '@/components/parameter/ParameterSection';
 import { Content, Message, Model, Parameter } from '@shared/types';
 import OpenSCADError from '@/lib/OpenSCADError';
 import { cn } from '@/lib/utils';
-import { useRef, useState, useMemo, useCallback } from 'react';
+import { useRef, useState, useMemo, useCallback, useLayoutEffect } from 'react';
 import {
   ImperativePanelHandle,
   Panel,
@@ -150,6 +150,23 @@ export default function ParametricView({
     () => !!currentMessage?.content.artifact,
     [currentMessage],
   );
+
+  // `react-resizable-panels` only honors `defaultSize` at initial mount, and
+  // the PanelGroup's `autoSaveId` can restore a persisted size of 0 from a
+  // prior no-artifact session. Drive visibility imperatively via
+  // collapse/expand so the panel actually opens when the artifact arrives
+  // and shrinks to 0 when it's gone. useLayoutEffect avoids a visible flash
+  // on first paint when the persisted layout disagrees with `hasArtifact`.
+  useLayoutEffect(() => {
+    const panel = parameterPanelRef.current;
+    if (!panel) return;
+    if (hasArtifact) {
+      panel.expand();
+      setIsParametersPanelCollapsed(false);
+    } else {
+      panel.collapse();
+    }
+  }, [hasArtifact]);
 
   // Optimized collapse/expand handlers
   const handleChatCollapse = useCallback(() => {
@@ -330,10 +347,11 @@ export default function ParametricView({
           </PanelResizeHandle>
           <Panel
             collapsible
+            collapsedSize={0}
             ref={parameterPanelRef}
-            defaultSize={hasArtifact ? parametersPanelSizes.defaultSize : 0}
-            minSize={hasArtifact ? parametersPanelSizes.minSize : 0}
-            maxSize={hasArtifact ? parametersPanelSizes.maxSize : 0}
+            defaultSize={parametersPanelSizes.defaultSize}
+            minSize={parametersPanelSizes.minSize}
+            maxSize={parametersPanelSizes.maxSize}
             id="parameters-panel"
             order={2}
           >
