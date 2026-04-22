@@ -105,9 +105,15 @@ export const generateImageWithGemini = async (
 };
 */
 
+export type GptImageQuality = 'low' | 'medium' | 'high';
+
 export type GptImage2Result = {
   imageBytes: Buffer;
   imageCallId: string | null;
+  // MIME of the returned bytes — gpt-image-2 returns jpeg per our tool
+  // config. Callers must use this when persisting to storage so the
+  // Content-Type header matches the actual bytes.
+  contentType: 'image/jpeg';
 };
 
 /**
@@ -118,6 +124,10 @@ export type GptImage2Result = {
  * image_generation_call is referenced by ID (the canonical edit pattern)
  * instead of re-encoding the image as base64. Newly uploaded references
  * (no prior call ID) fall through to input_image base64.
+ *
+ * Output format: jpeg. Per OpenAI's docs, jpeg is faster than png with
+ * the image_generation tool, and our downstream 3D pipelines don't need
+ * alpha (we also set background=opaque). Latency win.
  */
 export const generateImageWithGptImage2 = async (
   supabaseClient: SupabaseClient,
@@ -127,6 +137,9 @@ export const generateImageWithGptImage2 = async (
   prompt: string,
   images: string[],
   priorImageCallId: string | null,
+  // 'low' (~$0.006) for fast/draft use, 'high' (~$0.21) for final mesh
+  // seeds. 'medium' also available (~$0.053).
+  quality: GptImageQuality,
 ): Promise<GptImage2Result> => {
   debugLog('Generating image with gpt-image-2 via Responses API', {
     userId,
@@ -202,9 +215,9 @@ export const generateImageWithGptImage2 = async (
       {
         type: 'image_generation',
         model: 'gpt-image-2',
-        quality: 'high',
+        quality,
         size: '1024x1024',
-        output_format: 'png',
+        output_format: 'jpeg',
         background: 'opaque',
         moderation: 'low',
       },
@@ -228,6 +241,7 @@ export const generateImageWithGptImage2 = async (
   return {
     imageBytes: Buffer.from(latestCall.result, 'base64'),
     imageCallId: latestCall.id,
+    contentType: 'image/jpeg',
   };
 };
 

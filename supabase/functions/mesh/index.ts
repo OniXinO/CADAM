@@ -9,6 +9,7 @@ import {
   generateImageWithGeminiMultiTurn,
   generateImageWithGptImage2,
   INSTRUCTIONS_3D as instructions3D,
+  type GptImageQuality,
 } from '../_shared/imageGen.ts';
 import { Model, MeshFileType } from '@shared/types.ts';
 import {
@@ -106,6 +107,20 @@ async function getPriorImageCallId(
 //
 // Flux is also the sole provider for mesh previews (see submitPreviewJob),
 // which intentionally does not go through this chain.
+// Per-mode gpt-image-2 quality. fast mode defaults to `low` ($0.006/image,
+// cheaper than the Flux it replaced) since fast-mode output is inherently
+// draft quality. quality/ultra use `high` ($0.21/image) for final seed
+// fidelity. See https://developers.openai.com/api/docs/guides/image-generation
+// for pricing tiers.
+const QUALITY_BY_MESH_MODEL: Record<
+  'fast' | 'quality' | 'ultra',
+  GptImageQuality
+> = {
+  fast: 'low',
+  quality: 'high',
+  ultra: 'high',
+};
+
 async function generateMeshImage(
   userId: string,
   conversationId: string,
@@ -119,7 +134,11 @@ async function generateMeshImage(
   // Makes the multi-turn lookup branch-aware.
   priorMeshId: string | undefined,
   sentryStage: { meshModel: 'fast' | 'quality' | 'ultra'; subStage?: string },
-): Promise<{ imageBytes: Buffer; imageCallId: string | null }> {
+): Promise<{
+  imageBytes: Buffer;
+  imageCallId: string | null;
+  contentType: 'image/jpeg' | 'image/png';
+}> {
   const hasFreshUserImages = freshUserImages.length > 0;
   // Skip the call-id lookup when the user is providing fresh reference
   // material — we want gpt-image-2 to anchor on the new upload, not a
@@ -158,7 +177,11 @@ async function generateMeshImage(
   };
 
   let provider: 'gpt-image-2' | 'nano-banana-pro' | 'flux';
-  let result: { imageBytes: Buffer; imageCallId: string | null };
+  let result: {
+    imageBytes: Buffer;
+    imageCallId: string | null;
+    contentType: 'image/jpeg' | 'image/png';
+  };
 
   try {
     result = await generateImageWithGptImage2(
@@ -169,6 +192,7 @@ async function generateMeshImage(
       prompt,
       gptImageReferenceImages,
       priorImageCallId,
+      QUALITY_BY_MESH_MODEL[sentryStage.meshModel],
     );
     provider = 'gpt-image-2';
   } catch (gptImageError) {
@@ -190,7 +214,8 @@ async function generateMeshImage(
         prompt,
         gptImageReferenceImages,
       );
-      result = { imageBytes, imageCallId: null };
+      // Gemini Multi-Turn returns png.
+      result = { imageBytes, imageCallId: null, contentType: 'image/png' };
       provider = 'nano-banana-pro';
     } catch (geminiError) {
       logError(geminiError, {
@@ -210,7 +235,8 @@ async function generateMeshImage(
           prompt,
           gptImageReferenceImages,
         );
-        result = { imageBytes, imageCallId: null };
+        // Flux returns png per its output_format config.
+        result = { imageBytes, imageCallId: null, contentType: 'image/png' };
         provider = 'flux';
       } catch (fluxError) {
         logError(fluxError, {
@@ -997,20 +1023,21 @@ async function submitMeshJob(
             ? `${instructions3D} Edit the provided image(s) to: ${text}`
             : `${instructions3D} Generate a new image: ${text}`;
 
-        const { imageBytes, imageCallId } = await generateMeshImage(
-          userId,
-          conversationId,
-          newPrompt,
-          images ?? [],
-          allImages,
-          mesh,
-          { meshModel: 'quality' },
-        );
+        const { imageBytes, imageCallId, contentType } =
+          await generateMeshImage(
+            userId,
+            conversationId,
+            newPrompt,
+            images ?? [],
+            allImages,
+            mesh,
+            { meshModel: 'quality' },
+          );
 
         const { error: imageUploadError } = await supabaseClient.storage
           .from('images')
           .upload(`${userId}/${conversationId}/${imageData.id}`, imageBytes, {
-            contentType: 'image/png',
+            contentType,
           });
 
         if (imageUploadError) {
@@ -1071,20 +1098,21 @@ async function submitMeshJob(
             ? `${instructions3D} Edit the provided image(s) to: ${text}`
             : `${instructions3D} Generate a new image: ${text}`;
 
-        const { imageBytes, imageCallId } = await generateMeshImage(
-          userId,
-          conversationId,
-          newPrompt,
-          images ?? [],
-          allImages,
-          mesh,
-          { meshModel: 'fast' },
-        );
+        const { imageBytes, imageCallId, contentType } =
+          await generateMeshImage(
+            userId,
+            conversationId,
+            newPrompt,
+            images ?? [],
+            allImages,
+            mesh,
+            { meshModel: 'fast' },
+          );
 
         const { error: imageUploadError } = await supabaseClient.storage
           .from('images')
           .upload(`${userId}/${conversationId}/${imageData.id}`, imageBytes, {
-            contentType: 'image/png',
+            contentType,
           });
 
         if (imageUploadError) {
@@ -1232,7 +1260,7 @@ async function submitMeshJob(
         ultraSubStage = 'conversational';
       }
 
-      const { imageBytes, imageCallId } = await generateMeshImage(
+      const { imageBytes, imageCallId, contentType } = await generateMeshImage(
         userId,
         conversationId,
         ultraPrompt,
@@ -1246,7 +1274,7 @@ async function submitMeshJob(
       const { error: imageUploadError } = await supabaseClient.storage
         .from('images')
         .upload(`${userId}/${conversationId}/${imageData.id}`, imageBytes, {
-          contentType: 'image/png',
+          contentType,
         });
 
       if (imageUploadError) {
