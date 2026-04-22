@@ -34,10 +34,9 @@ function streamMessage(
   controller: ReadableStreamDefaultController,
   message: Message,
 ) {
+  const encoded = new TextEncoder().encode(JSON.stringify(message) + '\n');
   try {
-    controller.enqueue(
-      new TextEncoder().encode(JSON.stringify(message) + '\n'),
-    );
+    controller.enqueue(encoded);
   } catch {
     // Controller closed — client has gone away. Nothing more to do.
   }
