@@ -24,12 +24,23 @@ initSentry();
 const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const OPENROUTER_API_KEY = Deno.env.get('OPENROUTER_API_KEY') ?? '';
 
-// Helper to stream updated assistant message rows
+// Helper to stream updated assistant message rows.
+// Silently noop if the controller is already closed (e.g. the client
+// disconnected mid-stream). Without this guard the enqueue throws
+// `The stream controller cannot close or enqueue`, which bubbles up
+// and gets logged as a generation failure even though the generation
+// may have completed successfully.
 function streamMessage(
   controller: ReadableStreamDefaultController,
   message: Message,
 ) {
-  controller.enqueue(new TextEncoder().encode(JSON.stringify(message) + '\n'));
+  try {
+    controller.enqueue(
+      new TextEncoder().encode(JSON.stringify(message) + '\n'),
+    );
+  } catch {
+    // Controller closed — client has gone away. Nothing more to do.
+  }
 }
 
 // Helper to escape regex special characters
@@ -867,7 +878,11 @@ Deno.serve(async (req) => {
             controller,
             finalMessageData ?? { ...newMessageData, content },
           );
-          controller.close();
+          try {
+            controller.close();
+          } catch {
+            // Already closed (client disconnected) — safe to ignore.
+          }
         }
 
         async function handleToolCall(toolCall: {
