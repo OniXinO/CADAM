@@ -11,7 +11,8 @@
     "lint:supabase": "deno lint supabase",
     "format": "prettier --write .",
     "preview": "vite preview",
-    "prepare": "husky"
+    "prepare": "husky",
+    "check:openrouter-models": "node scripts/check-openrouter-models.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.0",
