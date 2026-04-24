@@ -18,7 +18,12 @@ import {
   Box,
   X,
 } from 'lucide-react';
-import { cn, CREATIVE_MODELS, PARAMETRIC_MODELS } from '@/lib/utils';
+import {
+  cn,
+  CREATIVE_MODELS,
+  PARAMETRIC_MODELS,
+  parametricModelSupportsVision,
+} from '@/lib/utils';
 import { Content, CreativeModel, MeshFileType, Model } from '@shared/types';
 import {
   shouldShowPolygonControls,
@@ -491,6 +496,12 @@ function TextAreaChat({
   const { images, mesh, setImages, setMesh } = useItemSelection();
   const meshFiles = useMeshFiles();
 
+  // Parametric models can opt out of vision (e.g. text-only DeepSeek V4 Pro).
+  // When they do, images and STL uploads (which become rendered images) are
+  // meaningless, so we hide the upload affordance and block all attach paths.
+  const canAttachFiles =
+    type !== 'parametric' || parametricModelSupportsVision(model);
+
   // Parametric mode: bounding box and filename from STL parsing
   const [meshBoundingBox, setMeshBoundingBox] = useState<BoundingBox | null>(
     null,
@@ -732,6 +743,14 @@ function TextAreaChat({
     if (hasNoContent || isLoading || hasUploadingImages) {
       return;
     }
+    if (!canAttachFiles && (images.length > 0 || mesh)) {
+      toast({
+        title: 'Remove attachments to continue',
+        description:
+          'The selected model does not accept images or STL uploads. Remove them or switch to a vision-capable model.',
+      });
+      return;
+    }
     let content: Content = {
       ...(input.trim() !== '' && { text: input.trim() }),
       ...(images.length > 0 && { images: images.map((img) => img.id) }),
@@ -863,6 +882,14 @@ function TextAreaChat({
   });
 
   const addItems = async (files: FileList) => {
+    if (!canAttachFiles) {
+      toast({
+        title: 'This model is text-only',
+        description:
+          'The selected model does not accept images or STL uploads. Switch to a vision-capable model to attach files.',
+      });
+      return;
+    }
     const newItems = Array.from(files);
     let hasSmallImages = false;
     let hasLargeImages = false;
@@ -1566,36 +1593,38 @@ function TextAreaChat({
         </div>
         <div className="flex items-center justify-between border-t border-[#2a2a2a] p-3">
           <div className="flex items-center gap-1">
-            <div
-              className={cn(
-                'transition-all duration-300 ease-out',
-                'pointer-events-auto scale-100 opacity-100',
-              )}
-            >
-              <Button
-                variant="outline"
-                className="flex h-8 w-8 items-center gap-2 rounded-lg border border-[#2a2a2a] bg-adam-background-2 p-0 text-sm text-adam-text-secondary hover:bg-adam-bg-secondary-dark"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  const input = document.createElement('input');
-                  input.type = 'file';
-                  input.accept = `${VALID_IMAGE_FORMATS.join(', ')}, ${
-                    type === 'creative'
-                      ? SUPPORTED_MESH_EXTENSIONS.join(', ')
-                      : '.stl'
-                  }`;
-                  input.onchange = (event) => {
-                    handleItemsChange(
-                      event as unknown as ChangeEvent<HTMLInputElement>,
-                    );
-                  };
-                  input.click();
-                }}
-                disabled={disabled}
+            {canAttachFiles && (
+              <div
+                className={cn(
+                  'transition-all duration-300 ease-out',
+                  'pointer-events-auto scale-100 opacity-100',
+                )}
               >
-                <ImagePlus className="h-5 w-5" />
-              </Button>
-            </div>
+                <Button
+                  variant="outline"
+                  className="flex h-8 w-8 items-center gap-2 rounded-lg border border-[#2a2a2a] bg-adam-background-2 p-0 text-sm text-adam-text-secondary hover:bg-adam-bg-secondary-dark"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    const input = document.createElement('input');
+                    input.type = 'file';
+                    input.accept = `${VALID_IMAGE_FORMATS.join(', ')}, ${
+                      type === 'creative'
+                        ? SUPPORTED_MESH_EXTENSIONS.join(', ')
+                        : '.stl'
+                    }`;
+                    input.onchange = (event) => {
+                      handleItemsChange(
+                        event as unknown as ChangeEvent<HTMLInputElement>,
+                      );
+                    };
+                    input.click();
+                  }}
+                  disabled={disabled}
+                >
+                  <ImagePlus className="h-5 w-5" />
+                </Button>
+              </div>
+            )}
 
             {/* Creative mode toggle button */}
             {onTypeChange && (
