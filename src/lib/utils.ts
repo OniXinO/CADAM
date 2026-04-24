@@ -264,13 +264,13 @@ export const PARAMETRIC_MODELS: ModelConfig[] = [
     supportsVision: true,
   },
   {
-    id: 'openai/gpt-5.5-pro',
-    name: 'GPT-5.5 Pro',
-    description: 'Most powerful OpenAI model for complex reasoning',
-    provider: 'OpenAI',
+    id: 'deepseek/deepseek-v4-pro',
+    name: 'DeepSeek V4 Pro',
+    description: 'Long-context MoE model for complex reasoning and code',
+    provider: 'DeepSeek',
     supportsTools: true,
     supportsThinking: true,
-    supportsVision: true,
+    supportsVision: false,
   },
 ];
 
@@ -294,6 +294,14 @@ export const CREATIVE_MODELS: ModelConfig[] = [
     timeEstimate: '60-90 seconds',
   },
 ];
+
+// Whether the selected parametric model can accept image / STL-render inputs.
+// Unknown ids (e.g. historical messages tagged with a removed model) fall back
+// to `true` so legacy conversations keep rendering normally.
+export function parametricModelSupportsVision(modelId: string): boolean {
+  const cfg = PARAMETRIC_MODELS.find((m) => m.id === modelId);
+  return cfg?.supportsVision !== false;
+}
 
 export function getBackupModel({
   message,
