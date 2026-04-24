@@ -266,7 +266,7 @@ export const PARAMETRIC_MODELS: ModelConfig[] = [
   {
     id: 'openai/gpt-5.5-pro',
     name: 'GPT-5.5 Pro',
-    description: 'Most powerful OpenAI model with adaptive reasoning',
+    description: 'Most powerful OpenAI model for complex reasoning',
     provider: 'OpenAI',
     supportsTools: true,
     supportsThinking: true,
