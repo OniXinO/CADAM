@@ -295,6 +295,14 @@ export const CREATIVE_MODELS: ModelConfig[] = [
   },
 ];
 
+// Whether the selected parametric model can accept image / STL-render inputs.
+// Unknown ids (e.g. historical messages tagged with a removed model) fall back
+// to `true` so legacy conversations keep rendering normally.
+export function parametricModelSupportsVision(modelId: string): boolean {
+  const cfg = PARAMETRIC_MODELS.find((m) => m.id === modelId);
+  return cfg?.supportsVision !== false;
+}
+
 export function getBackupModel({
   message,
   parentMessage,
