@@ -24,17 +24,6 @@ initSentry();
 const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const OPENROUTER_API_KEY = Deno.env.get('OPENROUTER_API_KEY') ?? '';
 
-// Parametric models whose OpenRouter endpoint only accepts text input.
-// Sending image_url blocks to these returns a 4xx and breaks the whole turn,
-// so we strip images and replace them with a short text placeholder.
-const TEXT_ONLY_PARAMETRIC_MODELS = new Set<string>([
-  'deepseek/deepseek-v4-pro',
-]);
-
-function modelSupportsVision(model: string): boolean {
-  return !TEXT_ONLY_PARAMETRIC_MODELS.has(model);
-}
-
 // Helper to stream updated assistant message rows.
 // Silently noop if the controller is already closed (e.g. the client
 // disconnected mid-stream). Without this guard the enqueue throws
@@ -195,13 +184,6 @@ interface OpenRouterRequest {
   reasoning?: {
     max_tokens?: number;
     effort?: 'high' | 'medium' | 'low';
-  };
-  // OpenRouter provider routing controls. `require_parameters: true` filters
-  // out providers that don't support every parameter we send (e.g. `tools`).
-  // Without this, V4 Pro requests get load-balanced to GMICloud / SiliconFlow,
-  // which don't support tool calling, and the whole turn fails.
-  provider?: {
-    require_parameters?: boolean;
   };
 }
 
@@ -591,24 +573,13 @@ Deno.serve(async (req) => {
           );
           // Convert Anthropic-style to OpenAI-style
           // formatUserMessage returns content as an array
-          const supportsVision = modelSupportsVision(model);
           return {
             role: 'user' as const,
-            content: formatted.content.flatMap((block: unknown) => {
+            content: formatted.content.map((block: unknown) => {
               if (isAnthropicBlock(block)) {
                 if (block.type === 'text') {
-                  return [{ type: 'text', text: block.text }];
+                  return { type: 'text', text: block.text };
                 } else if (block.type === 'image') {
-                  // Text-only models reject image blocks. Drop them and leave
-                  // a placeholder so the model still knows an image existed.
-                  if (!supportsVision) {
-                    return [
-                      {
-                        type: 'text',
-                        text: '[image omitted: selected model does not accept images]',
-                      },
-                    ];
-                  }
                   // Handle both URL and base64 image formats
                   let imageUrl: string;
                   if (
@@ -622,20 +593,18 @@ Deno.serve(async (req) => {
                     imageUrl = block.source.url;
                   } else {
                     // Fallback or error case
-                    return [block];
+                    return block;
                   }
-                  return [
-                    {
-                      type: 'image_url',
-                      image_url: {
-                        url: imageUrl,
-                        detail: 'auto', // Auto-detect appropriate detail level
-                      },
+                  return {
+                    type: 'image_url',
+                    image_url: {
+                      url: imageUrl,
+                      detail: 'auto', // Auto-detect appropriate detail level
                     },
-                  ];
+                  };
                 }
               }
-              return [block];
+              return block;
             }),
           };
         }
@@ -659,7 +628,6 @@ Deno.serve(async (req) => {
       tools,
       stream: true,
       max_tokens: 16000,
-      provider: { require_parameters: true },
     };
 
     // Add reasoning/thinking parameter if requested and supported
@@ -1006,7 +974,6 @@ Deno.serve(async (req) => {
               ],
               max_tokens: 48000,
               stream: true,
-              provider: { require_parameters: true },
             };
 
             // Also apply thinking to code generation if enabled
