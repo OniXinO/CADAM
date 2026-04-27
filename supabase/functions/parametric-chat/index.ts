@@ -24,16 +24,16 @@ initSentry();
 const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const OPENROUTER_API_KEY = Deno.env.get('OPENROUTER_API_KEY') ?? '';
 
-// Parametric models whose OpenRouter endpoint only accepts text input.
-// Sending image_url blocks to these returns a 4xx and breaks the whole turn,
-// so we strip images and replace them with a short text placeholder.
-const TEXT_ONLY_PARAMETRIC_MODELS = new Set<string>([
+// Models whose OpenRouter listing serves at least one provider that does NOT
+// support tool calling. For these we set `provider: { require_parameters: true }`
+// on the agent (tools-bearing) call so OpenRouter excludes the tool-incompatible
+// providers from the routing pool. The code-gen call sends no tools and so
+// doesn't need this constraint. Keep this list scoped — adding a model that
+// doesn't actually have mixed-provider tool support just narrows routing for
+// no reason.
+const REQUIRES_TOOL_CAPABLE_PROVIDER = new Set<string>([
   'deepseek/deepseek-v4-pro',
 ]);
-
-function modelSupportsVision(model: string): boolean {
-  return !TEXT_ONLY_PARAMETRIC_MODELS.has(model);
-}
 
 // Helper to stream updated assistant message rows.
 // Silently noop if the controller is already closed (e.g. the client
@@ -508,12 +508,14 @@ Deno.serve(async (req) => {
     model,
     newMessageId,
     thinking, // Add thinking parameter
+    supportsVision = true, // Client-provided capability flag from PARAMETRIC_MODELS
   }: {
     messageId: string;
     conversationId: string;
     model: Model;
     newMessageId: string;
     thinking?: boolean;
+    supportsVision?: boolean;
   } = await req.json();
 
   const { data: messages, error: messagesError } = await supabaseClient
@@ -591,7 +593,6 @@ Deno.serve(async (req) => {
           );
           // Convert Anthropic-style to OpenAI-style
           // formatUserMessage returns content as an array
-          const supportsVision = modelSupportsVision(model);
           return {
             role: 'user' as const,
             content: formatted.content.flatMap((block: unknown) => {
@@ -659,8 +660,13 @@ Deno.serve(async (req) => {
       tools,
       stream: true,
       max_tokens: 16000,
-      provider: { require_parameters: true },
     };
+
+    // Constrain provider routing only when the model has providers that don't
+    // support tool calling — otherwise we'd needlessly narrow the pool.
+    if (REQUIRES_TOOL_CAPABLE_PROVIDER.has(model)) {
+      requestBody.provider = { require_parameters: true };
+    }
 
     // Add reasoning/thinking parameter if requested and supported
     // OpenRouter uses a unified 'reasoning' parameter
@@ -998,6 +1004,8 @@ Deno.serve(async (req) => {
             ];
 
             // Code generation request logic (SSE streaming)
+            // Note: no `provider.require_parameters` here — code-gen doesn't
+            // send tools, so all providers in the pool are eligible.
             const codeRequestBody: OpenRouterRequest = {
               model,
               messages: [
@@ -1006,7 +1014,6 @@ Deno.serve(async (req) => {
               ],
               max_tokens: 48000,
               stream: true,
-              provider: { require_parameters: true },
             };
 
             // Also apply thinking to code generation if enabled
