@@ -264,13 +264,13 @@ export const PARAMETRIC_MODELS: ModelConfig[] = [
     supportsVision: true,
   },
   {
-    id: 'openai/gpt-5.5-pro',
-    name: 'GPT-5.5 Pro',
-    description: 'Most powerful OpenAI model for complex reasoning',
-    provider: 'OpenAI',
+    id: 'deepseek/deepseek-v4-pro',
+    name: 'DeepSeek V4 Pro',
+    description: 'Long-context MoE model for complex reasoning and code',
+    provider: 'DeepSeek',
     supportsTools: true,
     supportsThinking: true,
-    supportsVision: true,
+    supportsVision: false,
   },
 ];
 
