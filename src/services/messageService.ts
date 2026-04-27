@@ -2,7 +2,6 @@ import { useConversation } from '@/contexts/ConversationContext';
 import { supabase } from '@/lib/supabase';
 import { Content, Conversation, Message, Model } from '@shared/types';
 import { HistoryConversation } from '../types/misc.ts';
-import { parametricModelSupportsVision } from '@/lib/utils';
 import {
   QueryClient,
   UseMutateAsyncFunction,
@@ -384,7 +383,6 @@ export function useParametricChatMutation({
             messageId,
             model,
             newMessageId,
-            supportsVision: parametricModelSupportsVision(model),
           }),
         },
       );

@@ -35,6 +35,13 @@ const REQUIRES_TOOL_CAPABLE_PROVIDER = new Set<string>([
   'deepseek/deepseek-v4-pro',
 ]);
 
+// Models whose OpenRouter input modality is text-only. We strip image blocks
+// from these requests because OpenRouter rejects image content for text-only
+// models and the whole turn fails. Authoritative server-side — must mirror
+// `supportsVision: false` entries in PARAMETRIC_MODELS (src/lib/utils.ts) but
+// is not derived from the client to avoid stale-client/direct-API bypass.
+const TEXT_ONLY_MODELS = new Set<string>(['deepseek/deepseek-v4-pro']);
+
 // Helper to stream updated assistant message rows.
 // Silently noop if the controller is already closed (e.g. the client
 // disconnected mid-stream). Without this guard the enqueue throws
@@ -508,15 +515,16 @@ Deno.serve(async (req) => {
     model,
     newMessageId,
     thinking, // Add thinking parameter
-    supportsVision = true, // Client-provided capability flag from PARAMETRIC_MODELS
   }: {
     messageId: string;
     conversationId: string;
     model: Model;
     newMessageId: string;
     thinking?: boolean;
-    supportsVision?: boolean;
   } = await req.json();
+
+  // Authoritative server-side capability: don't trust the client to self-report.
+  const supportsVision = !TEXT_ONLY_MODELS.has(model);
 
   const { data: messages, error: messagesError } = await supabaseClient
     .from('messages')
