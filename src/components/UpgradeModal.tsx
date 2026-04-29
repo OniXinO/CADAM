@@ -70,13 +70,13 @@ export function UpgradeModal({ open, onOpenChange }: UpgradeModalProps) {
   const handleClick = (level: PlanLevel, priceId: string | null) => {
     if (level === currentLevel) return;
     setActiveLevel(level);
-    if (currentLevel === 'free' && priceId) {
+    if (billing?.subscription) {
+      manage(undefined, { onSettled: () => setActiveLevel(null) });
+    } else if (priceId) {
       subscribe(
         { priceId, source: 'upgrade_modal' },
         { onSettled: () => setActiveLevel(null) },
       );
-    } else if (currentLevel !== 'free') {
-      manage(undefined, { onSettled: () => setActiveLevel(null) });
     } else {
       setActiveLevel(null);
     }

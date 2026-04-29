@@ -202,6 +202,22 @@ export function Subscriptions() {
             </TabsContent>
           </Tabs>
 
+          {user && (
+            <div className="mt-6 flex justify-center">
+              <button
+                type="button"
+                onClick={() => handleManageSubscription()}
+                disabled={isManageLoading}
+                className="inline-flex items-center gap-1.5 text-xs text-adam-neutral-300 underline-offset-4 hover:text-adam-neutral-100 hover:underline disabled:opacity-60"
+              >
+                {isManageLoading && (
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                )}
+                Manage billing
+              </button>
+            </div>
+          )}
+
           {/* Token Packs */}
           {tokenPacks.length > 0 && (
             <div className="mt-12 px-8">

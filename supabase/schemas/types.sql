@@ -32,35 +32,3 @@ CREATE TYPE "public"."prompt_type" AS ENUM (
     'chat'
 );
 
-CREATE TYPE "public"."stripe-level" AS ENUM (
-    'pro',
-    'standard'
-);
-
-CREATE TYPE "public"."subscription_level" AS ENUM (
-    'pro',
-    'standard',
-    'free'
-);
-
-CREATE TYPE "public"."token_operation_type" AS ENUM (
-    'mesh',
-    'parametric',
-    'chat',
-    'refund'
-);
-
-CREATE TYPE "public"."token_source_type" AS ENUM (
-    'subscription',
-    'purchased'
-);
-
-CREATE TYPE "public"."user_data" AS (
-	"hasTrialed" boolean,
-	"sublevel" "public"."subscription_level",
-	"subscriptionTokens" integer,
-	"purchasedTokens" integer,
-	"totalTokens" integer,
-	"subscriptionTokenLimit" integer,
-	"subscriptionExpiresAt" timestamptz
-);

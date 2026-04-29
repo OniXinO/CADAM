@@ -80,7 +80,6 @@ public = false
 schema_paths = [
   "./schemas/types.sql",
   "./schemas/conversations.sql",
-  "./schemas/subscriptions.sql",
   "./schemas/prompts.sql",
   "./schemas/*.sql",
 ]

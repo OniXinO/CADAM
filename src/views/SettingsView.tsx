@@ -304,26 +304,32 @@ export default function SettingsView() {
                   )}
                 </div>
 
-                {level !== 'free' ? (
+                <div className="flex flex-shrink-0 items-center gap-2">
                   <Button
                     onClick={() => handleManageSubscription()}
-                    className="flex-shrink-0 rounded-full font-light"
+                    className="rounded-full font-light"
                     variant="dark"
                     disabled={isManageLoading}
                   >
                     {isManageLoading ? (
                       <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
+                    ) : level !== 'free' ? (
                       'Manage'
+                    ) : (
+                      'Manage billing'
                     )}
                   </Button>
-                ) : (
-                  <Link to="/subscription" className="flex-shrink-0">
-                    <Button className="rounded-full font-light" variant="light">
-                      Upgrade
-                    </Button>
-                  </Link>
-                )}
+                  {level === 'free' && (
+                    <Link to="/subscription">
+                      <Button
+                        className="rounded-full font-light"
+                        variant="light"
+                      >
+                        Upgrade
+                      </Button>
+                    </Link>
+                  )}
+                </div>
               </div>
 
               <div className="flex flex-col gap-2">
