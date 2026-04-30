@@ -266,10 +266,11 @@ export const PARAMETRIC_MODELS: ModelConfig[] = [
   {
     id: 'openrouter/owl-alpha',
     name: 'Owl Alpha',
-    description: 'OpenRouter Owl Alpha model',
+    description:
+      'High-performance agentic model with native tool use and long-context support',
     provider: 'OpenRouter',
     supportsTools: true,
-    supportsThinking: true,
+    supportsThinking: false,
     supportsVision: false,
   },
 ];
