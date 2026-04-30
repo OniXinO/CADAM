@@ -207,7 +207,7 @@ export function Subscriptions() {
               <button
                 type="button"
                 onClick={() => handleManageSubscription()}
-                disabled={isManageLoading}
+                disabled={isManageLoading || isSubscribeLoading}
                 className="inline-flex items-center gap-1.5 text-xs text-adam-neutral-300 underline-offset-4 hover:text-adam-neutral-100 hover:underline disabled:opacity-60"
               >
                 {isManageLoading && (
