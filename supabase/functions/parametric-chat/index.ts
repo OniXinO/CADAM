@@ -32,7 +32,7 @@ const OPENROUTER_API_KEY = Deno.env.get('OPENROUTER_API_KEY') ?? '';
 // doesn't actually have mixed-provider tool support just narrows routing for
 // no reason.
 const REQUIRES_TOOL_CAPABLE_PROVIDER = new Set<string>([
-  'deepseek/deepseek-v4-pro',
+  'openrouter/owl-alpha',
 ]);
 
 // Models whose OpenRouter input modality is text-only. We strip image blocks
@@ -40,7 +40,7 @@ const REQUIRES_TOOL_CAPABLE_PROVIDER = new Set<string>([
 // models and the whole turn fails. Authoritative server-side — must mirror
 // `supportsVision: false` entries in PARAMETRIC_MODELS (src/lib/utils.ts) but
 // is not derived from the client to avoid stale-client/direct-API bypass.
-const TEXT_ONLY_MODELS = new Set<string>(['deepseek/deepseek-v4-pro']);
+const TEXT_ONLY_MODELS = new Set<string>(['openrouter/owl-alpha']);
 
 // Helper to stream updated assistant message rows.
 // Silently noop if the controller is already closed (e.g. the client
