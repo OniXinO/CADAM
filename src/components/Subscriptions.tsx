@@ -102,7 +102,7 @@ function buildTier(
 }
 
 function creditsLines(tier: SubscriptionTier): string[] {
-  const daily = '50 free credits per day';
+  const daily = '200 free credits per day';
   if (tier.level === 'free') return [daily];
   const amount = tier.tokenAmount?.toLocaleString() ?? '';
   return [daily, `${amount} credits per month`];

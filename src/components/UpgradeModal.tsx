@@ -50,7 +50,7 @@ function findMonthly(
 }
 
 function creditsBadge(level: PlanLevel, product: BillingProduct | undefined) {
-  if (level === 'free') return '50 / day';
+  if (level === 'free') return '200 / day';
   const amount = product?.tokenAmount ?? 0;
   return `${amount.toLocaleString()} / mo`;
 }
