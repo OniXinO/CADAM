@@ -264,13 +264,13 @@ export const PARAMETRIC_MODELS: ModelConfig[] = [
     supportsVision: true,
   },
   {
-    id: 'x-ai/grok-4.3',
-    name: 'Grok 4.3',
+    id: 'moonshotai/kimi-k2.6',
+    name: 'Kimi K2.6',
     description:
-      'xAI reasoning model with always-on thinking and vision, suited for agentic workflows',
-    provider: 'xAI',
+      'Moonshot multimodal model with configurable reasoning, vision, and native tool use',
+    provider: 'MoonshotAI',
     supportsTools: true,
-    supportsThinking: false,
+    supportsThinking: true,
     supportsVision: true,
   },
 ];
