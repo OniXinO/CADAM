@@ -80,7 +80,7 @@ export function TrialDialog({
           <li className="flex items-center gap-2">
             <Check className="h-4 w-4 text-adam-neutral-100" />
             <span className="text-adam-neutral-100">
-              10,000 tokens per month
+              {proMonthly?.tokenAmount?.toLocaleString() ?? ''} tokens per month
             </span>
           </li>
           <li className="flex items-center gap-2">
