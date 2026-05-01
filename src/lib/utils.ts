@@ -264,14 +264,14 @@ export const PARAMETRIC_MODELS: ModelConfig[] = [
     supportsVision: true,
   },
   {
-    id: 'openrouter/owl-alpha',
-    name: 'Owl Alpha',
+    id: 'x-ai/grok-4.3',
+    name: 'Grok 4.3',
     description:
-      'High-performance agentic model with native tool use and long-context support',
-    provider: 'OpenRouter',
+      'xAI reasoning model with always-on thinking and vision, suited for agentic workflows',
+    provider: 'xAI',
     supportsTools: true,
     supportsThinking: false,
-    supportsVision: false,
+    supportsVision: true,
   },
 ];
 
