@@ -1213,42 +1213,53 @@ Deno.serve(async (req) => {
         },
       );
 
-      const responsePromise = new Promise<{ imageIds: string[] }>(
-        (resolve, reject) => {
-          resolveResponse = resolve;
-          rejectResponse = reject;
-          const budget = Math.min(
-            VIEW_MODEL_TIMEOUT_MS,
-            Math.max(MIN_ABORT_MS, remainingBudgetMs() - 5_000),
-          );
-          timeoutHandle = setTimeout(() => {
-            reject(
-              new Error(
-                'view_model timed out — the browser did not respond with screenshots in time',
-              ),
-            );
-          }, budget);
-          abortSignal.addEventListener('abort', onAbort, { once: true });
-        },
-      );
-
-      // Block the broadcast until the channel is fully SUBSCRIBED — without
-      // this, the verify_request fires before our listener is wired and the
-      // browser's reply lands on a deaf socket.
-      await new Promise<void>((resolve, reject) => {
-        channel.subscribe((status, err) => {
-          if (status === 'SUBSCRIBED') resolve();
-          else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-            reject(
-              new Error(
-                `verify channel ${status}${err ? `: ${String(err)}` : ''}`,
-              ),
-            );
-          }
-        });
-      });
-
+      // Single try/finally wraps subscribe → send → await response so a
+      // CHANNEL_ERROR / TIMED_OUT subscribe rejection (or any other early
+      // throw) still tears down the broadcast listener, the verify-response
+      // setTimeout, and the abort listener. Without this, an early reject
+      // would leave the timeout to fire later and surface as an unhandled
+      // rejection in the Deno Deploy runtime.
       try {
+        // Block the broadcast until the channel is fully SUBSCRIBED —
+        // otherwise the verify_request fires before our listener is wired
+        // and the browser's reply lands on a deaf socket.
+        await new Promise<void>((resolve, reject) => {
+          channel.subscribe((status, err) => {
+            if (status === 'SUBSCRIBED') resolve();
+            else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+              reject(
+                new Error(
+                  `verify channel ${status}${err ? `: ${String(err)}` : ''}`,
+                ),
+              );
+            }
+          });
+        });
+
+        // Arm the response promise *after* SUBSCRIBED so the timeout only
+        // counts from when we're actually awaiting a browser reply.
+        const responsePromise = new Promise<{ imageIds: string[] }>(
+          (resolve, reject) => {
+            resolveResponse = resolve;
+            rejectResponse = reject;
+            const budget = Math.min(
+              VIEW_MODEL_TIMEOUT_MS,
+              Math.max(MIN_ABORT_MS, remainingBudgetMs() - 5_000),
+            );
+            timeoutHandle = setTimeout(() => {
+              reject(
+                new Error(
+                  'view_model timed out — the browser did not respond with screenshots in time',
+                ),
+              );
+            }, budget);
+            abortSignal.addEventListener('abort', onAbort, { once: true });
+          },
+        );
+        // Suppress unhandled-rejection warnings if the caller never awaits
+        // (e.g. an early throw between subscribe and the await below).
+        responsePromise.catch(() => {});
+
         await channel.send({
           type: 'broadcast',
           event: 'verify_request',

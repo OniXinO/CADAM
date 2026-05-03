@@ -965,21 +965,24 @@ export const processUserModelForPrint = async (
     binary: true,
   } as STLExporterOptionsBinary);
 
-  // STLExporter's binary mode returns a DataView. Newer TS lib types narrow
+  // STLExporter binary mode returns a DataView. Newer TS lib types narrow
   // BlobPart to `ArrayBufferView<ArrayBuffer>` (no SharedArrayBuffer), so
-  // typed-array views backed by `ArrayBufferLike` fail the check. Copy the
-  // bytes into a freshly-allocated, explicitly-`ArrayBuffer`-backed
-  // Uint8Array so the source type is unambiguous and no cast is needed.
-  const sourceBytes: ArrayBuffer =
-    result instanceof DataView
-      ? new ArrayBuffer(result.byteLength)
-      : new ArrayBuffer(0);
-  const stlBytes = new Uint8Array(sourceBytes);
-  if (result instanceof DataView) {
-    for (let i = 0; i < result.byteLength; i++) {
-      stlBytes[i] = result.getUint8(i);
-    }
+  // typed-array views backed by `ArrayBufferLike` fail the type check.
+  // Copy the bytes into a freshly-allocated, explicitly-`ArrayBuffer`-backed
+  // Uint8Array via the native `set()` memcpy — much faster than a
+  // per-byte loop on multi-MB prints.
+  if (!(result instanceof DataView)) {
+    // We requested binary: true, so anything else is a contract violation
+    // (a future three.js change, an ASCII fallback, etc.). Fail fast
+    // rather than emit a 0-byte STL the user would silently download.
+    throw new Error(
+      `STLExporter returned unexpected non-DataView result (got ${typeof result}); refusing to export a 0-byte STL`,
+    );
   }
+  const stlBytes = new Uint8Array(result.byteLength);
+  stlBytes.set(
+    new Uint8Array(result.buffer, result.byteOffset, result.byteLength),
+  );
   const blob = new Blob([stlBytes], { type: 'application/octet-stream' });
   const file = new File([blob], `${generateFilename()}_PRINTABLE.stl`, {
     type: 'application/octet-stream',
