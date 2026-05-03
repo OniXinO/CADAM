@@ -1,9 +1,12 @@
-import { Message, Model } from '@shared/types';
+import { Message, Model, ToolCall } from '@shared/types';
 import {
   ArrowUpRight,
   Box,
+  Camera,
+  Check,
   ChevronLeft,
   ChevronRight,
+  CircleSlash,
   History,
   ThumbsDown,
   ThumbsUp,
@@ -250,6 +253,15 @@ export function AssistantMessage({
                             key={toolCall.id ?? `${toolCall.name}`}
                             code={streamingCode}
                             isStreaming={true}
+                          />
+                        );
+                      }
+
+                      if (toolCall.name === 'view_model') {
+                        return (
+                          <ViewModelToolCallCard
+                            key={toolCall.id ?? `${toolCall.name}`}
+                            toolCall={toolCall}
                           />
                         );
                       }
@@ -505,6 +517,73 @@ export function AssistantMessage({
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+// Render a `view_model` tool call as the agentic verification chip. Three
+// states map to three visuals so the user can tell at a glance whether the
+// agent is still inspecting, has approved, or hit an error along the way.
+function ViewModelToolCallCard({ toolCall }: { toolCall: ToolCall }) {
+  const viewLabels =
+    toolCall.views && toolCall.views.length > 0
+      ? toolCall.views
+          .map((v) =>
+            v.label
+              ? v.label
+              : v.view === 'custom'
+                ? `custom (${Math.round(v.azimuth ?? 0)}°/${Math.round(v.elevation ?? 0)}°)`
+                : v.view,
+          )
+          .join(', ')
+      : '';
+
+  const isPending =
+    toolCall.status === 'pending' ||
+    toolCall.status === 'pending_verification';
+  const isVerified = toolCall.status === 'verified';
+  const isError = toolCall.status === 'error';
+
+  return (
+    <div className="flex w-full flex-col gap-2 rounded-md bg-adam-neutral-950 px-3 py-2">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-2">
+          {isError ? (
+            <CircleSlash className="h-4 w-4 text-adam-neutral-300" />
+          ) : isVerified ? (
+            <Check className="h-4 w-4 text-adam-blue" />
+          ) : (
+            <Camera className="h-4 w-4 text-white" />
+          )}
+          <span className="truncate text-sm">
+            {isError
+              ? 'Verification failed'
+              : isVerified
+                ? `Verified${viewLabels ? ` from ${viewLabels}` : ''}`
+                : `Inspecting model${viewLabels ? ` from ${viewLabels}` : '...'}`}
+          </span>
+        </div>
+        {isPending && <Loader2 className="h-4 w-4 animate-spin text-white" />}
+      </div>
+      {toolCall.reasoning && (
+        <span className="px-1 text-xs text-adam-neutral-300">
+          {toolCall.reasoning}
+        </span>
+      )}
+      {isVerified &&
+        toolCall.screenshots &&
+        toolCall.screenshots.length > 0 && (
+          <div className="flex flex-wrap gap-2">
+            {toolCall.screenshots.map((id) => (
+              <ImageViewer
+                key={id}
+                image={id}
+                clickable
+                className="h-16 w-16 cursor-pointer rounded"
+              />
+            ))}
+          </div>
+        )}
     </div>
   );
 }

@@ -320,6 +320,12 @@ async function generateTitleFromMessages(
   return 'Adam Object';
 }
 
+// Hard cap on the agentic verify ↔ refine loop. Each round costs the user
+// chat tokens (and possibly parametric tokens), so 3 is enough to catch the
+// common mistakes (missing handle, flipped orientation) without burning a
+// hole in their balance.
+const MAX_AGENTIC_ITERATIONS = 3;
+
 // Outer agent system prompt (conversational + tool-using)
 const PARAMETRIC_AGENT_PROMPT = `You are Adam, an AI CAD editor that creates and modifies OpenSCAD models.
 Speak back to the user briefly (one or two sentences), then use tools to make changes.
@@ -338,7 +344,29 @@ Guidelines:
 - When the user requests a new part or structural change, call build_parametric_model with their exact request in the text field.
 - When the user asks for simple parameter tweaks (like "height to 80"), call apply_parameter_changes.
 - Keep text concise and helpful. Ask at most 1 follow-up question when truly needed.
-- Pass the user's request directly to the tool without modification (e.g., if user says "a mug", pass "a mug" to build_parametric_model).`;
+- Pass the user's request directly to the tool without modification (e.g., if user says "a mug", pass "a mug" to build_parametric_model).
+
+AGENTIC VERIFICATION (CRITICAL):
+You verify your work visually by calling view_model. The harness will fulfill the call by returning rendered screenshots in the next user message.
+
+When to call view_model:
+- A user message asks you to verify, check, or review the model — call view_model immediately. Do NOT also call build_parametric_model in that same response; verification and rebuilding are separate turns.
+- The conversation already has an artifact (you just generated code, or one exists from a previous turn) and you need to confirm it matches what was asked.
+
+How to call view_model:
+- Pick 2-4 angles that best reveal whether the model matches the user's intent. Use named views ('iso' for overall form, 'front'/'side' to confirm proportions, 'top' for layout, 'bottom' for feet/openings). Use 'custom' with azimuth+elevation for close-ups.
+- Provide a one-sentence reasoning explaining what you're checking.
+
+When you see the screenshots in the next user turn, critically evaluate them:
+- Are the major features present and correctly proportioned?
+- Is the orientation right (does the chair sit on its legs, is the mug right-side up)?
+- Are unintended intersections, gaps, or floating geometry visible?
+
+If something is wrong, call build_parametric_model with a fix description that names the specific issue you saw (e.g., "fix: handle is detached from the mug body, attach it flush to the wall"). The harness will verify the fix automatically.
+
+If the screenshots match the request, confirm completion to the user in one short sentence. Do NOT call view_model again on success — that just wastes the user's tokens.
+
+Never call view_model on the very first user message before any code has been generated. Stop verifying after at most ${MAX_AGENTIC_ITERATIONS} verification rounds; if you've hit that limit, just confirm what you delivered.`;
 
 // Tool definitions in OpenAI format
 const tools = [
@@ -385,6 +413,65 @@ const tools = [
           },
         },
         required: ['updates'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'view_model',
+      description:
+        "Request rendered screenshots of the current 3D model from specific viewing angles to verify your work. Call this immediately after build_parametric_model. The user will reply with the screenshots; if anything looks wrong, call build_parametric_model again with a fix. Pick 2-4 angles that best reveal whether the model matches the user's request.",
+      parameters: {
+        type: 'object',
+        properties: {
+          views: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                view: {
+                  type: 'string',
+                  enum: [
+                    'iso',
+                    'front',
+                    'back',
+                    'left',
+                    'right',
+                    'top',
+                    'bottom',
+                    'custom',
+                  ],
+                  description:
+                    "Named viewpoint matching the gizmo cube. Use 'custom' with azimuth+elevation for arbitrary angles.",
+                },
+                azimuth: {
+                  type: 'number',
+                  description:
+                    "For view='custom' only. Degrees around vertical axis; 0=front, 90=right, 180=back, -90=left.",
+                },
+                elevation: {
+                  type: 'number',
+                  description:
+                    "For view='custom' only. Degrees above the horizon; positive looks down at the model.",
+                },
+                label: {
+                  type: 'string',
+                  description: 'Optional short label shown in chat (e.g. "handle close-up").',
+                },
+              },
+              required: ['view'],
+            },
+            minItems: 1,
+            maxItems: 6,
+          },
+          reasoning: {
+            type: 'string',
+            description:
+              'One sentence on what you are checking with these views (e.g. "verify the chair has 4 legs and sits flat").',
+          },
+        },
+        required: ['views'],
       },
     },
   },
@@ -686,14 +773,44 @@ Deno.serve(async (req) => {
       }),
     );
 
+    // Walk the branch in reverse to find the highest agentic iteration
+    // recorded on any verification user message. This is what the client has
+    // *already* spent; if it equals MAX_AGENTIC_ITERATIONS we strip the
+    // view_model tool and append a system note so the agent finalizes.
+    let currentAgenticIteration = 0;
+    for (const msg of currentMessageBranch) {
+      if (
+        msg.role === 'user' &&
+        msg.content.isVerification &&
+        typeof msg.content.agenticIteration === 'number'
+      ) {
+        currentAgenticIteration = Math.max(
+          currentAgenticIteration,
+          msg.content.agenticIteration,
+        );
+      }
+    }
+    const verificationExhausted =
+      currentAgenticIteration >= MAX_AGENTIC_ITERATIONS;
+
+    // Strip view_model from the tools list when the agent has used its
+    // verification budget — otherwise OpenRouter happily lets it loop forever.
+    const turnTools = verificationExhausted
+      ? tools.filter((t) => t.function?.name !== 'view_model')
+      : tools;
+
+    const turnSystemPrompt = verificationExhausted
+      ? `${PARAMETRIC_AGENT_PROMPT}\n\nNOTE: You have reached the verification limit for this request. Do not request more screenshots; finalize and respond with a brief confirmation.`
+      : PARAMETRIC_AGENT_PROMPT;
+
     // Prepare request body
     const requestBody: OpenRouterRequest = {
       model,
       messages: [
-        { role: 'system', content: PARAMETRIC_AGENT_PROMPT },
+        { role: 'system', content: turnSystemPrompt },
         ...messagesToSend,
       ],
-      tools,
+      tools: turnTools,
       stream: true,
       max_tokens: 16000,
     };
@@ -1271,6 +1388,87 @@ Deno.serve(async (req) => {
                 streamMessage(controller, { ...newMessageData, content });
               }
             }
+          } else if (toolCall.name === 'view_model') {
+            // The server can't actually render screenshots — only the
+            // browser owns the WebGL canvas. We persist the request as a
+            // `pending_verification` tool call and end the turn; the
+            // client picks it up, captures the requested views, uploads
+            // them, and replays them as the next user message via the
+            // normal chat flow. So this handler is intentionally a no-op
+            // beyond recording what the agent asked for.
+            let toolInput: {
+              views?: Array<{
+                view: string;
+                azimuth?: number;
+                elevation?: number;
+                label?: string;
+              }>;
+              reasoning?: string;
+            } = {};
+            try {
+              toolInput = JSON.parse(toolCall.arguments);
+            } catch (e) {
+              console.error('Invalid view_model tool input JSON', e);
+              content = markToolAsError(content, toolCall.id);
+              streamMessage(controller, { ...newMessageData, content });
+              return;
+            }
+
+            const requestedViews = (toolInput.views ?? [])
+              .map((v) => {
+                const view = (v.view ?? 'iso').toLowerCase();
+                const allowed = [
+                  'iso',
+                  'front',
+                  'back',
+                  'left',
+                  'right',
+                  'top',
+                  'bottom',
+                  'custom',
+                ];
+                if (!allowed.includes(view)) return null;
+                return {
+                  view: view as
+                    | 'iso'
+                    | 'front'
+                    | 'back'
+                    | 'left'
+                    | 'right'
+                    | 'top'
+                    | 'bottom'
+                    | 'custom',
+                  ...(typeof v.azimuth === 'number' && { azimuth: v.azimuth }),
+                  ...(typeof v.elevation === 'number' && {
+                    elevation: v.elevation,
+                  }),
+                  ...(v.label && { label: String(v.label).slice(0, 80) }),
+                };
+              })
+              .filter((v): v is NonNullable<typeof v> => v !== null);
+
+            if (requestedViews.length === 0) {
+              content = markToolAsError(content, toolCall.id);
+              streamMessage(controller, { ...newMessageData, content });
+              return;
+            }
+
+            content = {
+              ...content,
+              toolCalls: (content.toolCalls || []).map((c) =>
+                c.id === toolCall.id
+                  ? {
+                      ...c,
+                      status: 'pending_verification',
+                      views: requestedViews,
+                      ...(toolInput.reasoning && {
+                        reasoning: String(toolInput.reasoning).slice(0, 500),
+                      }),
+                    }
+                  : c,
+              ),
+            };
+            streamMessage(controller, { ...newMessageData, content });
           } else if (toolCall.name === 'apply_parameter_changes') {
             let toolInput: {
               updates?: Array<{ name: string; value: string }>;

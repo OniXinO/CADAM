@@ -18,6 +18,7 @@ import {
 import { useAuth } from '@/contexts/AuthContext';
 import Tree from '@shared/Tree';
 import { useRequestCancellation } from '@/hooks/useRequestCancellation';
+import { useAgenticVerification } from '@/hooks/useAgenticVerification';
 import posthog from 'posthog-js';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 
@@ -177,6 +178,18 @@ export function ParametricEditorView() {
     },
     [sendMessageMutation, conversation.id, conversation.settings?.model],
   );
+
+  // Drive the agentic verify ↔ refine loop. The hook watches the latest
+  // assistant turn on the current branch: after a fresh artifact lands it
+  // nudges the agent to call view_model, and when the agent emits a
+  // pending_verification it captures screenshots and replies back with them.
+  useAgenticVerification({
+    latestAssistantMessage:
+      lastMessage?.role === 'assistant' ? lastMessage : undefined,
+    currentOutput,
+    isLoading,
+    branch: currentMessageBranch,
+  });
 
   const fixError = useCallback(
     async (error: OpenSCADError) => {
