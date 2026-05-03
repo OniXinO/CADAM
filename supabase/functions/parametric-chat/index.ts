@@ -377,7 +377,7 @@ If something is wrong, call build_parametric_model again with a fix description 
 If the screenshots match the request, briefly confirm completion to the user in plain language and DO NOT call view_model again — that just wastes the user's tokens.
 
 How to call view_model:
-- Pick 2-4 angles that best reveal whether the model matches intent. Use named views ('iso' for overall form, 'front'/'side' for proportions, 'top' for layout, 'bottom' for feet/openings). Use 'custom' with azimuth+elevation for close-ups.
+- Pick 2-4 angles from the allowed set: 'iso' (overall form), 'front'/'back' (face), 'left'/'right' (profile/proportions), 'top' (layout), 'bottom' (feet/openings), or 'custom' with azimuth+elevation for close-ups. Do NOT request 'side' — use 'left' or 'right' instead.
 - Provide a one-sentence reasoning explaining what you're checking.
 
 Never call view_model on the very first user message before any code has been generated. Stop verifying after at most ${MAX_VERIFY_ROUNDS} verification rounds; if you've hit that limit, just confirm what you delivered.`;
@@ -841,12 +841,14 @@ Deno.serve(async (req) => {
     // `onText` so the caller can stream them to the browser; tool-call
     // creation events go to `onToolCallCreated` so the assistant message
     // can show pending bubbles before the call arguments fully arrive.
-    async function streamAgentTurn(
+    // Bound as a const arrow so deno lint's no-inner-declarations is happy
+    // while still closing over the request-scoped abortSignal etc.
+    const streamAgentTurn = async (
       messagesForTurn: OpenAIMessage[],
       toolsForTurn: typeof tools,
       onText: (delta: string) => void,
       onToolCallCreated: (id: string, name: string) => void,
-    ): Promise<TurnResult> {
+    ): Promise<TurnResult> => {
       const turnRequestBody: OpenRouterRequest = {
         model,
         messages: messagesForTurn,
@@ -1019,16 +1021,16 @@ Deno.serve(async (req) => {
         .sort(([a], [b]) => a - b)
         .map(([, tc]) => tc);
       return { text, toolCalls: orderedToolCalls, finishReason };
-    }
+    };
 
     // Generate OpenSCAD code via a separate, tools-free OpenRouter stream.
     // The outer agent picks WHAT to build; this inner call writes the actual
     // code under STRICT_CODE_PROMPT, and the streamed output is mirrored to
     // the live message via `onCodeDelta` so the user watches it appear.
-    async function generateOpenSCADCode(
+    const generateOpenSCADCode = async (
       codeMessages: OpenAIMessage[],
       onCodeDelta: (rawCode: string) => void,
-    ): Promise<{ code: string; success: boolean }> {
+    ): Promise<{ code: string; success: boolean }> => {
       const codeRequestBody: OpenRouterRequest = {
         model,
         messages: [
@@ -1139,17 +1141,17 @@ Deno.serve(async (req) => {
       clearTimeout(codeGenTimeout);
       abortSignal.removeEventListener('abort', onParentAbort);
       return { code: stripCodeFences(rawCode.trim()).trim(), success: true };
-    }
+    };
 
     // Round-trip a `view_model` request to the browser via Supabase Realtime
     // and wait for the corresponding `verify_response`. The browser owns the
     // WebGL canvas so it's the only place that can render the requested
     // angles; we sit on the channel until it replies (or we timeout).
-    async function executeViewModelTool(
+    const executeViewModelTool = async (
       requestId: string,
       views: ViewRequest[],
       reasoning: string | undefined,
-    ): Promise<{ imageIds: string[]; signedUrls: string[] }> {
+    ): Promise<{ imageIds: string[]; signedUrls: string[] }> => {
       // Conversation-scoped channel so the browser can be subscribed
       // unconditionally (when the editor is mounted) instead of racing to
       // wire up the listener after a chat fetch starts. Multiple in-flight
@@ -1159,53 +1161,74 @@ Deno.serve(async (req) => {
         config: { broadcast: { self: false, ack: true } },
       });
 
+      // Accumulators for the pending response listeners. We track them
+      // outside the Promise so the cleanup below can detach without
+      // reaching into closure state — preventing the listener leaked
+      // by Greptile's "responsePromise timeout path" finding.
+      let resolveResponse:
+        | ((v: { imageIds: string[] }) => void)
+        | null = null;
+      let rejectResponse: ((err: Error) => void) | null = null;
+      let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+      const onAbort = () => {
+        if (rejectResponse) {
+          rejectResponse(
+            new Error(
+              abortSignal.reason instanceof Error
+                ? abortSignal.reason.message
+                : 'request aborted',
+            ),
+          );
+        }
+      };
+
+      // Wire the broadcast listener BEFORE subscribing — supabase replays
+      // any messages received between SUBSCRIBED and the first listener,
+      // so registering early is safe and avoids racing the browser.
+      channel.on(
+        'broadcast',
+        { event: 'verify_response' },
+        (msg) => {
+          // supabase wraps the payload — accept either shape defensively.
+          const raw =
+            (msg as { payload?: unknown }).payload ?? (msg as unknown);
+          const payload = raw as {
+            requestId?: string;
+            imageIds?: string[];
+            error?: string;
+          };
+          if (payload.requestId !== requestId) return;
+          if (payload.error) {
+            rejectResponse?.(new Error(`browser error: ${payload.error}`));
+            return;
+          }
+          if (
+            !Array.isArray(payload.imageIds) ||
+            payload.imageIds.length === 0
+          ) {
+            rejectResponse?.(new Error('browser returned no screenshots'));
+            return;
+          }
+          resolveResponse?.({ imageIds: payload.imageIds });
+        },
+      );
+
       const responsePromise = new Promise<{ imageIds: string[] }>(
         (resolve, reject) => {
+          resolveResponse = resolve;
+          rejectResponse = reject;
           const budget = Math.min(
             VIEW_MODEL_TIMEOUT_MS,
             Math.max(MIN_ABORT_MS, remainingBudgetMs() - 5_000),
           );
-          const timeout = setTimeout(() => {
+          timeoutHandle = setTimeout(() => {
             reject(
               new Error(
                 'view_model timed out — the browser did not respond with screenshots in time',
               ),
             );
           }, budget);
-
-          const onAbort = () => {
-            clearTimeout(timeout);
-            reject(
-              new Error(
-                abortSignal.reason instanceof Error
-                  ? abortSignal.reason.message
-                  : 'request aborted',
-              ),
-            );
-          };
-          abortSignal.addEventListener('abort', onAbort);
-
-          channel.on(
-            'broadcast',
-            { event: 'verify_response' },
-            ({ payload }: { payload: { requestId: string; imageIds?: string[]; error?: string } }) => {
-              if (payload.requestId !== requestId) return;
-              clearTimeout(timeout);
-              abortSignal.removeEventListener('abort', onAbort);
-              if (payload.error) {
-                reject(new Error(`browser error: ${payload.error}`));
-                return;
-              }
-              if (
-                !Array.isArray(payload.imageIds) ||
-                payload.imageIds.length === 0
-              ) {
-                reject(new Error('browser returned no screenshots'));
-                return;
-              }
-              resolve({ imageIds: payload.imageIds });
-            },
-          );
+          abortSignal.addEventListener('abort', onAbort, { once: true });
         },
       );
 
@@ -1213,7 +1236,7 @@ Deno.serve(async (req) => {
       // this, the verify_request fires before our listener is wired and the
       // browser's reply lands on a deaf socket.
       await new Promise<void>((resolve, reject) => {
-        channel.subscribe((status: string, err?: unknown) => {
+        channel.subscribe((status, err) => {
           if (status === 'SUBSCRIBED') resolve();
           else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
             reject(
@@ -1259,13 +1282,15 @@ Deno.serve(async (req) => {
 
         return { imageIds, signedUrls };
       } finally {
+        if (timeoutHandle) clearTimeout(timeoutHandle);
+        abortSignal.removeEventListener('abort', onAbort);
         try {
           await supabaseClient.removeChannel(channel);
         } catch (e) {
           console.error('failed to remove verify channel', e);
         }
       }
-    }
+    };
 
     const responseStream = new ReadableStream({
       async start(controller) {
@@ -1866,7 +1891,6 @@ Deno.serve(async (req) => {
           }
           cleanupCancel();
         }
-      },
       },
     });
 

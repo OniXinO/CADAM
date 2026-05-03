@@ -967,17 +967,19 @@ export const processUserModelForPrint = async (
 
   // STLExporter's binary mode returns a DataView. Newer TS lib types narrow
   // BlobPart to `ArrayBufferView<ArrayBuffer>` (no SharedArrayBuffer), so
-  // typed-array views over `ArrayBufferLike` fail the check. Copy into a
-  // fresh ArrayBuffer-backed Uint8Array so the type is unambiguous.
-  const stlBytes: BlobPart =
+  // typed-array views backed by `ArrayBufferLike` fail the check. Copy the
+  // bytes into a freshly-allocated, explicitly-`ArrayBuffer`-backed
+  // Uint8Array so the source type is unambiguous and no cast is needed.
+  const sourceBytes: ArrayBuffer =
     result instanceof DataView
-      ? new Uint8Array(
-          result.buffer.slice(
-            result.byteOffset,
-            result.byteOffset + result.byteLength,
-          ) as ArrayBuffer,
-        )
-      : (result as unknown as BlobPart);
+      ? new ArrayBuffer(result.byteLength)
+      : new ArrayBuffer(0);
+  const stlBytes = new Uint8Array(sourceBytes);
+  if (result instanceof DataView) {
+    for (let i = 0; i < result.byteLength; i++) {
+      stlBytes[i] = result.getUint8(i);
+    }
+  }
   const blob = new Blob([stlBytes], { type: 'application/octet-stream' });
   const file = new File([blob], `${generateFilename()}_PRINTABLE.stl`, {
     type: 'application/octet-stream',
