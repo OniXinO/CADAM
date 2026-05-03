@@ -16,12 +16,19 @@ const VIEW_DIRECTIONS: Record<Exclude<ViewName, 'custom'>, [number, number, numb
   bottom: [0, -1, 0],
 };
 
+// Default custom-view spherical coords. Both `viewToDirection` and
+// `viewLabel` read the same constants so an omitted azimuth/elevation
+// renders and labels consistently.
+const DEFAULT_CUSTOM_AZIMUTH_DEG = 30;
+const DEFAULT_CUSTOM_ELEVATION_DEG = 25;
+
 // Convert a ViewRequest into a normalized camera direction vector.
 function viewToDirection(req: ViewRequest): THREE.Vector3 {
   if (req.view === 'custom') {
     // Spherical → Cartesian. Azimuth=0/elevation=0 ⇒ +Z (front).
-    const az = ((req.azimuth ?? 30) * Math.PI) / 180;
-    const el = ((req.elevation ?? 25) * Math.PI) / 180;
+    const az = ((req.azimuth ?? DEFAULT_CUSTOM_AZIMUTH_DEG) * Math.PI) / 180;
+    const el =
+      ((req.elevation ?? DEFAULT_CUSTOM_ELEVATION_DEG) * Math.PI) / 180;
     const x = Math.cos(el) * Math.sin(az);
     const y = Math.sin(el);
     const z = Math.cos(el) * Math.cos(az);
@@ -34,7 +41,9 @@ function viewToDirection(req: ViewRequest): THREE.Vector3 {
 export function viewLabel(req: ViewRequest): string {
   if (req.label) return req.label;
   if (req.view === 'custom') {
-    return `custom (az ${Math.round(req.azimuth ?? 0)}°, el ${Math.round(req.elevation ?? 0)}°)`;
+    const az = req.azimuth ?? DEFAULT_CUSTOM_AZIMUTH_DEG;
+    const el = req.elevation ?? DEFAULT_CUSTOM_ELEVATION_DEG;
+    return `custom (az ${Math.round(az)}°, el ${Math.round(el)}°)`;
   }
   return req.view;
 }
@@ -117,19 +126,36 @@ export async function renderArtifactFromViews(
   const blobs: Blob[] = [];
   try {
     for (const req of views) {
-      const dir = viewToDirection(req).multiplyScalar(distance);
+      const dirNorm = viewToDirection(req);
+      const dir = dirNorm.clone().multiplyScalar(distance);
       camera.position.set(dir.x, dir.y, dir.z);
-      camera.up.set(0, 1, 0);
+
+      // `top` and `bottom` look straight down/up the world Y axis. With the
+      // default `up = (0, 1, 0)`, three.js's lookAt computes
+      // `right = up × viewDir`, which is the zero vector when up and the
+      // view direction are parallel — producing a degenerate view matrix
+      // and a black render. Pick a perpendicular up axis (world +Z, the
+      // user-facing "front" direction after the scene's -90° X rotation)
+      // so the viewer ends up looking at the model with a sensible
+      // orientation. Anything not within ~1° of vertical falls through to
+      // the default up.
+      if (Math.abs(dirNorm.y) > 0.999) {
+        camera.up.set(0, 0, 1);
+      } else {
+        camera.up.set(0, 1, 0);
+      }
       camera.lookAt(0, 0, 0);
       camera.updateProjectionMatrix();
 
       renderer.render(scene, camera);
 
+      // PNG is lossless — the third arg to toBlob is ignored for image/png.
+      // Drop it so the call doesn't read like we're tuning compression.
       const blob = await new Promise<Blob>((resolve, reject) => {
         canvas.toBlob(
-          (b) => (b ? resolve(b) : reject(new Error('canvas.toBlob returned null'))),
+          (b) =>
+            b ? resolve(b) : reject(new Error('canvas.toBlob returned null')),
           'image/png',
-          0.92,
         );
       });
       blobs.push(blob);

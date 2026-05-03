@@ -1246,6 +1246,17 @@ Deno.serve(async (req) => {
           paths,
         );
 
+        // `getSignedUrls` swallows per-path failures (returns a shorter
+        // array). If we lost everything the agent would otherwise be told
+        // "N screenshots attached" while seeing zero images — surface as
+        // an error so the loop falls through to the failure path and the
+        // user sees a clear "verification failed" chip.
+        if (signedUrls.length === 0) {
+          throw new Error(
+            'failed to sign any verification image URLs (storage may be misconfigured)',
+          );
+        }
+
         return { imageIds, signedUrls };
       } finally {
         try {
@@ -1629,10 +1640,15 @@ Deno.serve(async (req) => {
                 const summary = requestedViews
                   .map((v) => v.label || v.view)
                   .join(', ');
+                // Use signedUrls.length (not imageIds.length) — getSignedUrls
+                // can drop entries on a per-path failure, and the count we
+                // tell the agent must match what's actually in the next
+                // user message.
+                const attachedCount = signedUrls.length;
                 agentMessages.push({
                   role: 'tool',
                   tool_call_id: tc.id,
-                  content: `Captured ${imageIds.length} screenshot${imageIds.length === 1 ? '' : 's'} from views: ${summary}. They are attached in the next message; review them critically against the user's request.`,
+                  content: `Captured ${attachedCount} screenshot${attachedCount === 1 ? '' : 's'} from views: ${summary}. They are attached in the next message; review them critically against the user's request.`,
                 });
 
                 // The actual images travel as a follow-up user message —
