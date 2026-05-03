@@ -92,14 +92,6 @@ export type Content = {
   polygonCount?: number;
   // File format preference for quad topology models
   preferredFormat?: 'glb' | 'fbx';
-  // Agentic verification: when true, this user message is the auto-generated
-  // follow-up that carries verification screenshots back to the agent rather
-  // than a real user prompt. The chat UI hides it as a chip instead of
-  // rendering a regular bubble.
-  isVerification?: boolean;
-  // Agentic verification: how many verification round-trips have happened in
-  // this branch. Capped server-side so the agent eventually finalizes.
-  agenticIteration?: number;
 };
 
 export type ParametricArtifact = {

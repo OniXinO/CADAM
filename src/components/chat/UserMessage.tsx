@@ -1,7 +1,6 @@
 import { useRef, useState } from 'react';
 import { Message } from '@shared/types';
 import {
-  Camera,
   ChevronLeft,
   ChevronRight,
   Check,
@@ -101,14 +100,6 @@ export function UserMessage({
       setCopied(true);
     }
   };
-
-  // Verification user messages are not real user input — they're the
-  // automated reply the agentic loop sends back with screenshots. Render
-  // them as a compact, low-key chip so the chat reads "Adam → Adam" without
-  // noise, and skip the avatar / edit / branch UI that doesn't apply here.
-  if (message.content.isVerification) {
-    return <VerificationChip message={message} />;
-  }
 
   return (
     <div className="flex justify-start">
@@ -288,28 +279,6 @@ export function UserMessage({
             )}
           </>
         )}
-      </div>
-    </div>
-  );
-}
-
-// Compact representation of the agentic verification round — just enough to
-// signal what happened without reproducing the full nudge text or the
-// screenshots (those are surfaced on the assistant's view_model tool call).
-function VerificationChip({ message }: { message: TreeNode<Message> }) {
-  const hasScreenshots =
-    !!message.content.images && message.content.images.length > 0;
-  const iteration = message.content.agenticIteration ?? 1;
-  return (
-    <div className="flex justify-start">
-      <div className="ml-11 flex items-center gap-2 rounded-full border border-adam-neutral-700 bg-adam-neutral-900/60 px-3 py-1 text-xs text-adam-neutral-300">
-        <Camera className="h-3 w-3 text-adam-neutral-300" />
-        <span>
-          {hasScreenshots
-            ? `Adam reviewed ${message.content.images!.length} render${message.content.images!.length === 1 ? '' : 's'}`
-            : 'Adam is verifying its work'}
-          {iteration > 1 ? ` · pass ${iteration}` : ''}
-        </span>
       </div>
     </div>
   );

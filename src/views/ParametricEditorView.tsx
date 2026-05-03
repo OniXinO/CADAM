@@ -179,16 +179,13 @@ export function ParametricEditorView() {
     [sendMessageMutation, conversation.id, conversation.settings?.model],
   );
 
-  // Drive the agentic verify ↔ refine loop. The hook watches the latest
-  // assistant turn on the current branch: after a fresh artifact lands it
-  // nudges the agent to call view_model, and when the agent emits a
-  // pending_verification it captures screenshots and replies back with them.
+  // Browser side of the agentic verify loop. The server pauses on a
+  // Supabase Realtime broadcast when the agent calls view_model; this
+  // hook listens on the conversation's verify channel, renders the
+  // requested angles from `currentOutput`, uploads them, and broadcasts
+  // back so the server can resume.
   useAgenticVerification({
-    latestAssistantMessage:
-      lastMessage?.role === 'assistant' ? lastMessage : undefined,
     currentOutput,
-    isLoading,
-    branch: currentMessageBranch,
   });
 
   const fixError = useCallback(

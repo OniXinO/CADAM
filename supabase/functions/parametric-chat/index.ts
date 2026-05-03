@@ -6,11 +6,12 @@ import {
   CoreMessage,
   ParametricArtifact,
   ToolCall,
+  ViewRequest,
 } from '@shared/types.ts';
 import { getAnonSupabaseClient } from '../_shared/supabaseClient.ts';
 import Tree from '@shared/Tree.ts';
 import parseParameters from '../_shared/parseParameter.ts';
-import { formatUserMessage } from '../_shared/messageUtils.ts';
+import { formatUserMessage, getSignedUrls } from '../_shared/messageUtils.ts';
 import { corsHeaders } from '../_shared/cors.ts';
 import { billing, BillingClientError } from '../_shared/billingClient.ts';
 import { initSentry, logError } from '../_shared/sentry.ts';
@@ -205,7 +206,14 @@ interface OpenAIMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
   content:
     | string
-    | Array<{ type: string; text?: string; image_url?: { url: string } }>;
+    | Array<{
+        type: string;
+        text?: string;
+        // OpenAI/OpenRouter image content. `detail` ("auto" | "low" | "high")
+        // hints at the resolution to feed the vision model — leaving it
+        // optional keeps text-only blocks compatible with the same shape.
+        image_url?: { url: string; detail?: 'auto' | 'low' | 'high' };
+      }>;
   tool_call_id?: string;
   tool_calls?: Array<{
     id: string;
@@ -320,11 +328,21 @@ async function generateTitleFromMessages(
   return 'Adam Object';
 }
 
-// Hard cap on the agentic verify ↔ refine loop. Each round costs the user
-// chat tokens (and possibly parametric tokens), so 3 is enough to catch the
-// common mistakes (missing handle, flipped orientation) without burning a
-// hole in their balance.
-const MAX_AGENTIC_ITERATIONS = 3;
+// Hard cap on the number of `view_model → review` rounds the agent can run
+// inside a single request. Each round costs the user parametric tokens for
+// any refinement, so 3 is enough to catch common mistakes (missing handle,
+// flipped orientation) without burning a hole in their balance.
+const MAX_VERIFY_ROUNDS = 3;
+
+// Hard cap on total agent loop iterations (text/tool-call cycles) inside a
+// single request, regardless of which tool is being called. Belt-and-braces
+// cap so a misbehaving model can't run away with the request budget.
+const MAX_AGENT_ITERATIONS = 8;
+
+// How long the server waits for the browser to fulfill a `view_model`
+// broadcast before giving up on that tool call. The browser side renders
+// 2–4 angles + uploads to Supabase Storage; comfortably <10s in practice.
+const VIEW_MODEL_TIMEOUT_MS = 60_000;
 
 // Outer agent system prompt (conversational + tool-using)
 const PARAMETRIC_AGENT_PROMPT = `You are Adam, an AI CAD editor that creates and modifies OpenSCAD models.
@@ -347,26 +365,22 @@ Guidelines:
 - Pass the user's request directly to the tool without modification (e.g., if user says "a mug", pass "a mug" to build_parametric_model).
 
 AGENTIC VERIFICATION (CRITICAL):
-You verify your work visually by calling view_model. The harness will fulfill the call by returning rendered screenshots in the next user message.
+After you call build_parametric_model and get back a tool result confirming the artifact was generated, you MUST call view_model in the SAME response (or the next assistant turn) to verify your work visually. The harness will fulfill the call by capturing rendered screenshots from the browser and feeding them back as the next message.
 
-When to call view_model:
-- A user message asks you to verify, check, or review the model — call view_model immediately. Do NOT also call build_parametric_model in that same response; verification and rebuilding are separate turns.
-- The conversation already has an artifact (you just generated code, or one exists from a previous turn) and you need to confirm it matches what was asked.
-
-How to call view_model:
-- Pick 2-4 angles that best reveal whether the model matches the user's intent. Use named views ('iso' for overall form, 'front'/'side' to confirm proportions, 'top' for layout, 'bottom' for feet/openings). Use 'custom' with azimuth+elevation for close-ups.
-- Provide a one-sentence reasoning explaining what you're checking.
-
-When you see the screenshots in the next user turn, critically evaluate them:
+When you see the screenshots, critically evaluate them against the user's request:
 - Are the major features present and correctly proportioned?
 - Is the orientation right (does the chair sit on its legs, is the mug right-side up)?
 - Are unintended intersections, gaps, or floating geometry visible?
 
-If something is wrong, call build_parametric_model with a fix description that names the specific issue you saw (e.g., "fix: handle is detached from the mug body, attach it flush to the wall"). The harness will verify the fix automatically.
+If something is wrong, call build_parametric_model again with a fix description in the text field that names the specific issue you saw (e.g., "fix: handle is detached from the mug body, attach it flush to the wall"). Then verify the fix with view_model.
 
-If the screenshots match the request, confirm completion to the user in one short sentence. Do NOT call view_model again on success — that just wastes the user's tokens.
+If the screenshots match the request, briefly confirm completion to the user in plain language and DO NOT call view_model again — that just wastes the user's tokens.
 
-Never call view_model on the very first user message before any code has been generated. Stop verifying after at most ${MAX_AGENTIC_ITERATIONS} verification rounds; if you've hit that limit, just confirm what you delivered.`;
+How to call view_model:
+- Pick 2-4 angles that best reveal whether the model matches intent. Use named views ('iso' for overall form, 'front'/'side' for proportions, 'top' for layout, 'bottom' for feet/openings). Use 'custom' with azimuth+elevation for close-ups.
+- Provide a one-sentence reasoning explaining what you're checking.
+
+Never call view_model on the very first user message before any code has been generated. Stop verifying after at most ${MAX_VERIFY_ROUNDS} verification rounds; if you've hit that limit, just confirm what you delivered.`;
 
 // Tool definitions in OpenAI format
 const tools = [
@@ -641,6 +655,33 @@ Deno.serve(async (req) => {
   // Authoritative server-side capability: don't trust the client to self-report.
   const supportsVision = !TEXT_ONLY_MODELS.has(model);
 
+  // Request-scoped abort, mirroring the creative-chat cancellation pattern.
+  // Wired to a Realtime broadcast (`cancel-request-{messageId}`) and to the
+  // client disconnecting; every upstream fetch + the Realtime verify
+  // round-trip listen on this signal so a click on Stop tears the whole
+  // agent loop down immediately.
+  const abortController = new AbortController();
+  const { signal: abortSignal } = abortController;
+
+  const cancelChannelName = `cancel-request-${messageId}`;
+  const cancelChannel = supabaseClient
+    .channel(cancelChannelName)
+    .on('broadcast', { event: 'cancel' }, () => {
+      abortController.abort('Request cancelled by user');
+    })
+    .subscribe();
+  const cleanupCancel = () => {
+    try {
+      supabaseClient.removeChannel(cancelChannel);
+    } catch (_) {
+      // ignore — channel may already be gone
+    }
+  };
+  req.signal.addEventListener('abort', () => {
+    abortController.abort('Client disconnected');
+    cleanupCancel();
+  });
+
   const { data: messages, error: messagesError } = await supabaseClient
     .from('messages')
     .select('*')
@@ -773,267 +814,989 @@ Deno.serve(async (req) => {
       }),
     );
 
-    // Walk the branch in reverse to find the highest agentic iteration
-    // recorded on any verification user message. This is what the client has
-    // *already* spent; if it equals MAX_AGENTIC_ITERATIONS we strip the
-    // view_model tool and append a system note so the agent finalizes.
-    let currentAgenticIteration = 0;
-    for (const msg of currentMessageBranch) {
-      if (
-        msg.role === 'user' &&
-        msg.content.isVerification &&
-        typeof msg.content.agenticIteration === 'number'
-      ) {
-        currentAgenticIteration = Math.max(
-          currentAgenticIteration,
-          msg.content.agenticIteration,
+    // The agent loop maintains its own messages array, growing as the agent
+    // emits tool_calls and tools return results. Begins with the system
+    // prompt + the persisted conversation. Tool results (assistant tool_calls
+    // / tool messages / synthetic user image messages) accumulate inside the
+    // loop and are NOT persisted to the DB — they're loop-internal state.
+    const agentMessages: OpenAIMessage[] = [
+      { role: 'system', content: PARAMETRIC_AGENT_PROMPT },
+      ...messagesToSend,
+    ];
+
+    // Helper: track all in-flight tool calls in a turn, keyed by SSE index.
+    // OpenAI streams multiple tool calls under separate `index` values; the
+    // pre-rewrite code only retained the latest, silently dropping any extra
+    // tool calls. We need per-index accumulators so a single agent turn can
+    // cleanly emit, e.g., build_parametric_model + view_model together.
+    type StreamingToolCall = { id: string; name: string; arguments: string };
+
+    interface TurnResult {
+      text: string;
+      toolCalls: StreamingToolCall[];
+      finishReason: string | null;
+    }
+
+    // Stream one OpenRouter completion. Text deltas are forwarded to
+    // `onText` so the caller can stream them to the browser; tool-call
+    // creation events go to `onToolCallCreated` so the assistant message
+    // can show pending bubbles before the call arguments fully arrive.
+    async function streamAgentTurn(
+      messagesForTurn: OpenAIMessage[],
+      toolsForTurn: typeof tools,
+      onText: (delta: string) => void,
+      onToolCallCreated: (id: string, name: string) => void,
+    ): Promise<TurnResult> {
+      const turnRequestBody: OpenRouterRequest = {
+        model,
+        messages: messagesForTurn,
+        tools: toolsForTurn,
+        stream: true,
+        max_tokens: 16000,
+      };
+      if (REQUIRES_TOOL_CAPABLE_PROVIDER.has(model)) {
+        turnRequestBody.provider = { require_parameters: true };
+      }
+      if (thinking) {
+        turnRequestBody.reasoning = { max_tokens: 12000 };
+        turnRequestBody.max_tokens = 20000;
+      }
+
+      // Each turn shares the request-scoped deadline so the agent loop
+      // can't outlive the Supabase wall-clock no matter how many
+      // iterations it tries.
+      const turnAbort = new AbortController();
+      const turnTimeout = setTimeout(
+        () => turnAbort.abort(new Error('agent upstream timeout')),
+        remainingBudgetMs(),
+      );
+      // Bridge the request-scoped abortSignal too — clicking Stop must
+      // tear down the in-flight OpenRouter fetch immediately.
+      const onParentAbort = () => turnAbort.abort(abortSignal.reason);
+      abortSignal.addEventListener('abort', onParentAbort);
+
+      let response: Response;
+      try {
+        response = await fetch(OPENROUTER_API_URL, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${OPENROUTER_API_KEY}`,
+            'HTTP-Referer': 'https://adam-cad.com',
+            'X-Title': 'Adam CAD',
+          },
+          body: JSON.stringify(turnRequestBody),
+          signal: turnAbort.signal,
+        });
+      } catch (err) {
+        clearTimeout(turnTimeout);
+        abortSignal.removeEventListener('abort', onParentAbort);
+        throw err;
+      }
+
+      if (!response.ok) {
+        clearTimeout(turnTimeout);
+        abortSignal.removeEventListener('abort', onParentAbort);
+        const errorText = await response.text();
+        console.error(`OpenRouter API Error: ${response.status} - ${errorText}`);
+        throw new Error(
+          `OpenRouter API error: ${response.statusText} (${response.status})`,
         );
       }
+
+      const reader = response.body?.getReader();
+      if (!reader) {
+        clearTimeout(turnTimeout);
+        abortSignal.removeEventListener('abort', onParentAbort);
+        throw new Error('No response body');
+      }
+
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let text = '';
+      let finishReason: string | null = null;
+      const toolCallsByIndex = new Map<number, StreamingToolCall>();
+
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue;
+            const data = line.slice(6);
+            if (data === '[DONE]') continue;
+
+            let chunk: {
+              error?: { message?: string };
+              choices?: Array<{
+                delta?: {
+                  content?: string;
+                  reasoning?: string;
+                  tool_calls?: Array<{
+                    index?: number;
+                    id?: string;
+                    function?: { name?: string; arguments?: string };
+                  }>;
+                };
+                finish_reason?: string;
+              }>;
+            };
+            try {
+              chunk = JSON.parse(data);
+            } catch (e) {
+              console.error('Error parsing SSE chunk:', e);
+              continue;
+            }
+
+            if (chunk.error) {
+              console.error('OpenRouter stream error:', chunk.error);
+              throw new Error(
+                chunk.error.message ||
+                  `OpenRouter error: ${JSON.stringify(chunk.error)}`,
+              );
+            }
+
+            const choice = chunk.choices?.[0];
+            if (!choice) continue;
+            const delta = choice.delta;
+
+            if (delta?.content) {
+              text += delta.content;
+              onText(delta.content);
+            }
+
+            if (delta?.tool_calls) {
+              for (const part of delta.tool_calls) {
+                const idx = part.index ?? 0;
+                let entry = toolCallsByIndex.get(idx);
+                if (!entry) {
+                  entry = {
+                    id: part.id ?? `call_${idx}_${crypto.randomUUID()}`,
+                    name: part.function?.name ?? '',
+                    arguments: '',
+                  };
+                  toolCallsByIndex.set(idx, entry);
+                  if (entry.name) onToolCallCreated(entry.id, entry.name);
+                } else {
+                  // Subsequent chunks may carry the id (rare) or refine
+                  // the function name; merge them in so the entry is
+                  // self-consistent before we hand it off.
+                  if (part.id && !entry.id.startsWith('call_'))
+                    entry.id = part.id;
+                  if (part.function?.name && !entry.name) {
+                    entry.name = part.function.name;
+                    onToolCallCreated(entry.id, entry.name);
+                  }
+                }
+                if (part.function?.arguments) {
+                  entry.arguments += part.function.arguments;
+                }
+              }
+            }
+
+            if (choice.finish_reason) {
+              finishReason = choice.finish_reason;
+            }
+          }
+        }
+      } finally {
+        clearTimeout(turnTimeout);
+        abortSignal.removeEventListener('abort', onParentAbort);
+        try {
+          reader.releaseLock();
+        } catch {
+          // already released
+        }
+      }
+
+      // Order tool calls by their stream index so the agent observes them
+      // in the order it emitted them — important for tool-result threading.
+      const orderedToolCalls = [...toolCallsByIndex.entries()]
+        .sort(([a], [b]) => a - b)
+        .map(([, tc]) => tc);
+      return { text, toolCalls: orderedToolCalls, finishReason };
     }
-    const verificationExhausted =
-      currentAgenticIteration >= MAX_AGENTIC_ITERATIONS;
 
-    // Strip view_model from the tools list when the agent has used its
-    // verification budget — otherwise OpenRouter happily lets it loop forever.
-    const turnTools = verificationExhausted
-      ? tools.filter((t) => t.function?.name !== 'view_model')
-      : tools;
-
-    const turnSystemPrompt = verificationExhausted
-      ? `${PARAMETRIC_AGENT_PROMPT}\n\nNOTE: You have reached the verification limit for this request. Do not request more screenshots; finalize and respond with a brief confirmation.`
-      : PARAMETRIC_AGENT_PROMPT;
-
-    // Prepare request body
-    const requestBody: OpenRouterRequest = {
-      model,
-      messages: [
-        { role: 'system', content: turnSystemPrompt },
-        ...messagesToSend,
-      ],
-      tools: turnTools,
-      stream: true,
-      max_tokens: 16000,
-    };
-
-    // Constrain provider routing only when the model has providers that don't
-    // support tool calling — otherwise we'd needlessly narrow the pool.
-    if (REQUIRES_TOOL_CAPABLE_PROVIDER.has(model)) {
-      requestBody.provider = { require_parameters: true };
-    }
-
-    // Add reasoning/thinking parameter if requested and supported
-    // OpenRouter uses a unified 'reasoning' parameter
-    if (thinking) {
-      requestBody.reasoning = {
-        max_tokens: 12000,
+    // Generate OpenSCAD code via a separate, tools-free OpenRouter stream.
+    // The outer agent picks WHAT to build; this inner call writes the actual
+    // code under STRICT_CODE_PROMPT, and the streamed output is mirrored to
+    // the live message via `onCodeDelta` so the user watches it appear.
+    async function generateOpenSCADCode(
+      codeMessages: OpenAIMessage[],
+      onCodeDelta: (rawCode: string) => void,
+    ): Promise<{ code: string; success: boolean }> {
+      const codeRequestBody: OpenRouterRequest = {
+        model,
+        messages: [
+          { role: 'system', content: STRICT_CODE_PROMPT },
+          ...codeMessages,
+        ],
+        max_tokens: 48000,
+        stream: true,
       };
-      // Ensure total max_tokens is high enough to accommodate reasoning + output
-      requestBody.max_tokens = 20000;
+      if (thinking) {
+        codeRequestBody.reasoning = { max_tokens: 12000 };
+        codeRequestBody.max_tokens = 60000;
+      }
+
+      const stripCodeFences = (s: string): string => {
+        let out = s;
+        out = out.replace(/^```(?:openscad)?\s*\n?/, '');
+        out = out.replace(/\n?```\s*$/, '');
+        return out;
+      };
+
+      const codeGenAbort = new AbortController();
+      const codeGenTimeout = setTimeout(
+        () => codeGenAbort.abort(new Error('code-gen upstream timeout')),
+        remainingBudgetMs(),
+      );
+      const onParentAbort = () => codeGenAbort.abort(abortSignal.reason);
+      abortSignal.addEventListener('abort', onParentAbort);
+
+      let rawCode = '';
+      try {
+        const codeResponse = await fetch(OPENROUTER_API_URL, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${OPENROUTER_API_KEY}`,
+            'HTTP-Referer': 'https://adam-cad.com',
+            'X-Title': 'Adam CAD',
+          },
+          body: JSON.stringify(codeRequestBody),
+          signal: codeGenAbort.signal,
+        });
+
+        if (!codeResponse.ok) {
+          const t = await codeResponse.text();
+          throw new Error(`Code gen error: ${codeResponse.status} - ${t}`);
+        }
+
+        const codeReader = codeResponse.body?.getReader();
+        if (!codeReader) throw new Error('No code response body');
+
+        const codeDecoder = new TextDecoder();
+        let codeBuffer = '';
+        let lastFlushTime = 0;
+        let lastFlushedLen = 0;
+        const FLUSH_INTERVAL_MS = 120;
+
+        while (true) {
+          const { done, value } = await codeReader.read();
+          if (done) break;
+          codeBuffer += codeDecoder.decode(value, { stream: true });
+          const codeLines = codeBuffer.split('\n');
+          codeBuffer = codeLines.pop() || '';
+
+          for (const line of codeLines) {
+            if (!line.startsWith('data: ')) continue;
+            const data = line.slice(6);
+            if (data === '[DONE]') continue;
+
+            let chunk: {
+              error?: { message?: string };
+              choices?: Array<{ delta?: { content?: string } }>;
+            };
+            try {
+              chunk = JSON.parse(data);
+            } catch (e) {
+              console.error('Error parsing code SSE chunk:', e);
+              continue;
+            }
+            if (chunk.error) {
+              throw new Error(
+                chunk.error.message ||
+                  `OpenRouter error: ${JSON.stringify(chunk.error)}`,
+              );
+            }
+            const deltaContent = chunk.choices?.[0]?.delta?.content;
+            if (typeof deltaContent === 'string' && deltaContent) {
+              rawCode += deltaContent;
+              const now = Date.now();
+              if (
+                now - lastFlushTime >= FLUSH_INTERVAL_MS &&
+                rawCode.length > lastFlushedLen
+              ) {
+                onCodeDelta(stripCodeFences(rawCode));
+                lastFlushTime = now;
+                lastFlushedLen = rawCode.length;
+              }
+            }
+          }
+        }
+      } catch (e) {
+        console.error('Code generation failed:', e);
+        clearTimeout(codeGenTimeout);
+        abortSignal.removeEventListener('abort', onParentAbort);
+        return { code: stripCodeFences(rawCode.trim()).trim(), success: false };
+      }
+
+      clearTimeout(codeGenTimeout);
+      abortSignal.removeEventListener('abort', onParentAbort);
+      return { code: stripCodeFences(rawCode.trim()).trim(), success: true };
     }
 
-    // Shares the request-scoped deadline with code-gen below so the two
-    // fetches together can never outlive the Supabase wall-clock budget.
-    const agentAbort = new AbortController();
-    const agentTimeout = setTimeout(
-      () => agentAbort.abort(new Error('agent upstream timeout')),
-      remainingBudgetMs(),
-    );
+    // Round-trip a `view_model` request to the browser via Supabase Realtime
+    // and wait for the corresponding `verify_response`. The browser owns the
+    // WebGL canvas so it's the only place that can render the requested
+    // angles; we sit on the channel until it replies (or we timeout).
+    async function executeViewModelTool(
+      requestId: string,
+      views: ViewRequest[],
+      reasoning: string | undefined,
+    ): Promise<{ imageIds: string[]; signedUrls: string[] }> {
+      // Conversation-scoped channel so the browser can be subscribed
+      // unconditionally (when the editor is mounted) instead of racing to
+      // wire up the listener after a chat fetch starts. Multiple in-flight
+      // requests on the same conversation disambiguate by requestId.
+      const channelName = `verify-conv-${conversationId}`;
+      const channel = supabaseClient.channel(channelName, {
+        config: { broadcast: { self: false, ack: true } },
+      });
 
-    const response = await fetch(OPENROUTER_API_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${OPENROUTER_API_KEY}`,
-        'HTTP-Referer': 'https://adam-cad.com',
-        'X-Title': 'Adam CAD',
-      },
-      body: JSON.stringify(requestBody),
-      signal: agentAbort.signal,
-    });
+      const responsePromise = new Promise<{ imageIds: string[] }>(
+        (resolve, reject) => {
+          const budget = Math.min(
+            VIEW_MODEL_TIMEOUT_MS,
+            Math.max(MIN_ABORT_MS, remainingBudgetMs() - 5_000),
+          );
+          const timeout = setTimeout(() => {
+            reject(
+              new Error(
+                'view_model timed out — the browser did not respond with screenshots in time',
+              ),
+            );
+          }, budget);
 
-    if (!response.ok) {
-      clearTimeout(agentTimeout);
-      const errorText = await response.text();
-      console.error(`OpenRouter API Error: ${response.status} - ${errorText}`);
-      throw new Error(
-        `OpenRouter API error: ${response.statusText} (${response.status})`,
+          const onAbort = () => {
+            clearTimeout(timeout);
+            reject(
+              new Error(
+                abortSignal.reason instanceof Error
+                  ? abortSignal.reason.message
+                  : 'request aborted',
+              ),
+            );
+          };
+          abortSignal.addEventListener('abort', onAbort);
+
+          channel.on(
+            'broadcast',
+            { event: 'verify_response' },
+            ({ payload }: { payload: { requestId: string; imageIds?: string[]; error?: string } }) => {
+              if (payload.requestId !== requestId) return;
+              clearTimeout(timeout);
+              abortSignal.removeEventListener('abort', onAbort);
+              if (payload.error) {
+                reject(new Error(`browser error: ${payload.error}`));
+                return;
+              }
+              if (
+                !Array.isArray(payload.imageIds) ||
+                payload.imageIds.length === 0
+              ) {
+                reject(new Error('browser returned no screenshots'));
+                return;
+              }
+              resolve({ imageIds: payload.imageIds });
+            },
+          );
+        },
       );
+
+      // Block the broadcast until the channel is fully SUBSCRIBED — without
+      // this, the verify_request fires before our listener is wired and the
+      // browser's reply lands on a deaf socket.
+      await new Promise<void>((resolve, reject) => {
+        channel.subscribe((status: string, err?: unknown) => {
+          if (status === 'SUBSCRIBED') resolve();
+          else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+            reject(
+              new Error(
+                `verify channel ${status}${err ? `: ${String(err)}` : ''}`,
+              ),
+            );
+          }
+        });
+      });
+
+      try {
+        await channel.send({
+          type: 'broadcast',
+          event: 'verify_request',
+          payload: { requestId, views, reasoning, conversationId, newMessageId },
+        });
+
+        const { imageIds } = await responsePromise;
+
+        // Resolve the image IDs to URLs the inner LLM call can read. Use
+        // signed URLs (1h) so OpenRouter's vision-capable providers can
+        // pull them directly without needing base64 round-trips.
+        const paths = imageIds.map(
+          (id) => `${userData.user.id}/${conversationId}/${id}`,
+        );
+        const signedUrls = await getSignedUrls(
+          supabaseClient,
+          'images',
+          paths,
+        );
+
+        return { imageIds, signedUrls };
+      } finally {
+        try {
+          await supabaseClient.removeChannel(channel);
+        } catch (e) {
+          console.error('failed to remove verify channel', e);
+        }
+      }
     }
 
     const responseStream = new ReadableStream({
       async start(controller) {
-        let currentToolCall: {
-          id: string;
-          name: string;
-          arguments: string;
-        } | null = null;
-
-        // Utility to mark all pending tools as error when finalizing on failure/cancel
-        const markAllToolsError = () => {
-          if (content.toolCalls) {
-            content = {
-              ...content,
-              toolCalls: content.toolCalls.map((call) => ({
-                ...call,
-                status: 'error',
-              })),
-            };
-          }
+        // Helper that mutates the in-flight Content snapshot and pushes
+        // the latest version to the client. Closure over `content` and
+        // `controller` keeps callers tidy.
+        const updateContent = (next: Content) => {
+          content = next;
+          streamMessage(controller, { ...newMessageData, content });
         };
 
+        let verifyRoundsUsed = 0;
+
         try {
-          const reader = response.body?.getReader();
-          const decoder = new TextDecoder();
-          let buffer = '';
+          for (
+            let agentIteration = 0;
+            agentIteration < MAX_AGENT_ITERATIONS;
+            agentIteration++
+          ) {
+            if (abortSignal.aborted) {
+              throw new Error('Request cancelled by user');
+            }
 
-          if (!reader) {
-            throw new Error('No response body');
-          }
+            // Strip view_model once we've exhausted the verification budget.
+            // The agent prompt also tells the model to stop, but stripping
+            // the tool is the authoritative cap.
+            const turnTools =
+              verifyRoundsUsed >= MAX_VERIFY_ROUNDS
+                ? tools.filter((t) => t.function?.name !== 'view_model')
+                : tools;
 
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-
-            buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split('\n');
-            buffer = lines.pop() || '';
-
-            for (const line of lines) {
-              if (!line.startsWith('data: ')) continue;
-              const data = line.slice(6);
-              if (data === '[DONE]') continue;
-
-              let chunk: {
-                error?: { message?: string };
-                choices?: Array<{
-                  delta?: {
-                    content?: string;
-                    reasoning?: string;
-                    tool_calls?: Array<{
-                      index?: number;
-                      id?: string;
-                      function?: { name?: string; arguments?: string };
-                    }>;
-                  };
-                  finish_reason?: string;
-                }>;
-              };
-              try {
-                chunk = JSON.parse(data);
-              } catch (e) {
-                // Malformed chunk — log and skip, don't abort the stream.
-                console.error('Error parsing SSE chunk:', e);
-                continue;
-              }
-
-              // Surface API errors so the outer catch can mark tools as errored
-              // — never swallow them in the parse-tolerance block above.
-              if (chunk.error) {
-                console.error('OpenRouter stream error:', chunk.error);
-                throw new Error(
-                  chunk.error.message ||
-                    `OpenRouter error: ${JSON.stringify(chunk.error)}`,
-                );
-              }
-
-              const delta = chunk.choices?.[0]?.delta;
-              if (!delta) continue;
-
-              if (delta.content) {
-                content = {
+            // Stream this agent turn. Text deltas append to content.text
+            // (so the user sees the agent typing across the whole loop as
+            // one continuous string); tool-call creations push pending
+            // bubbles immediately so the UI shows progress.
+            const turn = await streamAgentTurn(
+              agentMessages,
+              turnTools,
+              (deltaText) => {
+                updateContent({
                   ...content,
-                  text: (content.text || '') + delta.content,
-                };
-                streamMessage(controller, { ...newMessageData, content });
+                  text: (content.text || '') + deltaText,
+                });
+              },
+              (id, name) => {
+                updateContent({
+                  ...content,
+                  toolCalls: [
+                    ...(content.toolCalls || []),
+                    { name, id, status: 'pending' },
+                  ],
+                });
+              },
+            );
+
+            // Append the assistant message (including tool_calls) to the
+            // local agent context so OpenRouter sees a properly threaded
+            // conversation when we feed back tool results.
+            const assistantMsg: OpenAIMessage = {
+              role: 'assistant',
+              content: turn.text || '',
+            };
+            if (turn.toolCalls.length > 0) {
+              assistantMsg.tool_calls = turn.toolCalls.map((tc) => ({
+                id: tc.id,
+                type: 'function' as const,
+                function: { name: tc.name, arguments: tc.arguments || '{}' },
+              }));
+            }
+            agentMessages.push(assistantMsg);
+
+            // Agent finished — no tools requested, just text.
+            if (turn.toolCalls.length === 0) break;
+
+            // Execute each tool call serially. They share the request
+            // budget so a slow tool drains time from later iterations.
+            for (const tc of turn.toolCalls) {
+              if (abortSignal.aborted) {
+                throw new Error('Request cancelled by user');
               }
 
-              // delta.reasoning is consumed silently; we don't surface internal
-              // reasoning tokens in the final message.
-
-              if (delta.tool_calls) {
-                for (const toolCall of delta.tool_calls) {
-                  if (toolCall.id) {
-                    currentToolCall = {
-                      id: toolCall.id,
-                      name: toolCall.function?.name || '',
-                      arguments: '',
-                    };
-                    content = {
-                      ...content,
-                      toolCalls: [
-                        ...(content.toolCalls || []),
-                        {
-                          name: currentToolCall.name,
-                          id: currentToolCall.id,
-                          status: 'pending',
-                        },
-                      ],
-                    };
-                    streamMessage(controller, {
-                      ...newMessageData,
-                      content,
-                    });
-                  }
-
-                  if (toolCall.function?.arguments && currentToolCall) {
-                    currentToolCall.arguments += toolCall.function.arguments;
-                  }
+              if (tc.name === 'build_parametric_model') {
+                let toolInput: {
+                  text?: string;
+                  imageIds?: string[];
+                  baseCode?: string;
+                  error?: string;
+                } = {};
+                try {
+                  toolInput = JSON.parse(tc.arguments || '{}');
+                } catch {
+                  updateContent(markToolAsError(content, tc.id));
+                  agentMessages.push({
+                    role: 'tool',
+                    tool_call_id: tc.id,
+                    content:
+                      'Error: build_parametric_model received malformed arguments.',
+                  });
+                  continue;
                 }
-              }
 
-              if (
-                chunk.choices?.[0]?.finish_reason === 'tool_calls' &&
-                currentToolCall
-              ) {
-                await handleToolCall(currentToolCall);
-                currentToolCall = null;
+                // Bill parametric tokens for this build.
+                let billingFailed = false;
+                try {
+                  const result = await billing.consume(userData.user!.email!, {
+                    tokens: PARAMETRIC_TOKEN_COST,
+                    operation: 'parametric',
+                    referenceId: tc.id,
+                  });
+                  if (!result.ok) {
+                    updateContent({
+                      ...markToolAsError(content, tc.id),
+                      error: 'insufficient_tokens',
+                    });
+                    agentMessages.push({
+                      role: 'tool',
+                      tool_call_id: tc.id,
+                      content:
+                        'Error: insufficient parametric tokens to build the model.',
+                    });
+                    billingFailed = true;
+                  }
+                } catch (err) {
+                  const status =
+                    err instanceof BillingClientError ? err.status : 502;
+                  logError(err, {
+                    functionName: 'parametric-chat',
+                    statusCode: status,
+                    userId: userData.user?.id,
+                    conversationId,
+                    additionalContext: {
+                      operation: 'parametric',
+                      toolCallId: tc.id,
+                    },
+                  });
+                  updateContent({
+                    ...markToolAsError(content, tc.id),
+                    error: 'billing_unavailable',
+                  });
+                  agentMessages.push({
+                    role: 'tool',
+                    tool_call_id: tc.id,
+                    content: 'Error: billing service unavailable.',
+                  });
+                  billingFailed = true;
+                }
+                if (billingFailed) {
+                  // Don't break — let the agent see the failure tool
+                  // result and finalize with text.
+                  continue;
+                }
+
+                // Build code-gen messages: original conversation + optional
+                // base-code priming + restated user request when needed.
+                const baseContext: OpenAIMessage[] = toolInput.baseCode
+                  ? [
+                      {
+                        role: 'assistant' as const,
+                        content: toolInput.baseCode,
+                      },
+                    ]
+                  : [];
+                const userText = newMessage.content.text || toolInput.text || '';
+                const needsUserMessage =
+                  baseContext.length > 0 || !!toolInput.error;
+                const finalUserMessage: OpenAIMessage[] = needsUserMessage
+                  ? [
+                      {
+                        role: 'user' as const,
+                        content: toolInput.error
+                          ? `${userText}\n\nFix this OpenSCAD error: ${toolInput.error}`
+                          : userText,
+                      },
+                    ]
+                  : [];
+                const codeMessages: OpenAIMessage[] = [
+                  ...messagesToSend,
+                  ...baseContext,
+                  ...finalUserMessage,
+                ];
+
+                const titlePromise = generateTitleFromMessages(messagesToSend);
+
+                const { code, success } = await generateOpenSCADCode(
+                  codeMessages,
+                  (rawCode) => {
+                    updateContent({
+                      ...content,
+                      artifact: {
+                        title: 'Adam Object',
+                        version: 'v1',
+                        code: rawCode,
+                        parameters: [],
+                      },
+                    });
+                  },
+                );
+
+                let title = await titlePromise.catch(() => 'Adam Object');
+                const lower = title.toLowerCase();
+                if (lower.includes('sorry') || lower.includes('apologize')) {
+                  title = 'Adam Object';
+                }
+
+                if (!success || !code) {
+                  // Preserve any partial artifact rather than unsetting it
+                  // — clearing on the client would crash the parameters
+                  // panel mid-stream. The error status carries the signal.
+                  updateContent({
+                    ...content,
+                    toolCalls: (content.toolCalls || []).map((c) =>
+                      c.id === tc.id ? { ...c, status: 'error' } : c,
+                    ),
+                  });
+                  agentMessages.push({
+                    role: 'tool',
+                    tool_call_id: tc.id,
+                    content:
+                      'Error: code generation failed. The artifact was not updated.',
+                  });
+                  continue;
+                }
+
+                const artifact: ParametricArtifact = {
+                  title,
+                  version: 'v1',
+                  code,
+                  parameters: parseParameters(code),
+                };
+                updateContent({
+                  ...content,
+                  toolCalls: (content.toolCalls || []).filter(
+                    (c) => c.id !== tc.id,
+                  ),
+                  artifact,
+                });
+
+                agentMessages.push({
+                  role: 'tool',
+                  tool_call_id: tc.id,
+                  content: `OpenSCAD model "${title}" generated successfully (${artifact.parameters.length} parameter${artifact.parameters.length === 1 ? '' : 's'}, ${code.length} chars). The artifact is now displayed in the user's viewport. ${verifyRoundsUsed < MAX_VERIFY_ROUNDS ? 'Verify it now by calling view_model.' : 'You have used your verification budget; do not call view_model again.'}`,
+                });
+              } else if (tc.name === 'view_model') {
+                let toolInput: {
+                  views?: Array<{
+                    view: string;
+                    azimuth?: number;
+                    elevation?: number;
+                    label?: string;
+                  }>;
+                  reasoning?: string;
+                } = {};
+                try {
+                  toolInput = JSON.parse(tc.arguments || '{}');
+                } catch {
+                  updateContent(markToolAsError(content, tc.id));
+                  agentMessages.push({
+                    role: 'tool',
+                    tool_call_id: tc.id,
+                    content:
+                      'Error: view_model received malformed arguments.',
+                  });
+                  continue;
+                }
+
+                const allowedViews = [
+                  'iso',
+                  'front',
+                  'back',
+                  'left',
+                  'right',
+                  'top',
+                  'bottom',
+                  'custom',
+                ];
+                const requestedViews: ViewRequest[] = (toolInput.views ?? [])
+                  .map((v) => {
+                    const view = String(v.view ?? 'iso').toLowerCase();
+                    if (!allowedViews.includes(view)) return null;
+                    return {
+                      view: view as ViewRequest['view'],
+                      ...(typeof v.azimuth === 'number' && {
+                        azimuth: v.azimuth,
+                      }),
+                      ...(typeof v.elevation === 'number' && {
+                        elevation: v.elevation,
+                      }),
+                      ...(v.label && { label: String(v.label).slice(0, 80) }),
+                    };
+                  })
+                  .filter((v): v is ViewRequest => v !== null);
+
+                if (requestedViews.length === 0) {
+                  updateContent(markToolAsError(content, tc.id));
+                  agentMessages.push({
+                    role: 'tool',
+                    tool_call_id: tc.id,
+                    content:
+                      'Error: view_model needs at least one valid view (iso, front, back, left, right, top, bottom, or custom).',
+                  });
+                  continue;
+                }
+
+                const reasoning = toolInput.reasoning
+                  ? String(toolInput.reasoning).slice(0, 500)
+                  : undefined;
+
+                // Switch the live tool-call to pending_verification so the
+                // chat UI shows the "inspecting model" chip while the
+                // browser renders.
+                updateContent({
+                  ...content,
+                  toolCalls: (content.toolCalls || []).map((c) =>
+                    c.id === tc.id
+                      ? {
+                          ...c,
+                          status: 'pending_verification',
+                          views: requestedViews,
+                          ...(reasoning && { reasoning }),
+                        }
+                      : c,
+                  ),
+                });
+
+                const requestId = crypto.randomUUID();
+                let imageIds: string[] = [];
+                let signedUrls: string[] = [];
+                let viewError: string | null = null;
+                try {
+                  const result = await executeViewModelTool(
+                    requestId,
+                    requestedViews,
+                    reasoning,
+                  );
+                  imageIds = result.imageIds;
+                  signedUrls = result.signedUrls;
+                } catch (err) {
+                  viewError =
+                    err instanceof Error ? err.message : 'unknown error';
+                  console.error('view_model fulfillment failed:', err);
+                }
+
+                if (viewError) {
+                  updateContent({
+                    ...content,
+                    toolCalls: (content.toolCalls || []).map((c) =>
+                      c.id === tc.id ? { ...c, status: 'error' } : c,
+                    ),
+                  });
+                  agentMessages.push({
+                    role: 'tool',
+                    tool_call_id: tc.id,
+                    content: `Error: failed to capture screenshots (${viewError}). Skip verification and respond to the user with what you have.`,
+                  });
+                  continue;
+                }
+
+                verifyRoundsUsed++;
+                updateContent({
+                  ...content,
+                  toolCalls: (content.toolCalls || []).map((c) =>
+                    c.id === tc.id
+                      ? {
+                          ...c,
+                          status: 'verified',
+                          screenshots: imageIds,
+                        }
+                      : c,
+                  ),
+                });
+
+                const summary = requestedViews
+                  .map((v) => v.label || v.view)
+                  .join(', ');
+                agentMessages.push({
+                  role: 'tool',
+                  tool_call_id: tc.id,
+                  content: `Captured ${imageIds.length} screenshot${imageIds.length === 1 ? '' : 's'} from views: ${summary}. They are attached in the next message; review them critically against the user's request.`,
+                });
+
+                // The actual images travel as a follow-up user message —
+                // OpenAI/OpenRouter tool messages don't accept image
+                // content directly, so this is the standard workaround.
+                if (supportsVision) {
+                  agentMessages.push({
+                    role: 'user',
+                    content: [
+                      {
+                        type: 'text',
+                        text: `Verification screenshots (${summary}):`,
+                      },
+                      ...signedUrls.map((url) => ({
+                        type: 'image_url' as const,
+                        image_url: { url, detail: 'auto' },
+                      })),
+                    ],
+                  });
+                } else {
+                  agentMessages.push({
+                    role: 'user',
+                    content: `Verification screenshots from ${summary} were captured but the current model does not accept images. Treat the build as best-effort and confirm completion to the user.`,
+                  });
+                }
+              } else if (tc.name === 'apply_parameter_changes') {
+                let toolInput: {
+                  updates?: Array<{ name: string; value: string }>;
+                } = {};
+                try {
+                  toolInput = JSON.parse(tc.arguments || '{}');
+                } catch {
+                  updateContent(markToolAsError(content, tc.id));
+                  agentMessages.push({
+                    role: 'tool',
+                    tool_call_id: tc.id,
+                    content:
+                      'Error: apply_parameter_changes received malformed arguments.',
+                  });
+                  continue;
+                }
+
+                let baseCode = content.artifact?.code;
+                if (!baseCode) {
+                  const lastArtifactMsg = [...messages]
+                    .reverse()
+                    .find(
+                      (m) =>
+                        m.role === 'assistant' && m.content.artifact?.code,
+                    );
+                  baseCode = lastArtifactMsg?.content.artifact?.code;
+                }
+
+                if (
+                  !baseCode ||
+                  !toolInput.updates ||
+                  toolInput.updates.length === 0
+                ) {
+                  updateContent(markToolAsError(content, tc.id));
+                  agentMessages.push({
+                    role: 'tool',
+                    tool_call_id: tc.id,
+                    content:
+                      'Error: cannot apply parameter changes — no base artifact or no updates provided.',
+                  });
+                  continue;
+                }
+
+                let patchedCode = baseCode;
+                const currentParams = parseParameters(baseCode);
+                for (const upd of toolInput.updates) {
+                  const target = currentParams.find(
+                    (p) => p.name === upd.name,
+                  );
+                  if (!target) continue;
+                  let coerced: string | number | boolean = upd.value;
+                  try {
+                    if (target.type === 'number') coerced = Number(upd.value);
+                    else if (target.type === 'boolean')
+                      coerced = String(upd.value) === 'true';
+                    else if (target.type === 'string')
+                      coerced = String(upd.value);
+                    else coerced = upd.value;
+                  } catch (_) {
+                    coerced = upd.value;
+                  }
+                  patchedCode = patchedCode.replace(
+                    new RegExp(
+                      `^\\s*(${escapeRegExp(target.name)}\\s*=\\s*)[^;]+;([\\t\\f\\cK ]*\\/\\/[^\\n]*)?`,
+                      'm',
+                    ),
+                    (_, g1: string, g2: string) => {
+                      if (target.type === 'string')
+                        return `${g1}"${String(coerced).replace(/"/g, '\\"')}";${g2 || ''}`;
+                      return `${g1}${coerced};${g2 || ''}`;
+                    },
+                  );
+                }
+
+                const newArtifact: ParametricArtifact = {
+                  title: content.artifact?.title || 'Adam Object',
+                  version: content.artifact?.version || 'v1',
+                  code: patchedCode,
+                  parameters: parseParameters(patchedCode),
+                };
+                updateContent({
+                  ...content,
+                  toolCalls: (content.toolCalls || []).filter(
+                    (c) => c.id !== tc.id,
+                  ),
+                  artifact: newArtifact,
+                });
+                agentMessages.push({
+                  role: 'tool',
+                  tool_call_id: tc.id,
+                  content: `Applied ${toolInput.updates.length} parameter update(s) to "${newArtifact.title}".`,
+                });
+              } else {
+                // Unknown tool: tell the agent and move on so the loop
+                // doesn't lock up.
+                console.warn(`Unknown tool: ${tc.name}`);
+                agentMessages.push({
+                  role: 'tool',
+                  tool_call_id: tc.id,
+                  content: `Unknown tool: ${tc.name}. Ignored.`,
+                });
               }
             }
           }
-
-          // Handle any remaining tool call
-          if (currentToolCall) {
-            await handleToolCall(currentToolCall);
-          }
         } catch (error) {
-          console.error(error);
+          if (!abortSignal.aborted) {
+            console.error(error);
+            logError(error, {
+              functionName: 'parametric-chat',
+              statusCode: 500,
+              userId: userData.user?.id,
+              conversationId,
+              additionalContext: { messageId, model },
+            });
+          }
           if (!content.text && !content.artifact) {
             content = {
               ...content,
-              text: 'An error occurred while processing your request.',
+              text: abortSignal.aborted
+                ? 'Generation stopped! Retry or enter a new prompt.'
+                : 'An error occurred while processing your request.',
             };
           }
-          markAllToolsError();
         } finally {
-          clearTimeout(agentTimeout);
-          // Last-line defense: even if markAllToolsError was skipped (e.g.
-          // the outer try completed without throwing but a tool call was
-          // left pending by an unreachable path), never persist pending.
+          // Anything still pending at this point never resolved — flip to
+          // error so the bubble doesn't render as a perpetual spinner.
           content = markPendingToolsAsError(content);
-          // Fallback: If no artifact was created but text contains OpenSCAD code,
-          // extract it and create an artifact. This handles cases where the LLM
-          // outputs code directly instead of using tools (common in long conversations).
+
+          // Fallback: if the model dumped OpenSCAD into its text instead of
+          // calling build_parametric_model (rare but happens on long
+          // conversations), pull it out and synthesize an artifact.
           if (!content.artifact && content.text) {
             const extractedCode = extractOpenSCADCodeFromText(content.text);
             if (extractedCode) {
-              console.log(
-                'Fallback: Extracted OpenSCAD code from text response',
-              );
-
-              // Generate a title from the messages
               const title = await generateTitleFromMessages(messagesToSend);
-
-              // Remove the code from the text (keep any non-code explanation)
-              let cleanedText = content.text;
-              // Remove markdown code blocks
-              cleanedText = cleanedText
+              let cleanedText = content.text
                 .replace(/```(?:openscad)?\s*\n?[\s\S]*?\n?```/g, '')
                 .trim();
-              // If what remains is very short or empty, clear it
-              if (cleanedText.length < 10) {
-                cleanedText = '';
-              }
-
+              if (cleanedText.length < 10) cleanedText = '';
               content = {
                 ...content,
                 text: cleanedText || undefined,
@@ -1047,15 +1810,14 @@ Deno.serve(async (req) => {
             }
           }
 
-          // Safety net: if the outer LLM finished without emitting any text,
-          // tool call, or artifact, surface a retry hint instead of saving
-          // an empty bubble (otherwise isLoading flips false and the UI
-          // renders nothing visible).
+          // Last-line safety: never persist a totally empty assistant
+          // message — the client treats `isLoading=false` + empty content
+          // as nothing happened, which would render as a blank bubble.
           const hasToolCalls =
             !!content.toolCalls && content.toolCalls.length > 0;
           if (!content.artifact && !content.text && !hasToolCalls) {
             console.error(
-              '[parametric-chat] empty response from model — no text, tool call, or artifact',
+              '[parametric-chat] empty response from agent loop — no text, tool call, or artifact',
             );
             content = {
               ...content,
@@ -1077,8 +1839,6 @@ Deno.serve(async (req) => {
             console.error('Failed to update message in DB:', dbError);
           }
 
-          // Always stream a final message — fall back to in-memory content
-          // if the DB update failed, so the client never gets an empty stream
           streamMessage(
             controller,
             finalMessageData ?? { ...newMessageData, content },
@@ -1088,467 +1848,9 @@ Deno.serve(async (req) => {
           } catch {
             // Already closed (client disconnected) — safe to ignore.
           }
+          cleanupCancel();
         }
-
-        async function handleToolCall(toolCall: {
-          id: string;
-          name: string;
-          arguments: string;
-        }) {
-          if (toolCall.name === 'build_parametric_model') {
-            // `resolved` tracks whether this tool call reached a terminal
-            // state (success = entry removed, or explicit `error`). The
-            // finally below guarantees that *every* exit — throw, early
-            // return, upstream hang unmasked by AbortController — leaves
-            // the persisted tool call as `error` rather than forever-
-            // pending. Without this, a mid-stream kill produces a message
-            // that renders as a perpetually streaming code block.
-            let resolved = false;
-            try {
-              // Deduct parametric tokens (5) for model building
-              try {
-                const paramResult = await billing.consume(
-                  userData.user!.email!,
-                  {
-                    tokens: PARAMETRIC_TOKEN_COST,
-                    operation: 'parametric',
-                    referenceId: toolCall.id,
-                  },
-                );
-                if (!paramResult.ok) {
-                  content = {
-                    ...markToolAsError(content, toolCall.id),
-                    error: 'insufficient_tokens',
-                  };
-                  streamMessage(controller, { ...newMessageData, content });
-                  resolved = true;
-                  return;
-                }
-              } catch (err) {
-                const status =
-                  err instanceof BillingClientError ? err.status : 502;
-                logError(err, {
-                  functionName: 'parametric-chat',
-                  statusCode: status,
-                  userId: userData.user?.id,
-                  conversationId,
-                  additionalContext: {
-                    operation: 'parametric',
-                    toolCallId: toolCall.id,
-                  },
-                });
-                content = {
-                  ...markToolAsError(content, toolCall.id),
-                  error: 'billing_unavailable',
-                };
-                streamMessage(controller, { ...newMessageData, content });
-                resolved = true;
-                return;
-              }
-              let toolInput: {
-                text?: string;
-                imageIds?: string[];
-                baseCode?: string;
-                error?: string;
-              } = {};
-              try {
-                toolInput = JSON.parse(toolCall.arguments);
-              } catch (e) {
-                console.error('Invalid tool input JSON', e);
-                content = markToolAsError(content, toolCall.id);
-                streamMessage(controller, { ...newMessageData, content });
-                resolved = true;
-                return;
-              }
-
-              // Build code generation messages
-              const baseContext: OpenAIMessage[] = toolInput.baseCode
-                ? [{ role: 'assistant' as const, content: toolInput.baseCode }]
-                : [];
-
-              // If baseContext adds an assistant message, re-state user request so conversation ends with user
-              const userText = newMessage?.content.text || '';
-              const needsUserMessage =
-                baseContext.length > 0 || toolInput.error;
-              const finalUserMessage: OpenAIMessage[] = needsUserMessage
-                ? [
-                    {
-                      role: 'user' as const,
-                      content: toolInput.error
-                        ? `${userText}\n\nFix this OpenSCAD error: ${toolInput.error}`
-                        : userText,
-                    },
-                  ]
-                : [];
-
-              const codeMessages: OpenAIMessage[] = [
-                ...messagesToSend,
-                ...baseContext,
-                ...finalUserMessage,
-              ];
-
-              // Code generation request logic (SSE streaming)
-              // Note: no `provider.require_parameters` here — code-gen doesn't
-              // send tools, so all providers in the pool are eligible.
-              const codeRequestBody: OpenRouterRequest = {
-                model,
-                messages: [
-                  { role: 'system', content: STRICT_CODE_PROMPT },
-                  ...codeMessages,
-                ],
-                max_tokens: 48000,
-                stream: true,
-              };
-
-              // Also apply thinking to code generation if enabled
-              if (thinking) {
-                codeRequestBody.reasoning = {
-                  max_tokens: 12000,
-                };
-                codeRequestBody.max_tokens = 60000;
-              }
-
-              // Kick off title generation alongside the streamed code.
-              const titlePromise = generateTitleFromMessages(messagesToSend);
-
-              let rawCode = '';
-              let codeGenFailed = false;
-
-              const stripCodeFences = (s: string): string => {
-                let out = s;
-                out = out.replace(/^```(?:openscad)?\s*\n?/, '');
-                out = out.replace(/\n?```\s*$/, '');
-                return out;
-              };
-
-              // Draws from the same request deadline as the agent fetch —
-              // whatever budget remains after the outer stream is ours.
-              // A hung upstream aborts in userland so the catch below
-              // marks this tool call `error` instead of being SIGKILLed.
-              const codeGenAbort = new AbortController();
-              const codeGenTimeout = setTimeout(
-                () =>
-                  codeGenAbort.abort(new Error('code-gen upstream timeout')),
-                remainingBudgetMs(),
-              );
-              try {
-                const codeResponse = await fetch(OPENROUTER_API_URL, {
-                  method: 'POST',
-                  headers: {
-                    'Content-Type': 'application/json',
-                    Authorization: `Bearer ${OPENROUTER_API_KEY}`,
-                    'HTTP-Referer': 'https://adam-cad.com',
-                    'X-Title': 'Adam CAD',
-                  },
-                  body: JSON.stringify(codeRequestBody),
-                  signal: codeGenAbort.signal,
-                });
-
-                if (!codeResponse.ok) {
-                  const t = await codeResponse.text();
-                  throw new Error(
-                    `Code gen error: ${codeResponse.status} - ${t}`,
-                  );
-                }
-
-                const codeReader = codeResponse.body?.getReader();
-                if (!codeReader) throw new Error('No code response body');
-
-                const codeDecoder = new TextDecoder();
-                let codeBuffer = '';
-                // Throttle SSE flushes to avoid O(n^2) memory blow-up on long
-                // generations — without this, each of hundreds of deltas
-                // re-serializes the full accumulated artifact.
-                let lastFlushTime = 0;
-                let lastFlushedLen = 0;
-                const FLUSH_INTERVAL_MS = 120;
-
-                while (true) {
-                  const { done, value } = await codeReader.read();
-                  if (done) break;
-
-                  codeBuffer += codeDecoder.decode(value, { stream: true });
-                  const codeLines = codeBuffer.split('\n');
-                  codeBuffer = codeLines.pop() || '';
-
-                  for (const line of codeLines) {
-                    // Skip empty lines, SSE comments (`: OPENROUTER PROCESSING`),
-                    // and anything that isn't a `data:` event.
-                    if (!line.startsWith('data: ')) continue;
-                    const data = line.slice(6);
-                    if (data === '[DONE]') continue;
-
-                    let chunk: {
-                      error?: { message?: string };
-                      choices?: Array<{
-                        delta?: { content?: string };
-                      }>;
-                    };
-                    try {
-                      chunk = JSON.parse(data);
-                    } catch (e) {
-                      // Malformed chunk — log and skip, don't abort the stream.
-                      console.error('Error parsing code SSE chunk:', e);
-                      continue;
-                    }
-
-                    // Surfaced API errors must abort code-gen so the outer
-                    // catch can mark the tool call as failed — never swallow.
-                    if (chunk.error) {
-                      throw new Error(
-                        chunk.error.message ||
-                          `OpenRouter error: ${JSON.stringify(chunk.error)}`,
-                      );
-                    }
-
-                    const deltaContent = chunk.choices?.[0]?.delta?.content;
-                    if (typeof deltaContent === 'string' && deltaContent) {
-                      rawCode += deltaContent;
-                      const now = Date.now();
-                      if (
-                        now - lastFlushTime >= FLUSH_INTERVAL_MS &&
-                        rawCode.length > lastFlushedLen
-                      ) {
-                        const streamed = stripCodeFences(rawCode);
-                        content = {
-                          ...content,
-                          artifact: {
-                            title: 'Adam Object',
-                            version: 'v1',
-                            code: streamed,
-                            parameters: [],
-                          },
-                        };
-                        streamMessage(controller, {
-                          ...newMessageData,
-                          content,
-                        });
-                        lastFlushTime = now;
-                        lastFlushedLen = rawCode.length;
-                      }
-                    }
-                  }
-                }
-              } catch (e) {
-                console.error('Code generation failed:', e);
-                codeGenFailed = true;
-              } finally {
-                clearTimeout(codeGenTimeout);
-              }
-
-              const code = stripCodeFences(rawCode.trim()).trim();
-
-              let title = await titlePromise.catch(() => 'Adam Object');
-              const lower = title.toLowerCase();
-              if (lower.includes('sorry') || lower.includes('apologize'))
-                title = 'Adam Object';
-
-              if (codeGenFailed || !code) {
-                // Preserve whatever partial artifact was streamed rather than
-                // unsetting it. Clearing `artifact` here flipped `hasArtifact`
-                // back to false on the client mid-stream, which crashed the
-                // conditional parameters Panel in react-resizable-panels. The
-                // `toolCalls[].status === 'error'` signal already carries the
-                // failure; keeping the partial code lets the user see what was
-                // generated before the error.
-                content = {
-                  ...content,
-                  toolCalls: (content.toolCalls || []).map((c) =>
-                    c.id === toolCall.id ? { ...c, status: 'error' } : c,
-                  ),
-                };
-              } else {
-                const artifact: ParametricArtifact = {
-                  title,
-                  version: 'v1',
-                  code,
-                  parameters: parseParameters(code),
-                };
-                content = {
-                  ...content,
-                  toolCalls: (content.toolCalls || []).filter(
-                    (c) => c.id !== toolCall.id,
-                  ),
-                  artifact,
-                };
-              }
-              // Mark resolved *before* the side-effectful streamMessage:
-              // `content` already reflects the terminal state (artifact set
-              // or tool call removed), so if streamMessage ever threw, the
-              // finally below must not clobber that with an `error` flip.
-              resolved = true;
-              streamMessage(controller, { ...newMessageData, content });
-            } finally {
-              // Safety net: any escape from the block above (thrown error,
-              // forgotten return, upstream abort) that left this tool call
-              // `pending` gets flipped to `error` here so the DB write in
-              // the outer finally never persists a zombie pending state.
-              if (!resolved) {
-                content = markToolAsError(content, toolCall.id);
-                streamMessage(controller, { ...newMessageData, content });
-              }
-            }
-          } else if (toolCall.name === 'view_model') {
-            // The server can't actually render screenshots — only the
-            // browser owns the WebGL canvas. We persist the request as a
-            // `pending_verification` tool call and end the turn; the
-            // client picks it up, captures the requested views, uploads
-            // them, and replays them as the next user message via the
-            // normal chat flow. So this handler is intentionally a no-op
-            // beyond recording what the agent asked for.
-            let toolInput: {
-              views?: Array<{
-                view: string;
-                azimuth?: number;
-                elevation?: number;
-                label?: string;
-              }>;
-              reasoning?: string;
-            } = {};
-            try {
-              toolInput = JSON.parse(toolCall.arguments);
-            } catch (e) {
-              console.error('Invalid view_model tool input JSON', e);
-              content = markToolAsError(content, toolCall.id);
-              streamMessage(controller, { ...newMessageData, content });
-              return;
-            }
-
-            const requestedViews = (toolInput.views ?? [])
-              .map((v) => {
-                const view = (v.view ?? 'iso').toLowerCase();
-                const allowed = [
-                  'iso',
-                  'front',
-                  'back',
-                  'left',
-                  'right',
-                  'top',
-                  'bottom',
-                  'custom',
-                ];
-                if (!allowed.includes(view)) return null;
-                return {
-                  view: view as
-                    | 'iso'
-                    | 'front'
-                    | 'back'
-                    | 'left'
-                    | 'right'
-                    | 'top'
-                    | 'bottom'
-                    | 'custom',
-                  ...(typeof v.azimuth === 'number' && { azimuth: v.azimuth }),
-                  ...(typeof v.elevation === 'number' && {
-                    elevation: v.elevation,
-                  }),
-                  ...(v.label && { label: String(v.label).slice(0, 80) }),
-                };
-              })
-              .filter((v): v is NonNullable<typeof v> => v !== null);
-
-            if (requestedViews.length === 0) {
-              content = markToolAsError(content, toolCall.id);
-              streamMessage(controller, { ...newMessageData, content });
-              return;
-            }
-
-            content = {
-              ...content,
-              toolCalls: (content.toolCalls || []).map((c) =>
-                c.id === toolCall.id
-                  ? {
-                      ...c,
-                      status: 'pending_verification',
-                      views: requestedViews,
-                      ...(toolInput.reasoning && {
-                        reasoning: String(toolInput.reasoning).slice(0, 500),
-                      }),
-                    }
-                  : c,
-              ),
-            };
-            streamMessage(controller, { ...newMessageData, content });
-          } else if (toolCall.name === 'apply_parameter_changes') {
-            let toolInput: {
-              updates?: Array<{ name: string; value: string }>;
-            } = {};
-            try {
-              toolInput = JSON.parse(toolCall.arguments);
-            } catch (e) {
-              console.error('Invalid tool input JSON', e);
-              content = markToolAsError(content, toolCall.id);
-              streamMessage(controller, { ...newMessageData, content });
-              return;
-            }
-
-            // Determine base code to update
-            let baseCode = content.artifact?.code;
-            if (!baseCode) {
-              const lastArtifactMsg = [...messages]
-                .reverse()
-                .find(
-                  (m) => m.role === 'assistant' && m.content.artifact?.code,
-                );
-              baseCode = lastArtifactMsg?.content.artifact?.code;
-            }
-
-            if (
-              !baseCode ||
-              !toolInput.updates ||
-              toolInput.updates.length === 0
-            ) {
-              content = markToolAsError(content, toolCall.id);
-              streamMessage(controller, { ...newMessageData, content });
-              return;
-            }
-
-            // Patch parameters deterministically
-            let patchedCode = baseCode;
-            const currentParams = parseParameters(baseCode);
-            for (const upd of toolInput.updates) {
-              const target = currentParams.find((p) => p.name === upd.name);
-              if (!target) continue;
-              // Coerce value based on existing type
-              let coerced: string | number | boolean = upd.value;
-              try {
-                if (target.type === 'number') coerced = Number(upd.value);
-                else if (target.type === 'boolean')
-                  coerced = String(upd.value) === 'true';
-                else if (target.type === 'string') coerced = String(upd.value);
-                else coerced = upd.value;
-              } catch (_) {
-                coerced = upd.value;
-              }
-              patchedCode = patchedCode.replace(
-                new RegExp(
-                  `^\\s*(${escapeRegExp(target.name)}\\s*=\\s*)[^;]+;([\\t\\f\\cK ]*\\/\\/[^\\n]*)?`,
-                  'm',
-                ),
-                (_, g1: string, g2: string) => {
-                  if (target.type === 'string')
-                    return `${g1}"${String(coerced).replace(/"/g, '\\"')}";${g2 || ''}`;
-                  return `${g1}${coerced};${g2 || ''}`;
-                },
-              );
-            }
-
-            const artifact: ParametricArtifact = {
-              title: content.artifact?.title || 'Adam Object',
-              version: content.artifact?.version || 'v1',
-              code: patchedCode,
-              parameters: parseParameters(patchedCode),
-            };
-            content = {
-              ...content,
-              toolCalls: (content.toolCalls || []).filter(
-                (c) => c.id !== toolCall.id,
-              ),
-              artifact,
-            };
-            streamMessage(controller, { ...newMessageData, content });
-          }
-        }
+      },
       },
     });
 
@@ -1562,6 +1864,9 @@ Deno.serve(async (req) => {
     });
   } catch (error) {
     console.error(error);
+    // Tear down the cancel channel — the stream's inner finally won't run
+    // because we never returned the ReadableStream.
+    cleanupCancel();
 
     if (!content.text && !content.artifact) {
       content = {
