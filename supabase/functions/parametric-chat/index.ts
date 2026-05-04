@@ -595,47 +595,60 @@ Deno.serve(async (req) => {
     });
   }
 
+  // Preview demo escape hatch: when PREVIEW_BYPASS_BILLING=true is set on
+  // the edge-function env (paired with VITE_PREVIEW_DEMO_MODE on the
+  // client), skip every billing call so anonymous Supabase users — who
+  // have no email and aren't in adam-billing — can still drive the chat.
+  // Production keeps this unset; behaviour is identical to before.
+  const BYPASS_BILLING =
+    Deno.env.get('PREVIEW_BYPASS_BILLING') === 'true';
+
   // Deduct chat token (1) via adam-billing
-  if (!userData.user.email) {
+  if (!BYPASS_BILLING && !userData.user.email) {
     return new Response(JSON.stringify({ error: 'User email missing' }), {
       status: 400,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   }
 
-  try {
-    const result = await billing.consume(userData.user.email, {
-      tokens: CHAT_TOKEN_COST,
-      operation: 'chat',
-      referenceId: crypto.randomUUID(),
-    });
-    if (!result.ok) {
-      return new Response(
-        JSON.stringify({
-          error: {
-            message: 'insufficient_tokens',
-            code: 'insufficient_tokens',
-            tokensRequired: result.tokensRequired,
-            tokensAvailable: result.tokensAvailable,
+  if (!BYPASS_BILLING) {
+    try {
+      const result = await billing.consume(userData.user.email!, {
+        tokens: CHAT_TOKEN_COST,
+        operation: 'chat',
+        referenceId: crypto.randomUUID(),
+      });
+      if (!result.ok) {
+        return new Response(
+          JSON.stringify({
+            error: {
+              message: 'insufficient_tokens',
+              code: 'insufficient_tokens',
+              tokensRequired: result.tokensRequired,
+              tokensAvailable: result.tokensAvailable,
+            },
+          }),
+          {
+            status: 402,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
           },
-        }),
+        );
+      }
+    } catch (err) {
+      const status = err instanceof BillingClientError ? err.status : 502;
+      logError(err, {
+        functionName: 'parametric-chat',
+        statusCode: status,
+        userId: userData.user.id,
+      });
+      return new Response(
+        JSON.stringify({ error: 'billing_unavailable' }),
         {
-          status: 402,
+          status: 502,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         },
       );
     }
-  } catch (err) {
-    const status = err instanceof BillingClientError ? err.status : 502;
-    logError(err, {
-      functionName: 'parametric-chat',
-      statusCode: status,
-      userId: userData.user.id,
-    });
-    return new Response(JSON.stringify({ error: 'billing_unavailable' }), {
-      status: 502,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
   }
 
   const {
@@ -1403,50 +1416,58 @@ Deno.serve(async (req) => {
                   continue;
                 }
 
-                // Bill parametric tokens for this build.
+                // Bill parametric tokens for this build (skipped when the
+                // preview-demo bypass is active so anonymous Supabase users,
+                // who have no email and aren't in adam-billing, can still
+                // exercise the agent).
                 let billingFailed = false;
-                try {
-                  const result = await billing.consume(userData.user!.email!, {
-                    tokens: PARAMETRIC_TOKEN_COST,
-                    operation: 'parametric',
-                    referenceId: tc.id,
-                  });
-                  if (!result.ok) {
+                if (!BYPASS_BILLING) {
+                  try {
+                    const result = await billing.consume(
+                      userData.user!.email!,
+                      {
+                        tokens: PARAMETRIC_TOKEN_COST,
+                        operation: 'parametric',
+                        referenceId: tc.id,
+                      },
+                    );
+                    if (!result.ok) {
+                      updateContent({
+                        ...markToolAsError(content, tc.id),
+                        error: 'insufficient_tokens',
+                      });
+                      agentMessages.push({
+                        role: 'tool',
+                        tool_call_id: tc.id,
+                        content:
+                          'Error: insufficient parametric tokens to build the model.',
+                      });
+                      billingFailed = true;
+                    }
+                  } catch (err) {
+                    const status =
+                      err instanceof BillingClientError ? err.status : 502;
+                    logError(err, {
+                      functionName: 'parametric-chat',
+                      statusCode: status,
+                      userId: userData.user?.id,
+                      conversationId,
+                      additionalContext: {
+                        operation: 'parametric',
+                        toolCallId: tc.id,
+                      },
+                    });
                     updateContent({
                       ...markToolAsError(content, tc.id),
-                      error: 'insufficient_tokens',
+                      error: 'billing_unavailable',
                     });
                     agentMessages.push({
                       role: 'tool',
                       tool_call_id: tc.id,
-                      content:
-                        'Error: insufficient parametric tokens to build the model.',
+                      content: 'Error: billing service unavailable.',
                     });
                     billingFailed = true;
                   }
-                } catch (err) {
-                  const status =
-                    err instanceof BillingClientError ? err.status : 502;
-                  logError(err, {
-                    functionName: 'parametric-chat',
-                    statusCode: status,
-                    userId: userData.user?.id,
-                    conversationId,
-                    additionalContext: {
-                      operation: 'parametric',
-                      toolCallId: tc.id,
-                    },
-                  });
-                  updateContent({
-                    ...markToolAsError(content, tc.id),
-                    error: 'billing_unavailable',
-                  });
-                  agentMessages.push({
-                    role: 'tool',
-                    tool_call_id: tc.id,
-                    content: 'Error: billing service unavailable.',
-                  });
-                  billingFailed = true;
                 }
                 if (billingFailed) {
                   // Don't break — let the agent see the failure tool
