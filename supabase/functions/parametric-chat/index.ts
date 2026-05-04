@@ -409,8 +409,13 @@ Simply say what you're doing in natural language (e.g., "I'll create that for yo
 Guidelines:
 - When the user requests a new part or structural change, call build_parametric_model with their exact request in the text field.
 - When the user asks for simple parameter tweaks (like "height to 80"), call apply_parameter_changes.
+- For SURGICAL edits to one file in an existing multi-file artifact (a chamfer that needs adjusting, a primitive that needs swapping, a single module's logic that needs fixing) — call update_file with the bare filename and the complete new content. Don't burn a full build_parametric_model call when only one file changes.
 - Keep text concise and helpful. Ask at most 1 follow-up question when truly needed.
 - Pass the user's request directly to the tool without modification (e.g., if user says "a mug", pass "a mug" to build_parametric_model).
+
+Picking between build_parametric_model and update_file after verification:
+- view_model surfaces a problem in ONE part (e.g. "the wheel is too narrow") → update_file with the full new wheel.scad. Faster, cheaper, leaves the rest of the project untouched.
+- view_model surfaces a problem in proportions across multiple parts, missing structural pieces, or "this isn't a car at all" → build_parametric_model with a fix description. Lets the dedicated code generator restart from scratch.
 
 When the request is COMPLEX (a vehicle, a piece of furniture with separate parts, a multi-component assembly, anything that would otherwise be 200+ lines of monolithic code), tell build_parametric_model to decompose into multiple files. Phrase the tool's text input so the code generator knows to split — e.g. "build a 4-wheeled toy car. Decompose into assembly.scad (entry, with all exposed parameters), chassis.scad, wheel.scad, body.scad. The entry uses the others." Don't repeat this hint when the user is asking for a small/simple object (a cup, a bracket).
 
@@ -477,6 +482,35 @@ const tools = [
           },
         },
         required: ['updates'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'update_file',
+      description:
+        "Surgically rewrite ONE .scad file in the current multi-file artifact with new content, or add a new .scad file alongside the existing ones. Use this for targeted edits visible in the verification screenshots — chamfering an edge, swapping a primitive, retuning a single module, splitting a module into its own file. Cheaper and faster than build_parametric_model because no inner code-gen call runs; you write the full new file content directly. Do NOT use this for whole-project restructures or starting from scratch — call build_parametric_model for those.",
+      parameters: {
+        type: 'object',
+        properties: {
+          filename: {
+            type: 'string',
+            description:
+              'Bare filename (snake_case, ends in .scad, no directories). If it matches an existing file in the artifact, that file is replaced. If not, a new file is appended to the project.',
+          },
+          content: {
+            type: 'string',
+            description:
+              "The COMPLETE new content for the file (not a diff). Plain OpenSCAD source — no markdown fences, no '// === FILE: ===' marker. If you're updating the entry file, keep all top-level user-exposed parameters in this content; they re-populate the parameter panel on save.",
+          },
+          rationale: {
+            type: 'string',
+            description:
+              'One short sentence on what changed and why (e.g. "tightened wheel chamfer from 1mm to 2mm to match the iso render").',
+          },
+        },
+        required: ['filename', 'content'],
       },
     },
   },
@@ -1864,6 +1898,132 @@ Deno.serve(async (req) => {
                     content: `Verification screenshots from ${summary} were captured but the current model does not accept images. Treat the build as best-effort and confirm completion to the user.`,
                   });
                 }
+              } else if (tc.name === 'update_file') {
+                // Surgical per-file rewrite. The agent itself authored
+                // the new file content (no inner code-gen call), so this
+                // is fast and free of additional model spend. Only the
+                // named file in artifact.files is touched; the rest of
+                // the project — including the user's parameter values
+                // when the entry isn't being changed — stays put.
+                let toolInput: {
+                  filename?: string;
+                  content?: string;
+                  rationale?: string;
+                } = {};
+                try {
+                  toolInput = JSON.parse(tc.arguments || '{}');
+                } catch {
+                  updateContent(markToolAsError(content, tc.id));
+                  agentMessages.push({
+                    role: 'tool',
+                    tool_call_id: tc.id,
+                    content:
+                      'Error: update_file received malformed arguments.',
+                  });
+                  continue;
+                }
+
+                const filename = (toolInput.filename ?? '').trim();
+                const newFileContent = toolInput.content ?? '';
+                if (
+                  !filename ||
+                  !/^[A-Za-z0-9_.-]+\.scad$/.test(filename) ||
+                  !newFileContent
+                ) {
+                  updateContent(markToolAsError(content, tc.id));
+                  agentMessages.push({
+                    role: 'tool',
+                    tool_call_id: tc.id,
+                    content:
+                      'Error: update_file needs `filename` (bare *.scad name) and `content` (full file body).',
+                  });
+                  continue;
+                }
+
+                const existingArtifact = content.artifact;
+                if (!existingArtifact) {
+                  updateContent(markToolAsError(content, tc.id));
+                  agentMessages.push({
+                    role: 'tool',
+                    tool_call_id: tc.id,
+                    content:
+                      'Error: update_file called before any artifact exists. Use build_parametric_model first.',
+                  });
+                  continue;
+                }
+
+                // Promote single-file artifacts to multi-file shape on
+                // first update_file call. The existing artifact.code
+                // becomes the entry file; we synthesize a name for it
+                // so update_file can address it later if the agent
+                // wants to. Using "main.scad" as the convention.
+                const existingFiles =
+                  existingArtifact.files && existingArtifact.files.length > 0
+                    ? existingArtifact.files.map((f) => ({
+                        name: f.name,
+                        content: f.content,
+                      }))
+                    : [
+                        {
+                          name: existingArtifact.entryFile || 'main.scad',
+                          content: existingArtifact.code,
+                        },
+                      ];
+                const existingEntry =
+                  existingArtifact.entryFile ||
+                  existingFiles[0]?.name ||
+                  'main.scad';
+
+                const idx = existingFiles.findIndex(
+                  (f) => f.name === filename,
+                );
+                let action: 'replaced' | 'added';
+                if (idx >= 0) {
+                  existingFiles[idx] = { name: filename, content: newFileContent };
+                  action = 'replaced';
+                } else {
+                  existingFiles.push({ name: filename, content: newFileContent });
+                  action = 'added';
+                }
+
+                // Recompute the entry's content + parameters when the
+                // entry was the file just edited. Otherwise keep the
+                // existing values — non-entry files don't surface
+                // top-level parameters.
+                const entryFileObj =
+                  existingFiles.find((f) => f.name === existingEntry) ??
+                  existingFiles[0];
+                const newEntryCode = entryFileObj
+                  ? entryFileObj.content
+                  : existingArtifact.code;
+                const newParameters =
+                  filename === existingEntry
+                    ? parseParameters(newEntryCode)
+                    : existingArtifact.parameters;
+
+                const updatedArtifact: ParametricArtifact = {
+                  ...existingArtifact,
+                  code: newEntryCode,
+                  parameters: newParameters,
+                  files: existingFiles,
+                  entryFile: existingEntry,
+                };
+                updateContent({
+                  ...content,
+                  toolCalls: (content.toolCalls || []).filter(
+                    (c) => c.id !== tc.id,
+                  ),
+                  artifact: updatedArtifact,
+                });
+
+                const rationale = toolInput.rationale
+                  ? ` Rationale: ${String(toolInput.rationale).slice(0, 240)}.`
+                  : '';
+                agentMessages.push({
+                  role: 'tool',
+                  tool_call_id: tc.id,
+                  content: `${action === 'replaced' ? 'Replaced' : 'Added'} \`${filename}\` (${newFileContent.length} chars).${rationale} The artifact in the user's viewport has been updated. ${verifyRoundsUsed < MAX_VERIFY_ROUNDS ? 'You can verify the change with view_model if it might be visible.' : 'You have used your verification budget; do not call view_model again.'}`,
+                });
               } else if (tc.name === 'apply_parameter_changes') {
                 let toolInput: {
                   updates?: Array<{ name: string; value: string }>;

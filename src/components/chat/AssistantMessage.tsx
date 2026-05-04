@@ -280,7 +280,8 @@ export function AssistantMessage({
                               <Box className="h-4 w-4 text-white" />
                             )}
                             {(toolCall.name === 'build_parametric_model' ||
-                              toolCall.name === 'apply_parameter_changes') && (
+                              toolCall.name === 'apply_parameter_changes' ||
+                              toolCall.name === 'update_file') && (
                               <Box className="h-4 w-4 text-white" />
                             )}
                             {toolCall.status === 'pending' && (
@@ -289,12 +290,14 @@ export function AssistantMessage({
                                   ? 'Queuing image...'
                                   : toolCall.name === 'create_mesh'
                                     ? 'Queuing mesh...'
-                                    : toolCall.name ===
-                                          'build_parametric_model' ||
-                                        toolCall.name ===
-                                          'apply_parameter_changes'
-                                      ? 'Building CAD...'
-                                      : `${toolCall.name}...`}
+                                    : toolCall.name === 'update_file'
+                                      ? 'Updating file...'
+                                      : toolCall.name ===
+                                            'build_parametric_model' ||
+                                          toolCall.name ===
+                                            'apply_parameter_changes'
+                                        ? 'Building CAD...'
+                                        : `${toolCall.name}...`}
                               </span>
                             )}
                             {toolCall.status === 'error' && (
@@ -303,12 +306,14 @@ export function AssistantMessage({
                                   ? 'Failed to start image generation'
                                   : toolCall.name === 'create_mesh'
                                     ? 'Failed to start mesh generation'
-                                    : toolCall.name ===
-                                          'build_parametric_model' ||
-                                        toolCall.name ===
-                                          'apply_parameter_changes'
-                                      ? 'Failed to generate CAD'
-                                      : `${toolCall.name}...`}
+                                    : toolCall.name === 'update_file'
+                                      ? 'Failed to update file'
+                                      : toolCall.name ===
+                                            'build_parametric_model' ||
+                                          toolCall.name ===
+                                            'apply_parameter_changes'
+                                        ? 'Failed to generate CAD'
+                                        : `${toolCall.name}...`}
                               </span>
                             )}
                           </div>
