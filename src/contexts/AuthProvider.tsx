@@ -57,14 +57,41 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => subscription.unsubscribe();
   }, [navigate]);
 
+  // TEMPORARY: synthetic billing for the seed test user so the chat
+  // input on PR previews isn't blocked by `limitReached` (the seed user
+  // has no adam-billing record so billing-status returns 0 tokens).
+  // Pairs with the server-side BYPASS_BILLING in parametric-chat —
+  // both must be removed before merge. The seed user only ever exists
+  // on Supabase preview branches, never on production.
+  const SEED_TEST_USER_EMAIL = 'test@adamcad.com';
+  const isSeedTestUser = user?.email === SEED_TEST_USER_EMAIL;
+
   // Poll adam-billing for subscription state + token balances. 30s cadence
   // matches the prior user_extradata poll — adam-billing is the source of
   // truth; no local realtime channel anymore.
   const { data: billing, isLoading: isBillingLoading } = useQuery({
-    queryKey: ['billing', 'status'],
+    queryKey: ['billing', 'status', isSeedTestUser ? 'seed' : 'real'],
     enabled: !!user,
     refetchInterval: 30000,
     queryFn: async (): Promise<BillingStatus> => {
+      if (isSeedTestUser) {
+        // Skip the round-trip to billing-status entirely; return a
+        // synthetic balance the limit-checks will treat as ok.
+        return {
+          user: { hasTrialed: false },
+          subscription: {
+            level: 'pro',
+            status: 'active',
+            currentPeriodEnd: null,
+          },
+          tokens: {
+            free: 0,
+            subscription: 1_000_000,
+            purchased: 0,
+            total: 1_000_000,
+          },
+        };
+      }
       const { data, error } = await supabase.functions.invoke('billing-status');
       if (error) throw error;
       return data as BillingStatus;
