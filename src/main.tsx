@@ -32,7 +32,6 @@ import { Layout } from './components/Layout.tsx';
 import ShareView from './views/ShareView.tsx';
 import EditorView from './views/EditorView.tsx';
 import SettingsView from './views/SettingsView.tsx';
-import AgenticDemoView from './views/AgenticDemoView.tsx';
 import { isSupabaseConfigMissing } from './lib/supabase.ts';
 
 Sentry.init({
@@ -71,11 +70,6 @@ const router = sentryCreateBrowserRouter(
       children: [
         { path: '/signin', element: <SignInView /> },
         { path: '/signup', element: <SignUpView /> },
-        // Standalone demo route — no auth, no Supabase, no LLM. Lets
-        // PR previews exercise the new agentic-loop UI (real OpenSCAD
-        // compile + real screenshot capture, canned text responses)
-        // without flipping any dashboard switches.
-        { path: '/demo', element: <AgenticDemoView /> },
         { path: '/signup-email', element: <SignUpEmailView /> },
         { path: '/reset-password', element: <ResetPasswordView /> },
         { path: '/confirm-email', element: <EmailConfirmation /> },
