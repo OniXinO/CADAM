@@ -162,6 +162,7 @@ export function ParametricPreviewDialog({
                     <OpenSCADPreview
                       scadCode={currentMessage.content.artifact.code}
                       files={currentMessage.content.artifact.files}
+                      entryFile={currentMessage.content.artifact.entryFile}
                       color="#F8248A"
                       onOutputChange={onOutputChange}
                       onDxfExportChange={onDxfExportChange}

@@ -41,6 +41,7 @@ export function ParametricPreviewSection({
             <OpenSCADPreview
               scadCode={message.content.artifact.code}
               files={message.content.artifact.files}
+              entryFile={message.content.artifact.entryFile}
               color={color}
               onOutputChange={onOutputChange}
               onDxfExportChange={onDxfExportChange}

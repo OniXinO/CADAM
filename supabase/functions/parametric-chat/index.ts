@@ -2098,11 +2098,33 @@ Deno.serve(async (req) => {
                   );
                 }
 
+                // Forward `files` / `entryFile` so multi-file artifacts
+                // keep their decomposition through a parameter tweak.
+                // Without this, a `apply_parameter_changes` call on a
+                // multi-file project would silently strip the auxiliary
+                // .scad files from the artifact, the viewer would see
+                // `files={undefined}` on the next render, and the next
+                // compile would fail on `use <chassis.scad>` /
+                // `use <wheel.scad>` once the WASM-fs cache cleared. We
+                // also have to mirror the patched entry content back
+                // into the corresponding files[] entry so `code` and
+                // `files` agree on what the entry looks like.
+                const existingFiles = content.artifact?.files;
+                const existingEntry = content.artifact?.entryFile;
+                const refreshedFiles = existingFiles
+                  ? existingFiles.map((f) =>
+                      existingEntry && f.name === existingEntry
+                        ? { name: f.name, content: patchedCode }
+                        : f,
+                    )
+                  : undefined;
                 const newArtifact: ParametricArtifact = {
                   title: content.artifact?.title || 'Adam Object',
                   version: content.artifact?.version || 'v1',
                   code: patchedCode,
                   parameters: parseParameters(patchedCode),
+                  ...(refreshedFiles && { files: refreshedFiles }),
+                  ...(existingEntry && { entryFile: existingEntry }),
                 };
                 updateContent({
                   ...content,

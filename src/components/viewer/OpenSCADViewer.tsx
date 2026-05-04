@@ -56,6 +56,13 @@ interface OpenSCADPreviewProps {
   // (`scadCode`) can `use <name.scad>` / `include <name.scad>` them.
   // Bare filenames only — no directories.
   files?: { name: string; content: string }[];
+  // Filename of the entry file inside `files`. The entry's content is
+  // already passed to `compileScad` via `scadCode`, so we skip writing
+  // it again. We key the skip on filename (not on content equality)
+  // because two distinct files could share identical content, and
+  // during `update_file` streams the `files` prop updates one render
+  // ahead of `scadCode` — so identity by content briefly disagrees.
+  entryFile?: string;
 }
 
 export function OpenSCADPreview({
@@ -67,6 +74,7 @@ export function OpenSCADPreview({
   isMobile,
   backgroundColor,
   files,
+  entryFile,
 }: OpenSCADPreviewProps) {
   const {
     compileScad,
@@ -116,10 +124,17 @@ export function OpenSCADPreview({
       // resolution needs them on disk before compileScad runs.
       if (files && files.length > 0) {
         for (const f of files) {
-          // Only the OTHER files; the entry is passed to compileScad
-          // directly via `scadCode`. Writing it would just duplicate
-          // top-level vars / modules and confuse OpenSCAD.
-          if (f.content === code) continue;
+          // Skip the entry file BY NAME — its content is passed to
+          // compileScad directly via `scadCode`. Keying on content
+          // equality (the previous approach) was fragile in two ways:
+          // (1) two distinct files could share identical content; (2)
+          // when `update_file` streams a patched entry, the `files`
+          // prop updates one render before `scadCode`, so for one
+          // frame the entry's content in `files` no longer equals
+          // `code` and the entry would get duplicate-written to the
+          // WASM fs alongside the compileScad call → OpenSCAD would
+          // see redeclared top-level vars and error out.
+          if (entryFile && f.name === entryFile) continue;
           const previous = writtenScadFilesRef.current.get(f.name);
           if (previous === f.content) continue;
           await writeFile(
@@ -148,7 +163,7 @@ export function OpenSCADPreview({
         }
       }
     },
-    [writeFile, meshFilesCtx, files],
+    [writeFile, meshFilesCtx, files, entryFile],
   );
 
   // Recompile the preview whenever the current SCAD code changes.
