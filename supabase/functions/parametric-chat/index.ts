@@ -595,13 +595,19 @@ Deno.serve(async (req) => {
     });
   }
 
-  // Preview demo escape hatch: when PREVIEW_BYPASS_BILLING=true is set on
-  // the edge-function env (paired with VITE_PREVIEW_DEMO_MODE on the
-  // client), skip every billing call so anonymous Supabase users — who
-  // have no email and aren't in adam-billing — can still drive the chat.
-  // Production keeps this unset; behaviour is identical to before.
+  // Preview/seed test escape hatch. Two triggers, either suffices:
+  //   1. PREVIEW_BYPASS_BILLING=true on the edge-function env (broad
+  //      override, e.g. for anonymous-auth previews).
+  //   2. The signed-in user is `test@adamcad.com` — the credentials
+  //      created by `supabase/seed.sql`. Supabase Branching applies that
+  //      seed to preview branches but NOT production, so this trigger
+  //      activates exactly on dev/preview without any dashboard
+  //      configuration. The seed user has no adam-billing record, so
+  //      without this bypass parametric-chat would 502.
+  const SEED_TEST_USER_EMAIL = 'test@adamcad.com';
   const BYPASS_BILLING =
-    Deno.env.get('PREVIEW_BYPASS_BILLING') === 'true';
+    Deno.env.get('PREVIEW_BYPASS_BILLING') === 'true' ||
+    userData.user.email === SEED_TEST_USER_EMAIL;
 
   // Deduct chat token (1) via adam-billing
   if (!BYPASS_BILLING && !userData.user.email) {
