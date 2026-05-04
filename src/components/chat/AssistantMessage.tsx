@@ -602,6 +602,10 @@ function ObjectButton({
   if (message.content.artifact) {
     title = message.content.artifact.title;
   }
+  // Multi-file artifacts surface a small file count next to the title
+  // so the user knows the model is decomposed into several .scad files.
+  // Single-file artifacts hide it entirely.
+  const fileCount = message.content.artifact?.files?.length ?? 0;
 
   return (
     <Button
@@ -622,6 +626,11 @@ function ObjectButton({
           <span className="truncate font-medium text-adam-text-primary">
             {title}
           </span>
+          {fileCount > 1 && (
+            <span className="shrink-0 rounded border border-adam-neutral-700 bg-adam-neutral-900 px-1 text-[10px] text-adam-neutral-300">
+              {fileCount} files
+            </span>
+          )}
         </div>
         <span
           className={cn(

@@ -161,6 +161,54 @@ function markPendingToolsAsError(content: Content): Content {
   };
 }
 
+// Multi-file marker the strict code prompt uses to delimit decomposed
+// projects: a literal `// === FILE: <name>.scad ===` line. Bare names
+// only — no directory components — to keep `use <name.scad>` lookup
+// inside the OpenSCAD WASM filesystem trivial.
+const FILE_MARKER_REGEX = /^\s*\/\/\s*===\s*FILE:\s*([A-Za-z0-9_.-]+\.scad)\s*===\s*$/gm;
+
+// Split a strict-code-prompt response into per-file chunks. Returns
+// `null` when no markers are present so the caller can fall back to
+// the single-file path. The first entry in the returned list is
+// always the entry file (markers preserve order).
+type ParsedFile = { name: string; content: string };
+function parseMultiFileOpenSCAD(raw: string): ParsedFile[] | null {
+  const matches: Array<{ name: string; index: number; matchEnd: number }> = [];
+  // Reset lastIndex defensively — module-level RegExp with /g state would
+  // otherwise carry over between calls in long-lived edge runtimes.
+  FILE_MARKER_REGEX.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = FILE_MARKER_REGEX.exec(raw)) !== null) {
+    matches.push({
+      name: m[1],
+      index: m.index,
+      matchEnd: m.index + m[0].length,
+    });
+  }
+  if (matches.length === 0) return null;
+
+  const files: ParsedFile[] = [];
+  for (let i = 0; i < matches.length; i++) {
+    const start = matches[i].matchEnd;
+    const end = i + 1 < matches.length ? matches[i + 1].index : raw.length;
+    const content = raw.slice(start, end).replace(/^\n/, '').trimEnd();
+    if (!content) continue;
+    files.push({ name: matches[i].name, content });
+  }
+
+  // De-dupe filenames by keeping the first occurrence — repeated `// ===
+  // FILE: foo.scad ===` markers from a confused model would otherwise
+  // clobber each other on disk.
+  const seen = new Set<string>();
+  const deduped: ParsedFile[] = [];
+  for (const f of files) {
+    if (seen.has(f.name)) continue;
+    seen.add(f.name);
+    deduped.push(f);
+  }
+  return deduped.length > 0 ? deduped : null;
+}
+
 // Single request-scoped budget. Supabase edge functions have a ~400s
 // wall-clock on Pro, so we anchor one deadline to the start of the
 // request and share it across every upstream fetch. Independent per-fetch
@@ -364,6 +412,8 @@ Guidelines:
 - Keep text concise and helpful. Ask at most 1 follow-up question when truly needed.
 - Pass the user's request directly to the tool without modification (e.g., if user says "a mug", pass "a mug" to build_parametric_model).
 
+When the request is COMPLEX (a vehicle, a piece of furniture with separate parts, a multi-component assembly, anything that would otherwise be 200+ lines of monolithic code), tell build_parametric_model to decompose into multiple files. Phrase the tool's text input so the code generator knows to split — e.g. "build a 4-wheeled toy car. Decompose into assembly.scad (entry, with all exposed parameters), chassis.scad, wheel.scad, body.scad. The entry uses the others." Don't repeat this hint when the user is asking for a small/simple object (a cup, a bracket).
+
 AGENTIC VERIFICATION (CRITICAL):
 After you call build_parametric_model and get back a tool result confirming the artifact was generated, you MUST call view_model in the SAME response (or the next assistant turn) to verify your work visually. The harness will fulfill the call by capturing rendered screenshots from the browser and feeding them back as the next message.
 
@@ -503,6 +553,62 @@ CRITICAL: Never include in code comments or anywhere:
 Just generate clean OpenSCAD code with appropriate technical comments.
 - Return ONLY raw OpenSCAD code. DO NOT wrap it in markdown code blocks (no \`\`\`openscad).
 Just return the plain OpenSCAD code directly.
+
+# MULTI-FILE PROJECTS (when complexity warrants)
+For models with several distinct parts (vehicles, furniture with separate components, multi-part assemblies, anything where 200+ lines of monolithic code start to read like spaghetti), decompose the project into MULTIPLE .scad files. The format is strict:
+
+\`\`\`
+// === FILE: <filename>.scad ===
+<openscad code for that file>
+// === FILE: <next-filename>.scad ===
+<openscad code for the next file>
+\`\`\`
+
+Rules:
+- Use the literal marker \`// === FILE: <name>.scad ===\` on its own line, with NO leading whitespace, to start each file. The marker is parsed by string match — do not paraphrase it.
+- The FIRST file is the entry point and is what the viewer compiles. It should \`use <name.scad>\` (for module-only imports) or \`include <name.scad>\` (when you need top-level vars too) to bring in the others.
+- Top-level user-exposed parameters (the ones rendered in the parameter panel) MUST live in the entry file. Parameters defined in \`use\`d files are not visible at the top level.
+- Each part file should expose modules: \`module wheel(radius, width) { ... }\` so the entry file calls them with positions/rotations.
+- Filenames are bare names (no directories). Use snake_case (\`front_wheel.scad\`, \`assembly.scad\`).
+- Reuse the \`*_color\` parameter convention across files when a part should be tintable.
+
+When NOT to decompose:
+- The whole model fits comfortably in one file (the mug example below stays one file).
+- The user asked for a small primitive like "a cube" or "a phone stand".
+
+Example (multi-file, agent picks decomposition based on the request):
+
+// === FILE: assembly.scad ===
+// Top-level params live here
+chassis_length = 120;
+chassis_width = 60;
+wheel_radius = 18;
+wheel_width = 10;
+ride_height = 14;
+body_color = "SteelBlue";
+wheel_color = "DimGray";
+
+use <chassis.scad>
+use <wheel.scad>
+
+translate([0, 0, ride_height])
+  color(body_color) chassis(chassis_length, chassis_width);
+
+for (sx = [-1, 1])
+  for (sy = [-1, 1])
+    translate([sx * (chassis_length/2 - wheel_radius), sy * (chassis_width/2 + wheel_width/2), wheel_radius])
+      rotate([90, 0, 0])
+      color(wheel_color) wheel(wheel_radius, wheel_width);
+
+// === FILE: chassis.scad ===
+module chassis(length, width) {
+  cube([length, width, 6], center = true);
+}
+
+// === FILE: wheel.scad ===
+module wheel(radius, width) {
+  cylinder(h = width, r = radius, center = true, $fn = 64);
+}
 
 # STL Import (CRITICAL)
 When the user uploads a 3D model (STL file) and you are told to use import():
@@ -1488,15 +1594,39 @@ Deno.serve(async (req) => {
                 const { code, success } = await generateOpenSCADCode(
                   codeMessages,
                   (rawCode) => {
-                    updateContent({
-                      ...content,
-                      artifact: {
-                        title: 'Adam Object',
-                        version: 'v1',
-                        code: rawCode,
-                        parameters: [],
-                      },
-                    });
+                    // Stream multi-file partials so the viewer can write
+                    // each .scad to the WASM fs and recompile as files
+                    // arrive. Without this, multi-file output would
+                    // appear in the chat as one giant marker-laden blob
+                    // mid-stream and the preview would 404 on
+                    // `use <wheel.scad>` until the final response landed.
+                    const parsedSoFar = parseMultiFileOpenSCAD(rawCode);
+                    if (parsedSoFar && parsedSoFar.length > 0) {
+                      updateContent({
+                        ...content,
+                        artifact: {
+                          title: 'Adam Object',
+                          version: 'v1',
+                          code: parsedSoFar[0].content,
+                          parameters: [],
+                          files: parsedSoFar.map((f) => ({
+                            name: f.name,
+                            content: f.content,
+                          })),
+                          entryFile: parsedSoFar[0].name,
+                        },
+                      });
+                    } else {
+                      updateContent({
+                        ...content,
+                        artifact: {
+                          title: 'Adam Object',
+                          version: 'v1',
+                          code: rawCode,
+                          parameters: [],
+                        },
+                      });
+                    }
                   },
                 );
 
@@ -1525,11 +1655,32 @@ Deno.serve(async (req) => {
                   continue;
                 }
 
+                // Detect multi-file decomposition. If the strict code
+                // prompt produced `// === FILE: ... ===` markers, split
+                // into separate files and use the first as the entry. The
+                // entry's content is mirrored into `artifact.code` so all
+                // existing single-file consumers (parameter parser, share
+                // view, fix-with-AI, parameter-update tool) keep working
+                // without further changes.
+                const parsedFiles = parseMultiFileOpenSCAD(code);
+                let entryCode = code;
+                let files: ParsedFile[] | undefined;
+                let entryFile: string | undefined;
+                if (parsedFiles && parsedFiles.length > 0) {
+                  files = parsedFiles;
+                  entryFile = parsedFiles[0].name;
+                  entryCode = parsedFiles[0].content;
+                }
+
                 const artifact: ParametricArtifact = {
                   title,
                   version: 'v1',
-                  code,
-                  parameters: parseParameters(code),
+                  code: entryCode,
+                  parameters: parseParameters(entryCode),
+                  ...(files && {
+                    files: files.map((f) => ({ name: f.name, content: f.content })),
+                  }),
+                  ...(entryFile && { entryFile }),
                 };
                 updateContent({
                   ...content,
@@ -1539,10 +1690,13 @@ Deno.serve(async (req) => {
                   artifact,
                 });
 
+                const fileCountSummary = files
+                  ? `${files.length} file${files.length === 1 ? '' : 's'} (entry: ${entryFile})`
+                  : `${code.length} chars`;
                 agentMessages.push({
                   role: 'tool',
                   tool_call_id: tc.id,
-                  content: `OpenSCAD model "${title}" generated successfully (${artifact.parameters.length} parameter${artifact.parameters.length === 1 ? '' : 's'}, ${code.length} chars). The artifact is now displayed in the user's viewport. ${verifyRoundsUsed < MAX_VERIFY_ROUNDS ? 'Verify it now by calling view_model.' : 'You have used your verification budget; do not call view_model again.'}`,
+                  content: `OpenSCAD model "${title}" generated successfully (${artifact.parameters.length} parameter${artifact.parameters.length === 1 ? '' : 's'}, ${fileCountSummary}). The artifact is now displayed in the user's viewport. ${verifyRoundsUsed < MAX_VERIFY_ROUNDS ? 'Verify it now by calling view_model.' : 'You have used your verification budget; do not call view_model again.'}`,
                 });
               } else if (tc.name === 'view_model') {
                 let toolInput: {

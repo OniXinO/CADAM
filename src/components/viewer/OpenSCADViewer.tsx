@@ -51,6 +51,11 @@ interface OpenSCADPreviewProps {
   fixError?: (error: OpenSCADError) => void;
   isMobile?: boolean;
   backgroundColor?: string;
+  // Optional set of supplementary .scad files for multi-file artifacts.
+  // Each is written to the WASM filesystem before compile so the entry
+  // (`scadCode`) can `use <name.scad>` / `include <name.scad>` them.
+  // Bare filenames only — no directories.
+  files?: { name: string; content: string }[];
 }
 
 export function OpenSCADPreview({
@@ -61,6 +66,7 @@ export function OpenSCADPreview({
   fixError,
   isMobile,
   backgroundColor,
+  files,
 }: OpenSCADPreviewProps) {
   const {
     compileScad,
@@ -94,10 +100,36 @@ export function OpenSCADPreview({
     fallbackColorRef.current = color;
   }, [color]);
 
+  // Track which `.scad` aux files we've written (and their content) so we
+  // skip the worker round-trip when nothing changed between recompiles —
+  // critical for streaming multi-file artifacts where this fires dozens
+  // of times as files arrive.
+  const writtenScadFilesRef = useRef<Map<string, string>>(new Map());
+
   // Shared by preview compilation and on-demand exports so import() files are
-  // available in the OpenSCAD worker before either operation runs.
+  // available in the OpenSCAD worker before either operation runs. Also
+  // covers multi-file artifacts: each supplementary `.scad` from `files`
+  // is written so the entry can `use <name.scad>` / `include <name.scad>`.
   const prepareMeshFiles = useCallback(
     async (code: string) => {
+      // Write supplementary .scad files first — the entry's `use <...>`
+      // resolution needs them on disk before compileScad runs.
+      if (files && files.length > 0) {
+        for (const f of files) {
+          // Only the OTHER files; the entry is passed to compileScad
+          // directly via `scadCode`. Writing it would just duplicate
+          // top-level vars / modules and confuse OpenSCAD.
+          if (f.content === code) continue;
+          const previous = writtenScadFilesRef.current.get(f.name);
+          if (previous === f.content) continue;
+          await writeFile(
+            f.name,
+            new Blob([f.content], { type: 'text/plain' }),
+          );
+          writtenScadFilesRef.current.set(f.name, f.content);
+        }
+      }
+
       // Extract any import() filenames from the code
       const importedFiles = extractImportFilenames(code);
 
@@ -116,7 +148,7 @@ export function OpenSCADPreview({
         }
       }
     },
-    [writeFile, meshFilesCtx],
+    [writeFile, meshFilesCtx, files],
   );
 
   // Recompile the preview whenever the current SCAD code changes.

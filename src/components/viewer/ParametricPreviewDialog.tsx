@@ -161,6 +161,7 @@ export function ParametricPreviewDialog({
                   <div className="h-full w-full overflow-hidden rounded-xl">
                     <OpenSCADPreview
                       scadCode={currentMessage.content.artifact.code}
+                      files={currentMessage.content.artifact.files}
                       color="#F8248A"
                       onOutputChange={onOutputChange}
                       onDxfExportChange={onDxfExportChange}
