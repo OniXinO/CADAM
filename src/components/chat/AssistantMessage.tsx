@@ -49,6 +49,7 @@ import { useIsMobile } from '@/hooks/useIsMobile';
 import { useMeshData } from '@/hooks/useMeshData';
 import { MeshImagePreview } from '@/components/viewer/MeshImagePreview';
 import { TreeNode } from '@shared/Tree';
+import { viewLabel } from '@/utils/agenticRenderer';
 
 const linkParametricMode = (text: string) =>
   text.replace(
@@ -525,17 +526,14 @@ export function AssistantMessage({
 // states map to three visuals so the user can tell at a glance whether the
 // agent is still inspecting, has approved, or hit an error along the way.
 function ViewModelToolCallCard({ toolCall }: { toolCall: ToolCall }) {
+  // Delegate to `viewLabel` so the chip text uses the same default
+  // azimuth/elevation as the renderer (DEFAULT_CUSTOM_AZIMUTH_DEG /
+  // DEFAULT_CUSTOM_ELEVATION_DEG). Without this the chip would say
+  // `custom (0°/0°)` for an omitted-angle view that actually renders
+  // at 30°/25°.
   const viewLabels =
     toolCall.views && toolCall.views.length > 0
-      ? toolCall.views
-          .map((v) =>
-            v.label
-              ? v.label
-              : v.view === 'custom'
-                ? `custom (${Math.round(v.azimuth ?? 0)}°/${Math.round(v.elevation ?? 0)}°)`
-                : v.view,
-          )
-          .join(', ')
+      ? toolCall.views.map((v) => viewLabel(v)).join(', ')
       : '';
 
   const isPending =
