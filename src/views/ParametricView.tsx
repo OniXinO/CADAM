@@ -170,6 +170,26 @@ export default function ParametricView({
     }
   }, [hasArtifact]);
 
+  // Same fix for the chat panel: autoSaveId can restore size 0 from a
+  // prior session where the user collapsed it, but our local
+  // `isChatCollapsed` state stays at its default `false`. With those two
+  // disagreeing, neither the in-panel collapse overlay nor the
+  // out-of-panel expand-tab renders — leaving an empty void with no way
+  // to recover short of clearing localStorage. Force the chat open on
+  // first mount so it's always visible to start with; the user can still
+  // collapse manually via the chevron afterwards (which now correctly
+  // syncs both layers).
+  useLayoutEffect(() => {
+    const panel = chatPanelRef.current;
+    if (!panel) return;
+    if (panel.isCollapsed()) {
+      panel.expand();
+    }
+    setIsChatCollapsed(false);
+    // Intentionally empty deps — runs once on mount only.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Optimized collapse/expand handlers
   const handleChatCollapse = useCallback(() => {
     const panel = chatPanelRef.current;
