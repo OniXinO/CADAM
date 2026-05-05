@@ -27,7 +27,7 @@ interface ParametricPreviewDialogProps {
   onSubmit: (message: Message | null, parameters: Parameter[]) => void;
   currentOutput?: Blob;
   dxfExporter?: DxfExporter | null;
-  onOutputChange?: (output: Blob | undefined) => void;
+  onOutputChange?: (output: Blob | undefined, sourceCode: string | null) => void;
   onDxfExportChange?: (exporter: DxfExporter | null) => void;
   fixError?: (error: OpenSCADError) => void;
 }

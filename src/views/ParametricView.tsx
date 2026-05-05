@@ -44,7 +44,10 @@ interface ParametricViewProps {
   retryMessage?: ({ model, id }: { model: Model; id: string }) => void;
   isLoading: boolean;
   currentOutput: Blob | undefined;
-  setCurrentOutput: (output: Blob | undefined) => void;
+  setCurrentOutput: (
+    output: Blob | undefined,
+    sourceCode: string | null,
+  ) => void;
   color: string;
   limitReached?: boolean;
   changeParameters: (message: Message | null, parameters: Parameter[]) => void;

@@ -46,7 +46,12 @@ function disposeGroup(group: Group) {
 interface OpenSCADPreviewProps {
   scadCode: string | null;
   color: string;
-  onOutputChange?: (output: Blob | undefined) => void;
+  // Fires whenever the worker returns a new STL. The second arg is the
+  // entry source code that PRODUCED that output — used by the agentic
+  // verification flow to make sure we screenshot the artifact the agent
+  // actually intended (not a stale STL from a prior compile that
+  // hasn't been replaced yet).
+  onOutputChange?: (output: Blob | undefined, sourceCode: string | null) => void;
   onDxfExportChange?: (exporter: DxfExporter | null) => void;
   fixError?: (error: OpenSCADError) => void;
   isMobile?: boolean;
@@ -196,7 +201,11 @@ export function OpenSCADPreview({
   }, [scadCode, exportScad, onDxfExportChange, prepareMeshFiles]);
 
   useEffect(() => {
-    onOutputChange?.(output);
+    // Tag the output with the current scadCode so callers can tell
+    // whether `output` reflects the latest artifact (essential for the
+    // agentic verification hook — without it, screenshots may be of a
+    // stale STL from a previous compile that hasn't been replaced yet).
+    onOutputChange?.(output, scadCode);
 
     // Mirror the colored-group pattern: every path that clears geometry
     // state must first release the previous vertex buffers, otherwise
@@ -234,7 +243,7 @@ export function OpenSCADPreview({
     } else {
       clearGeometry();
     }
-  }, [output, onOutputChange]);
+  }, [output, scadCode, onOutputChange]);
 
   useEffect(() => {
     let cancelled = false;

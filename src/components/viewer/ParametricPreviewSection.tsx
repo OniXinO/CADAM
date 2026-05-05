@@ -8,7 +8,7 @@ import { DxfExporter } from '@/utils/downloadUtils';
 interface ParametricPreviewSectionProps {
   isLoading: boolean;
   color: string;
-  onOutputChange?: (output: Blob | undefined) => void;
+  onOutputChange?: (output: Blob | undefined, sourceCode: string | null) => void;
   onDxfExportChange?: (exporter: DxfExporter | null) => void;
   fixError?: (error: OpenSCADError) => void;
   isMobile?: boolean;

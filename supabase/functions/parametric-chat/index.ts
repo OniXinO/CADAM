@@ -2041,16 +2041,28 @@ Deno.serve(async (req) => {
                   continue;
                 }
 
-                let baseCode = content.artifact?.code;
-                if (!baseCode) {
-                  const lastArtifactMsg = [...messages]
+                // Capture the source artifact ONCE in a stable local so
+                // every downstream read sees the same object. `content`
+                // is a closure variable that can be reassigned by other
+                // tool handlers earlier in this turn (or, hypothetically,
+                // by future code added between these reads), and the
+                // existing-artifact / messages-fallback chain has to
+                // agree on which artifact we're patching — both for
+                // `code` (the patched entry) and for `files`/`entryFile`
+                // (the multi-file decomposition we're forwarding).
+                // Reading them from different sources caused
+                // multi-file artifacts to silently lose `files` when
+                // `content.artifact` was unset and only the messages
+                // fallback fired.
+                const baseArtifact =
+                  content.artifact ??
+                  [...messages]
                     .reverse()
                     .find(
                       (m) =>
                         m.role === 'assistant' && m.content.artifact?.code,
-                    );
-                  baseCode = lastArtifactMsg?.content.artifact?.code;
-                }
+                    )?.content.artifact;
+                const baseCode = baseArtifact?.code;
 
                 if (
                   !baseCode ||
@@ -2100,17 +2112,11 @@ Deno.serve(async (req) => {
 
                 // Forward `files` / `entryFile` so multi-file artifacts
                 // keep their decomposition through a parameter tweak.
-                // Without this, a `apply_parameter_changes` call on a
-                // multi-file project would silently strip the auxiliary
-                // .scad files from the artifact, the viewer would see
-                // `files={undefined}` on the next render, and the next
-                // compile would fail on `use <chassis.scad>` /
-                // `use <wheel.scad>` once the WASM-fs cache cleared. We
-                // also have to mirror the patched entry content back
-                // into the corresponding files[] entry so `code` and
-                // `files` agree on what the entry looks like.
-                const existingFiles = content.artifact?.files;
-                const existingEntry = content.artifact?.entryFile;
+                // Mirror the patched entry content back into the
+                // corresponding files[] entry so `code` and `files`
+                // agree on what the entry looks like.
+                const existingFiles = baseArtifact?.files;
+                const existingEntry = baseArtifact?.entryFile;
                 const refreshedFiles = existingFiles
                   ? existingFiles.map((f) =>
                       existingEntry && f.name === existingEntry
@@ -2119,8 +2125,8 @@ Deno.serve(async (req) => {
                     )
                   : undefined;
                 const newArtifact: ParametricArtifact = {
-                  title: content.artifact?.title || 'Adam Object',
-                  version: content.artifact?.version || 'v1',
+                  title: baseArtifact?.title || 'Adam Object',
+                  version: baseArtifact?.version || 'v1',
                   code: patchedCode,
                   parameters: parseParameters(patchedCode),
                   ...(refreshedFiles && { files: refreshedFiles }),
