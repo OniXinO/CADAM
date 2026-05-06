@@ -809,7 +809,20 @@ Deno.serve(async (req) => {
     .on('broadcast', { event: 'cancel' }, () => {
       abortController.abort('Request cancelled by user');
     })
-    .subscribe();
+    .subscribe((status, err) => {
+      // Without this callback, CHANNEL_ERROR / TIMED_OUT outcomes are
+      // silently swallowed and the user's Stop button stops working
+      // — the broadcast handler above would never fire because the
+      // socket isn't actually subscribed. Log it so we have a Sentry
+      // breadcrumb when a request can't be cancelled remotely; the
+      // request still proceeds normally, just without remote-cancel.
+      if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+        console.error(
+          `[parametric-chat] cancel channel ${status}`,
+          err ?? '',
+        );
+      }
+    });
   const cleanupCancel = () => {
     try {
       supabaseClient.removeChannel(cancelChannel);
@@ -1744,6 +1757,24 @@ Deno.serve(async (req) => {
                   content: `OpenSCAD model "${title}" generated successfully (${artifact.parameters.length} parameter${artifact.parameters.length === 1 ? '' : 's'}, ${fileCountSummary}). The artifact is now displayed in the user's viewport. ${verifyRoundsUsed < MAX_VERIFY_ROUNDS ? 'Verify it now by calling view_model.' : 'You have used your verification budget; do not call view_model again.'}`,
                 });
               } else if (tc.name === 'view_model') {
+                // Defense in depth against the per-turn cap gap: the
+                // outer-loop check that strips view_model from the tool
+                // list runs only at the START of each iteration, so a
+                // single response that emits multiple view_model calls
+                // could exceed MAX_VERIFY_ROUNDS before the next
+                // iteration's strip kicks in. Refuse here too so
+                // verifyRoundsUsed can never go above the cap regardless
+                // of how the agent batches calls.
+                if (verifyRoundsUsed >= MAX_VERIFY_ROUNDS) {
+                  updateContent(markToolAsError(content, tc.id));
+                  agentMessages.push({
+                    role: 'tool',
+                    tool_call_id: tc.id,
+                    content: `Error: verification budget exhausted (${MAX_VERIFY_ROUNDS} rounds). Do not call view_model again; finalize and respond to the user.`,
+                  });
+                  continue;
+                }
+
                 let toolInput: {
                   views?: Array<{
                     view: string;

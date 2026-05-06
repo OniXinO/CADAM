@@ -116,23 +116,27 @@ export function useAgenticVerification({
     };
 
     // Block until the locally-compiled STL's source matches the latest
-    // artifact (or until we time out). Without this, a verify_request
-    // arriving while OpenSCAD is still compiling the freshly-streamed
-    // entry would fall through to whatever STL was sitting in
-    // outputRef from the *previous* build — and the agent would
-    // self-review the wrong model.
+    // artifact in the messages cache (or until we time out). Without
+    // this, a verify_request arriving while OpenSCAD is still compiling
+    // the freshly-streamed entry would fall through to whatever STL was
+    // sitting in outputRef from the *previous* build — and the agent
+    // would self-review the wrong model.
+    //
+    // Critically, we also wait for the messages cache to populate with
+    // an artifact in the first place. The earlier "fall back to any
+    // non-empty STL when cache is cold" path was unsafe: on the very
+    // first build of a conversation the broadcast can race ahead of the
+    // SSE chunk that lands the artifact in the cache, and accepting
+    // any STL there would screenshot whatever stale geometry happened
+    // to be in outputRef. Waiting for `expected` to be defined before
+    // accepting the STL is what makes this race-free.
     const waitForFreshStl = async (): Promise<Blob | undefined> => {
-      const expected = expectedArtifactCode();
       const start = Date.now();
       while (Date.now() - start < FRESH_STL_TIMEOUT_MS) {
+        const expected = expectedArtifactCode();
         const stl = outputRef.current;
         const code = outputCodeRef.current;
-        // If we don't have an expected code (no artifact in cache yet),
-        // fall back to "any non-empty STL" so single-message verify
-        // flows still work.
-        const hasMatchingStl =
-          stl && (expected ? code === expected : true);
-        if (hasMatchingStl) return stl;
+        if (expected && stl && code === expected) return stl;
         await new Promise((r) =>
           setTimeout(r, FRESH_STL_POLL_INTERVAL_MS),
         );
