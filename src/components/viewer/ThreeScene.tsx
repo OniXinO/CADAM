@@ -1,8 +1,6 @@
 import { Canvas } from '@react-three/fiber';
 import {
   OrbitControls,
-  GizmoHelper,
-  GizmoViewcube,
   Stage,
   Environment,
   OrthographicCamera,
@@ -11,6 +9,7 @@ import {
 import * as THREE from 'three';
 import { useMemo, useState } from 'react';
 import { OrthographicPerspectiveToggle } from '@/components/viewer/OrthographicPerspectiveToggle';
+import { ViewGizmo } from '@/components/viewer/ViewGizmo';
 import { cn } from '@/lib/utils';
 
 interface ThreeSceneProps {
@@ -108,11 +107,7 @@ export function ThreeScene({
           infiniteGrid={true}
         /> */}
         <OrbitControls makeDefault enableDamping={true} dampingFactor={0.05} />
-        {!initialIsMobile && (
-          <GizmoHelper alignment="bottom-right" margin={[80, 80]}>
-            <GizmoViewcube />
-          </GizmoHelper>
-        )}
+        {!initialIsMobile && <ViewGizmo />}
       </Canvas>
 
       <div

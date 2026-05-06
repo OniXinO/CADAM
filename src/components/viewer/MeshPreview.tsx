@@ -1,12 +1,11 @@
 import {
   Environment,
-  GizmoHelper,
-  GizmoViewcube,
   OrbitControls,
   Stage,
   PerspectiveCamera,
 } from '@react-three/drei';
 import { Canvas } from '@react-three/fiber';
+import { ViewGizmo } from './ViewGizmo';
 import {
   Download,
   Frown,
@@ -848,11 +847,7 @@ export function MeshPreview({ meshId }: { meshId: string }) {
             )}
           </Stage>
           <OrbitControls makeDefault />
-          {!isMobile && (
-            <GizmoHelper alignment="top-left" margin={[80, 65]}>
-              <GizmoViewcube />
-            </GizmoHelper>
-          )}
+          {!isMobile && <ViewGizmo alignment="top-left" margin={[80, 65]} />}
         </Canvas>
       </div>
 
