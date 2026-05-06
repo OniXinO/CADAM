@@ -1325,31 +1325,42 @@ Deno.serve(async (req) => {
       // Wire the broadcast listener BEFORE subscribing — supabase replays
       // any messages received between SUBSCRIBED and the first listener,
       // so registering early is safe and avoids racing the browser.
+      // Inline narrowing helpers replace the previous `as` casts so the
+      // broadcast handler doesn't depend on shape assertions. Supabase
+      // wraps the broadcast payload as `{ type, event, payload }`, but
+      // we accept either the wrapped or unwrapped form defensively.
+      const isObject = (x: unknown): x is Record<string, unknown> =>
+        x !== null && typeof x === 'object';
       channel.on(
         'broadcast',
         { event: 'verify_response' },
         (msg) => {
-          // supabase wraps the payload — accept either shape defensively.
-          const raw =
-            (msg as { payload?: unknown }).payload ?? (msg as unknown);
-          const payload = raw as {
-            requestId?: string;
-            imageIds?: string[];
-            error?: string;
-          };
-          if (payload.requestId !== requestId) return;
-          if (payload.error) {
-            rejectResponse?.(new Error(`browser error: ${payload.error}`));
+          if (!isObject(msg)) return;
+          const raw: unknown = 'payload' in msg ? msg.payload : msg;
+          if (!isObject(raw)) return;
+
+          if (raw.requestId !== requestId) return;
+
+          if (typeof raw.error === 'string') {
+            rejectResponse?.(new Error(`browser error: ${raw.error}`));
             return;
           }
-          if (
-            !Array.isArray(payload.imageIds) ||
-            payload.imageIds.length === 0
-          ) {
+
+          if (!Array.isArray(raw.imageIds) || raw.imageIds.length === 0) {
             rejectResponse?.(new Error('browser returned no screenshots'));
             return;
           }
-          resolveResponse?.({ imageIds: payload.imageIds });
+          // Filter to string-only entries — the broadcast came from the
+          // browser-side hook and should already be string[], but the
+          // socket boundary can't enforce that statically.
+          const imageIds: string[] = raw.imageIds.filter(
+            (id): id is string => typeof id === 'string',
+          );
+          if (imageIds.length === 0) {
+            rejectResponse?.(new Error('browser returned no screenshots'));
+            return;
+          }
+          resolveResponse?.({ imageIds });
         },
       );
 
@@ -1755,22 +1766,34 @@ Deno.serve(async (req) => {
                   continue;
                 }
 
-                const allowedViews = [
-                  'iso',
-                  'front',
-                  'back',
-                  'left',
-                  'right',
-                  'top',
-                  'bottom',
-                  'custom',
-                ];
+                // Type predicate replaces the previous `view as
+                // ViewRequest['view']` cast: a switch statement narrows
+                // the return type without an unsafe assertion, so the
+                // mapped object below preserves the union type
+                // automatically.
+                const isAllowedView = (
+                  v: string,
+                ): v is ViewRequest['view'] => {
+                  switch (v) {
+                    case 'iso':
+                    case 'front':
+                    case 'back':
+                    case 'left':
+                    case 'right':
+                    case 'top':
+                    case 'bottom':
+                    case 'custom':
+                      return true;
+                    default:
+                      return false;
+                  }
+                };
                 const requestedViews: ViewRequest[] = (toolInput.views ?? [])
-                  .map((v) => {
+                  .map((v): ViewRequest | null => {
                     const view = String(v.view ?? 'iso').toLowerCase();
-                    if (!allowedViews.includes(view)) return null;
+                    if (!isAllowedView(view)) return null;
                     return {
-                      view: view as ViewRequest['view'],
+                      view,
                       ...(typeof v.azimuth === 'number' && {
                         azimuth: v.azimuth,
                       }),
