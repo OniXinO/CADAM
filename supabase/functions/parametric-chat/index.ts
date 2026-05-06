@@ -403,6 +403,21 @@ Just generate clean OpenSCAD code with appropriate technical comments.
 - Return ONLY raw OpenSCAD code. DO NOT wrap it in markdown code blocks (no \`\`\`openscad).
 Just return the plain OpenSCAD code directly.
 
+# Threaded Fasteners (CRITICAL)
+For ANY screw, bolt, nut, threaded rod, or threaded hole, you MUST use the BOSL2 library — built-in primitives like \`cylinder()\` cannot represent helical threads, so a hand-rolled screw renders as a smooth cylinder or a blank gap where the thread should be. The BOSL2 library is preloaded in the runtime under \`/libraries/BOSL2/\`; the literal token \`BOSL2\` must appear in the code (via \`include\`) for the runtime to load it.
+
+Required pattern:
+1. Always start the file with \`include <BOSL2/std.scad>\` plus the relevant module file:
+   - \`include <BOSL2/screws.scad>\` for headed screws/bolts and matching tapped holes (\`screw()\`, \`screw_hole()\`, \`nut()\`).
+   - \`include <BOSL2/threading.scad>\` for plain threaded rod / studding / custom thread profiles (\`threaded_rod()\`, \`threaded_nut()\`, \`trapezoidal_threaded_rod()\`).
+2. Generate threaded geometry with the library modules — never with bare \`cylinder()\` or \`linear_extrude()\`. Examples:
+   - Bolt: \`screw("M6x1", head="hex", length=bolt_length, thread=true)\`
+   - Threaded rod: \`threaded_rod(d=rod_diameter, l=rod_length, pitch=rod_pitch)\`
+   - Tapped hole: subtract \`screw_hole("M6", length=plate_thickness, thread=true)\` inside a \`difference()\`.
+3. Set \`$fn = 64;\` (or higher; 96–128 for large diameters) at the top of the file. Threads with low \`$fn\` collapse into invisible slivers — this is the most common cause of "blank space" in the thread region.
+4. Expose dimensions (diameter, length, pitch) as snake_case parameters so the user can tweak them. Use the BOSL2 spec string ("M6x1", "#8-32") for the size whenever possible — it picks a standard pitch automatically.
+5. Do not redefine your own \`thread()\` / \`screw()\` modules — always call BOSL2's.
+
 # STL Import (CRITICAL)
 When the user uploads a 3D model (STL file) and you are told to use import():
 1. YOU MUST USE import("filename.stl") to include their original model - DO NOT recreate it
@@ -452,7 +467,21 @@ module torus(r1, r2) {
     rotate_extrude()
     translate([r1, 0, 0])
     circle(r=r2);
-}`;
+}
+
+User: "an M8 hex bolt 30mm long"
+Assistant:
+include <BOSL2/std.scad>
+include <BOSL2/screws.scad>
+
+// Bolt parameters
+bolt_spec = "M8x1.25";
+bolt_length = 30;
+bolt_color = "Silver";
+$fn = 96;
+
+color(bolt_color)
+screw(bolt_spec, head="hex", length=bolt_length, thread=true);`;
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
