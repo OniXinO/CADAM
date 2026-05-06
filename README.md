@@ -160,7 +160,7 @@ npx supabase functions serve --no-verify-jwt
 
 ## 🛠️ Built With
 
-- **Frontend:** React 18 + TypeScript + Vite
+- **Frontend:** React 19 + TypeScript + Vite
 - **3D Rendering:** Three.js + React Three Fiber
 - **CAD Engine:** OpenSCAD WebAssembly
 - **Backend:** Supabase (PostgreSQL + Edge Functions)
