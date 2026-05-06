@@ -161,24 +161,24 @@ function markPendingToolsAsError(content: Content): Content {
   };
 }
 
-// Multi-file marker the strict code prompt uses to delimit decomposed
-// projects: a literal `// === FILE: <name>.scad ===` line. Bare names
-// only — no directory components — to keep `use <name.scad>` lookup
-// inside the OpenSCAD WASM filesystem trivial.
-const FILE_MARKER_REGEX = /^\s*\/\/\s*===\s*FILE:\s*([A-Za-z0-9_.-]+\.scad)\s*===\s*$/gm;
-
-// Split a strict-code-prompt response into per-file chunks. Returns
-// `null` when no markers are present so the caller can fall back to
-// the single-file path. The first entry in the returned list is
-// always the entry file (markers preserve order).
+// Split a strict-code-prompt response into per-file chunks delimited
+// by literal `// === FILE: <name>.scad ===` lines. Returns `null` when
+// no markers are present so the caller can fall back to the single-file
+// path. The first entry in the returned list is always the entry file
+// (markers preserve order). Bare names only — no directory components
+// — to keep `use <name.scad>` lookup inside the OpenSCAD WASM
+// filesystem trivial.
 type ParsedFile = { name: string; content: string };
 function parseMultiFileOpenSCAD(raw: string): ParsedFile[] | null {
+  // Local RegExp (not module-level) so concurrent invocations of this
+  // edge function — which can share an isolate — never see each
+  // other's `/g` lastIndex state. Allocating a regex per call is
+  // measurable but trivial vs. the upstream LLM call we're parsing.
+  const fileMarkerRegex =
+    /^\s*\/\/\s*===\s*FILE:\s*([A-Za-z0-9_.-]+\.scad)\s*===\s*$/gm;
   const matches: Array<{ name: string; index: number; matchEnd: number }> = [];
-  // Reset lastIndex defensively — module-level RegExp with /g state would
-  // otherwise carry over between calls in long-lived edge runtimes.
-  FILE_MARKER_REGEX.lastIndex = 0;
   let m: RegExpExecArray | null;
-  while ((m = FILE_MARKER_REGEX.exec(raw)) !== null) {
+  while ((m = fileMarkerRegex.exec(raw)) !== null) {
     matches.push({
       name: m[1],
       index: m.index,
@@ -1543,11 +1543,37 @@ Deno.serve(async (req) => {
             // Agent finished — no tools requested, just text.
             if (turn.toolCalls.length === 0) break;
 
+            // Detect the "verify-and-edit in the same response" pattern.
+            // If the agent emits BOTH view_model and update_file (or
+            // build_parametric_model) in a single turn, the screenshots
+            // we produce reflect whichever ran first, not the agent's
+            // intent. Refuse view_model in that case and tell the agent
+            // to verify in the next turn after the edit lands.
+            const namesInTurn = new Set(turn.toolCalls.map((tc) => tc.name));
+            const refuseViewModelThisTurn =
+              namesInTurn.has('view_model') &&
+              (namesInTurn.has('update_file') ||
+                namesInTurn.has('build_parametric_model'));
+
             // Execute each tool call serially. They share the request
             // budget so a slow tool drains time from later iterations.
             for (const tc of turn.toolCalls) {
               if (abortSignal.aborted) {
                 throw new Error('Request cancelled by user');
+              }
+              if (refuseViewModelThisTurn && tc.name === 'view_model') {
+                // Skip this view_model — the screenshots wouldn't match
+                // either the pre- or post-edit artifact reliably. The
+                // agent should re-call it on the next turn, after the
+                // edit has been streamed and recompiled.
+                updateContent(markToolAsError(content, tc.id));
+                agentMessages.push({
+                  role: 'tool',
+                  tool_call_id: tc.id,
+                  content:
+                    'Error: view_model cannot be combined with update_file or build_parametric_model in the same response. The edit and the screenshot would race — verify in the next turn instead.',
+                });
+                continue;
               }
 
               if (tc.name === 'build_parametric_model') {

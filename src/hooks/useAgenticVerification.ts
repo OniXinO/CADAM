@@ -76,6 +76,14 @@ export function useAgenticVerification({
     if (conversation.type !== 'parametric') return;
     if (!conversation.id) return;
 
+    // Aborted on unmount/conversation-switch so any in-flight
+    // waitForFreshStl polling loops bail out instead of running for
+    // their full 25s timeout against state that no longer matters
+    // (the channel is being torn down anyway). Without this, navigating
+    // away mid-verification leaks the loop and forces the server to hit
+    // its 60s view_model timeout instead of getting a clean error.
+    const lifecycleAbort = new AbortController();
+
     const channelName = `verify-conv-${conversation.id}`;
     const channel = supabase.channel(channelName, {
       config: { broadcast: { self: false, ack: true } },
@@ -133,6 +141,11 @@ export function useAgenticVerification({
     const waitForFreshStl = async (): Promise<Blob | undefined> => {
       const start = Date.now();
       while (Date.now() - start < FRESH_STL_TIMEOUT_MS) {
+        // Bail early if the hook has been torn down (e.g. user
+        // navigated away). Without this the loop keeps running for
+        // its full timeout and the server hits its own 60s view_model
+        // timeout instead of getting our clean error.
+        if (lifecycleAbort.signal.aborted) return undefined;
         const expected = expectedArtifactCode();
         const stl = outputRef.current;
         const code = outputCodeRef.current;
@@ -266,6 +279,7 @@ export function useAgenticVerification({
     });
 
     return () => {
+      lifecycleAbort.abort();
       supabase.removeChannel(channel);
     };
   }, [conversation.id, conversation.type, queryClient]);
