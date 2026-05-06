@@ -561,7 +561,10 @@ const tools = [
               required: ['view'],
             },
             minItems: 1,
-            maxItems: 6,
+            // 2-4 is the prompt's recommended range; 4 is the ceiling.
+            // Anything beyond that would mean the agent is being
+            // wasteful with the verify budget and the user's tokens.
+            maxItems: 4,
           },
           reasoning: {
             type: 'string',
