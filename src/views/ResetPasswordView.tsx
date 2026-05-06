@@ -25,8 +25,7 @@ export function ResetPasswordView() {
         title: 'Success',
         description: 'Password reset instructions have been sent to your email',
       });
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    } catch (error) {
+    } catch {
       toast({
         title: 'Error',
         description: 'Failed to send reset instructions',

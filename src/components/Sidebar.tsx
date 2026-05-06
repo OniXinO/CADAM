@@ -403,12 +403,7 @@ function DesktopSidebar({ isSidebarOpen, setIsSidebarOpen }: SidebarProps) {
   );
 }
 
-function MobileSidebar({
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  isSidebarOpen,
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  setIsSidebarOpen,
-}: SidebarProps) {
+function MobileSidebar(_props: SidebarProps) {
   const [open, setOpen] = useState(false);
 
   return (
