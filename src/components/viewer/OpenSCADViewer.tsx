@@ -46,28 +46,11 @@ function disposeGroup(group: Group) {
 interface OpenSCADPreviewProps {
   scadCode: string | null;
   color: string;
-  // Fires whenever the worker returns a new STL. The second arg is the
-  // entry source code that PRODUCED that output — used by the agentic
-  // verification flow to make sure we screenshot the artifact the agent
-  // actually intended (not a stale STL from a prior compile that
-  // hasn't been replaced yet).
-  onOutputChange?: (output: Blob | undefined, sourceCode: string | null) => void;
+  onOutputChange?: (output: Blob | undefined) => void;
   onDxfExportChange?: (exporter: DxfExporter | null) => void;
   fixError?: (error: OpenSCADError) => void;
   isMobile?: boolean;
   backgroundColor?: string;
-  // Optional set of supplementary .scad files for multi-file artifacts.
-  // Each is written to the WASM filesystem before compile so the entry
-  // (`scadCode`) can `use <name.scad>` / `include <name.scad>` them.
-  // Bare filenames only — no directories.
-  files?: { name: string; content: string }[];
-  // Filename of the entry file inside `files`. The entry's content is
-  // already passed to `compileScad` via `scadCode`, so we skip writing
-  // it again. We key the skip on filename (not on content equality)
-  // because two distinct files could share identical content, and
-  // during `update_file` streams the `files` prop updates one render
-  // ahead of `scadCode` — so identity by content briefly disagrees.
-  entryFile?: string;
 }
 
 export function OpenSCADPreview({
@@ -78,8 +61,6 @@ export function OpenSCADPreview({
   fixError,
   isMobile,
   backgroundColor,
-  files,
-  entryFile,
 }: OpenSCADPreviewProps) {
   const {
     compileScad,
@@ -113,43 +94,10 @@ export function OpenSCADPreview({
     fallbackColorRef.current = color;
   }, [color]);
 
-  // Track which `.scad` aux files we've written (and their content) so we
-  // skip the worker round-trip when nothing changed between recompiles —
-  // critical for streaming multi-file artifacts where this fires dozens
-  // of times as files arrive.
-  const writtenScadFilesRef = useRef<Map<string, string>>(new Map());
-
   // Shared by preview compilation and on-demand exports so import() files are
-  // available in the OpenSCAD worker before either operation runs. Also
-  // covers multi-file artifacts: each supplementary `.scad` from `files`
-  // is written so the entry can `use <name.scad>` / `include <name.scad>`.
+  // available in the OpenSCAD worker before either operation runs.
   const prepareMeshFiles = useCallback(
     async (code: string) => {
-      // Write supplementary .scad files first — the entry's `use <...>`
-      // resolution needs them on disk before compileScad runs.
-      if (files && files.length > 0) {
-        for (const f of files) {
-          // Skip the entry file BY NAME — its content is passed to
-          // compileScad directly via `scadCode`. Keying on content
-          // equality (the previous approach) was fragile in two ways:
-          // (1) two distinct files could share identical content; (2)
-          // when `update_file` streams a patched entry, the `files`
-          // prop updates one render before `scadCode`, so for one
-          // frame the entry's content in `files` no longer equals
-          // `code` and the entry would get duplicate-written to the
-          // WASM fs alongside the compileScad call → OpenSCAD would
-          // see redeclared top-level vars and error out.
-          if (entryFile && f.name === entryFile) continue;
-          const previous = writtenScadFilesRef.current.get(f.name);
-          if (previous === f.content) continue;
-          await writeFile(
-            f.name,
-            new Blob([f.content], { type: 'text/plain' }),
-          );
-          writtenScadFilesRef.current.set(f.name, f.content);
-        }
-      }
-
       // Extract any import() filenames from the code
       const importedFiles = extractImportFilenames(code);
 
@@ -168,7 +116,7 @@ export function OpenSCADPreview({
         }
       }
     },
-    [writeFile, meshFilesCtx, files, entryFile],
+    [writeFile, meshFilesCtx],
   );
 
   // Recompile the preview whenever the current SCAD code changes.
@@ -201,11 +149,7 @@ export function OpenSCADPreview({
   }, [scadCode, exportScad, onDxfExportChange, prepareMeshFiles]);
 
   useEffect(() => {
-    // Tag the output with the current scadCode so callers can tell
-    // whether `output` reflects the latest artifact (essential for the
-    // agentic verification hook — without it, screenshots may be of a
-    // stale STL from a previous compile that hasn't been replaced yet).
-    onOutputChange?.(output, scadCode);
+    onOutputChange?.(output);
 
     // Mirror the colored-group pattern: every path that clears geometry
     // state must first release the previous vertex buffers, otherwise
@@ -243,7 +187,7 @@ export function OpenSCADPreview({
     } else {
       clearGeometry();
     }
-  }, [output, scadCode, onOutputChange]);
+  }, [output, onOutputChange]);
 
   useEffect(() => {
     let cancelled = false;

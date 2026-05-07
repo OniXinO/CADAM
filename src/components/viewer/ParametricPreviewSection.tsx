@@ -8,7 +8,7 @@ import { DxfExporter } from '@/utils/downloadUtils';
 interface ParametricPreviewSectionProps {
   isLoading: boolean;
   color: string;
-  onOutputChange?: (output: Blob | undefined, sourceCode: string | null) => void;
+  onOutputChange?: (output: Blob | undefined) => void;
   onDxfExportChange?: (exporter: DxfExporter | null) => void;
   fixError?: (error: OpenSCADError) => void;
   isMobile?: boolean;
@@ -40,8 +40,6 @@ export function ParametricPreviewSection({
           {message?.content.artifact?.code && (
             <OpenSCADPreview
               scadCode={message.content.artifact.code}
-              files={message.content.artifact.files}
-              entryFile={message.content.artifact.entryFile}
               color={color}
               onOutputChange={onOutputChange}
               onDxfExportChange={onDxfExportChange}

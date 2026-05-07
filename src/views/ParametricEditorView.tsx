@@ -18,7 +18,6 @@ import {
 import { useAuth } from '@/contexts/AuthContext';
 import Tree from '@shared/Tree';
 import { useRequestCancellation } from '@/hooks/useRequestCancellation';
-import { useAgenticVerification } from '@/hooks/useAgenticVerification';
 import posthog from 'posthog-js';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 
@@ -29,22 +28,6 @@ export function ParametricEditorView() {
   const { billing } = useAuth();
   const totalTokens = billing?.tokens.total ?? 0;
   const [currentOutput, setCurrentOutput] = useState<Blob | undefined>();
-  // Tracks which entry-file source produced `currentOutput`. Used by the
-  // agentic verify hook to avoid screenshotting a stale STL while the
-  // viewer is still recompiling a freshly-streamed artifact. `null` means
-  // no STL is currently available (no compile, or compile failed).
-  const [currentOutputCode, setCurrentOutputCode] = useState<string | null>(
-    null,
-  );
-  // Combined setter — keeps the two pieces of state in sync (so the hook
-  // never reads a fresh blob with a stale code tag, or vice versa).
-  const handleOutputChange = useCallback(
-    (output: Blob | undefined, sourceCode: string | null) => {
-      setCurrentOutput(output);
-      setCurrentOutputCode(output ? sourceCode : null);
-    },
-    [],
-  );
   // Brand fallback color used when OFF parsing fails and we drop back to
   // the single-color STL mesh.
   const color = '#00A6FF';
@@ -195,18 +178,6 @@ export function ParametricEditorView() {
     [sendMessageMutation, conversation.id, conversation.settings?.model],
   );
 
-  // Browser side of the agentic verify loop. The server pauses on a
-  // Supabase Realtime broadcast when the agent calls view_model; this
-  // hook listens on the conversation's verify channel, renders the
-  // requested angles from `currentOutput`, uploads them, and broadcasts
-  // back so the server can resume. `currentOutputCode` lets the hook
-  // verify the STL corresponds to the latest artifact's entry — without
-  // it, the agent can review a stale render of the previous build.
-  useAgenticVerification({
-    currentOutput,
-    currentOutputCode,
-  });
-
   const fixError = useCallback(
     async (error: OpenSCADError) => {
       const newContent: Content = {
@@ -227,7 +198,7 @@ export function ParametricEditorView() {
       retryMessage={retryMessage}
       isLoading={isLoading}
       currentOutput={currentOutput}
-      setCurrentOutput={handleOutputChange}
+      setCurrentOutput={setCurrentOutput}
       color={color}
       changeParameters={changeParameters}
       stopGenerating={stopGenerating}

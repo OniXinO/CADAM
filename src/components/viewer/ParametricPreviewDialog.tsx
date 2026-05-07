@@ -27,7 +27,7 @@ interface ParametricPreviewDialogProps {
   onSubmit: (message: Message | null, parameters: Parameter[]) => void;
   currentOutput?: Blob;
   dxfExporter?: DxfExporter | null;
-  onOutputChange?: (output: Blob | undefined, sourceCode: string | null) => void;
+  onOutputChange?: (output: Blob | undefined) => void;
   onDxfExportChange?: (exporter: DxfExporter | null) => void;
   fixError?: (error: OpenSCADError) => void;
 }
@@ -161,8 +161,6 @@ export function ParametricPreviewDialog({
                   <div className="h-full w-full overflow-hidden rounded-xl">
                     <OpenSCADPreview
                       scadCode={currentMessage.content.artifact.code}
-                      files={currentMessage.content.artifact.files}
-                      entryFile={currentMessage.content.artifact.entryFile}
                       color="#F8248A"
                       onOutputChange={onOutputChange}
                       onDxfExportChange={onDxfExportChange}
