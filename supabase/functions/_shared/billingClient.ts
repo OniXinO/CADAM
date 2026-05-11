@@ -73,6 +73,96 @@ export class BillingClientError extends Error {
   }
 }
 
+// Local dev bypass: when ENVIRONMENT=local, every billing.* method short-
+// circuits with canned data so the app runs without adam-billing creds.
+const isBypassed = (): boolean => Deno.env.get('ENVIRONMENT') === 'local';
+
+const DEV_TOKENS = {
+  free: 1_000_000,
+  subscription: 1_000_000,
+  purchased: 1_000_000,
+  total: 3_000_000,
+};
+
+const devStatus = (): BillingStatus => ({
+  user: { hasTrialed: false },
+  subscription: {
+    level: 'pro',
+    status: 'active',
+    currentPeriodEnd: new Date(
+      Date.now() + 365 * 24 * 60 * 60 * 1000,
+    ).toISOString(),
+  },
+  tokens: { ...DEV_TOKENS },
+});
+
+const devConsume = (tokens: number): ConsumeSuccess => ({
+  ok: true,
+  tokensDeducted: tokens,
+  freeBalance: DEV_TOKENS.free,
+  subscriptionBalance: DEV_TOKENS.subscription,
+  purchasedBalance: DEV_TOKENS.purchased,
+  totalBalance: DEV_TOKENS.total,
+});
+
+const devRefund = (tokens: number): RefundResult => ({
+  ok: true,
+  tokensRefunded: tokens,
+  source: 'subscription',
+  freeBalance: DEV_TOKENS.free,
+  subscriptionBalance: DEV_TOKENS.subscription,
+  purchasedBalance: DEV_TOKENS.purchased,
+  totalBalance: DEV_TOKENS.total,
+});
+
+const devProducts: { subscriptions: BillingProduct[]; packs: BillingProduct[] } = {
+  subscriptions: [
+    {
+      id: 'dev_standard_monthly',
+      stripeProductId: 'prod_dev_standard',
+      stripePriceId: 'price_dev_standard_monthly',
+      productType: 'subscription',
+      subscriptionLevel: 'standard',
+      tokenAmount: 500_000,
+      name: 'Standard',
+      priceCents: 1900,
+      interval: 'month',
+      active: true,
+    },
+    {
+      id: 'dev_pro_monthly',
+      stripeProductId: 'prod_dev_pro',
+      stripePriceId: 'price_dev_pro_monthly',
+      productType: 'subscription',
+      subscriptionLevel: 'pro',
+      tokenAmount: 2_000_000,
+      name: 'Pro',
+      priceCents: 4900,
+      interval: 'month',
+      active: true,
+    },
+  ],
+  packs: [
+    {
+      id: 'dev_pack_small',
+      stripeProductId: 'prod_dev_pack_small',
+      stripePriceId: 'price_dev_pack_small',
+      productType: 'pack',
+      subscriptionLevel: null,
+      tokenAmount: 100_000,
+      name: 'Token Pack',
+      priceCents: 1000,
+      interval: null,
+      active: true,
+    },
+  ],
+};
+
+const devCheckoutError = () =>
+  new BillingClientError('billing bypassed in local dev mode', 503, {
+    reason: 'bypassed',
+  });
+
 const baseUrl = (): string => {
   const url = Deno.env.get('BILLING_SERVICE_URL');
   if (!url) throw new Error('BILLING_SERVICE_URL is not set');
@@ -161,36 +251,62 @@ export type CancelSubscriptionResult =
   | { canceled: false; reason: 'no_subscription' | 'already_canceled' };
 
 export const billing = {
-  getStatus: (email: string) =>
-    call<BillingStatus>('GET', `/v1/users/${enc(email)}/status`),
+  getStatus: (email: string) => {
+    if (isBypassed()) return Promise.resolve(devStatus());
+    return call<BillingStatus>('GET', `/v1/users/${enc(email)}/status`);
+  },
 
-  consume: (email: string, body: ConsumeBody) =>
-    call<ConsumeResult>('POST', `/v1/users/${enc(email)}/consume`, body, {
+  consume: (email: string, body: ConsumeBody) => {
+    if (isBypassed()) return Promise.resolve<ConsumeResult>(devConsume(body.tokens));
+    return call<ConsumeResult>('POST', `/v1/users/${enc(email)}/consume`, body, {
       allowStatus: [422],
-    }),
+    });
+  },
 
-  refund: (email: string, body: RefundBody) =>
-    call<RefundResult>('POST', `/v1/users/${enc(email)}/refund`, body),
+  refund: (email: string, body: RefundBody) => {
+    if (isBypassed()) return Promise.resolve(devRefund(body.tokens));
+    return call<RefundResult>('POST', `/v1/users/${enc(email)}/refund`, body);
+  },
 
-  createCheckout: (email: string, body: CheckoutBody) =>
-    call<{ url: string }>('POST', `/v1/users/${enc(email)}/checkout`, body),
+  createCheckout: (email: string, body: CheckoutBody) => {
+    if (isBypassed()) return Promise.reject(devCheckoutError());
+    return call<{ url: string }>('POST', `/v1/users/${enc(email)}/checkout`, body);
+  },
 
-  createPortal: (email: string, body: { returnUrl: string }) =>
-    call<{ url: string }>('POST', `/v1/users/${enc(email)}/portal`, body),
+  createPortal: (email: string, body: { returnUrl: string }) => {
+    if (isBypassed()) return Promise.reject(devCheckoutError());
+    return call<{ url: string }>('POST', `/v1/users/${enc(email)}/portal`, body);
+  },
 
-  cancelSubscription: (email: string, body: CancelSubscriptionBody = {}) =>
-    call<CancelSubscriptionResult>(
+  cancelSubscription: (email: string, body: CancelSubscriptionBody = {}) => {
+    if (isBypassed())
+      return Promise.resolve<CancelSubscriptionResult>({ canceled: true });
+    return call<CancelSubscriptionResult>(
       'POST',
       `/v1/users/${enc(email)}/cancel-subscription`,
       body,
-    ),
+    );
+  },
 
-  getProductsByType: (type: 'subscription' | 'pack') =>
-    call<BillingProduct[]>('GET', `/v1/products?type=${type}`),
+  getProductsByType: (type: 'subscription' | 'pack') => {
+    if (isBypassed()) {
+      return Promise.resolve(
+        type === 'subscription' ? devProducts.subscriptions : devProducts.packs,
+      );
+    }
+    return call<BillingProduct[]>('GET', `/v1/products?type=${type}`);
+  },
 
-  getAllProducts: () =>
-    call<{ subscriptions: BillingProduct[]; packs: BillingProduct[] }>(
+  getAllProducts: () => {
+    if (isBypassed()) {
+      return Promise.resolve({
+        subscriptions: devProducts.subscriptions,
+        packs: devProducts.packs,
+      });
+    }
+    return call<{ subscriptions: BillingProduct[]; packs: BillingProduct[] }>(
       'GET',
       '/v1/products',
-    ),
+    );
+  },
 };
