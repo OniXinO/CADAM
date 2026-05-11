@@ -39,6 +39,8 @@ interface SidebarProps {
   setIsSidebarOpen: (open: boolean) => void;
 }
 
+type SidebarPath = '/' | '/history' | '/subscription';
+
 function DesktopSidebar({ isSidebarOpen, setIsSidebarOpen }: SidebarProps) {
   const navigate = useNavigate();
   const { user, signOut } = useAuth();
@@ -73,11 +75,11 @@ function DesktopSidebar({ isSidebarOpen, setIsSidebarOpen }: SidebarProps) {
     }
   };
 
-  const sidebarNavigate = (path: string) => {
+  const sidebarNavigate = (path: SidebarPath) => {
     if (isMobile) {
       setIsSidebarOpen(false); // setIsSidebarOpen is actually setOpen from Sheet component
     }
-    navigate({ href: path });
+    navigate({ to: path });
   };
 
   const renderUserSectionTrigger = () => {
@@ -192,7 +194,7 @@ function DesktopSidebar({ isSidebarOpen, setIsSidebarOpen }: SidebarProps) {
               {
                 icon: LayoutGrid,
                 label: 'Creations',
-                href: '/history',
+                href: '/history' as const,
                 description: 'View past creations',
                 submenu: recentConversations,
               },

@@ -11,6 +11,12 @@ import { useMutation } from '@tanstack/react-query';
 import { GoogleIcon } from '@/components/icons/CompanyIcons';
 import { validateRedirectUrl } from '@/lib/utils';
 
+function getAppRedirectUrl(path: string) {
+  const basePath = import.meta.env.BASE_URL.replace(/\/$/, '');
+
+  return `${window.location.origin}${basePath}${path}`;
+}
+
 export function SignUpEmailView() {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -40,8 +46,8 @@ export function SignUpEmailView() {
         // Use Supabase's built-in redirectTo parameter with validated URL
         const redirectTo =
           redirectPath !== '/'
-            ? `${window.location.origin}${redirectPath}`
-            : `${window.location.origin}/`;
+            ? getAppRedirectUrl(redirectPath)
+            : getAppRedirectUrl('/');
 
         await supabase.auth.signInWithOAuth({
           provider: 'google',

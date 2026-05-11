@@ -17,14 +17,9 @@ export function AuthGuard({ children }: AuthGuardProps) {
       // Capture current path for redirect after authentication
       // Only include pathname and search to avoid security issues
       const currentPath = location.pathname + location.searchStr;
+      const search = currentPath !== '/' ? { redirect: currentPath } : {};
 
-      // Only add redirect parameter if it's not the home page
-      const redirectParam =
-        currentPath !== '/'
-          ? `?redirect=${encodeURIComponent(currentPath)}`
-          : '';
-
-      navigate({ href: `/signin${redirectParam}` });
+      navigate({ to: '/signin', search, replace: true });
     }
   }, [
     session,

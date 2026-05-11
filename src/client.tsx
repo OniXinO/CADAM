@@ -10,7 +10,7 @@ function getSentryTracesSampleRate() {
 
   if (configuredRate !== undefined && configuredRate !== '') {
     const parsedRate = Number(configuredRate);
-    if (!Number.isNaN(parsedRate)) {
+    if (Number.isFinite(parsedRate) && parsedRate >= 0 && parsedRate <= 1) {
       return parsedRate;
     }
   }

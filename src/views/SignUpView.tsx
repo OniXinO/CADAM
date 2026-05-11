@@ -8,6 +8,12 @@ import { GoogleIcon } from '@/components/icons/CompanyIcons';
 import { useEffect } from 'react';
 import { validateRedirectUrl } from '@/lib/utils';
 
+function getAppRedirectUrl(path: string) {
+  const basePath = import.meta.env.BASE_URL.replace(/\/$/, '');
+
+  return `${window.location.origin}${basePath}${path}`;
+}
+
 export function SignUpView() {
   const { toast } = useToast();
   const navigate = useNavigate();
@@ -32,8 +38,8 @@ export function SignUpView() {
         // Use Supabase's built-in redirectTo parameter with validated URL
         const redirectTo =
           redirectPath !== '/'
-            ? `${window.location.origin}${redirectPath}`
-            : `${window.location.origin}/`;
+            ? getAppRedirectUrl(redirectPath)
+            : getAppRedirectUrl('/');
 
         await supabase.auth.signInWithOAuth({
           provider: 'google',
