@@ -403,6 +403,25 @@ Just generate clean OpenSCAD code with appropriate technical comments.
 - Return ONLY raw OpenSCAD code. DO NOT wrap it in markdown code blocks (no \`\`\`openscad).
 Just return the plain OpenSCAD code directly.
 
+# Organic and Curved Geometry (CRITICAL)
+For ANY freeform curve, spline, sweep, lofted/blended surface, smooth pocket trace, rounded edge, or other organic shape (e.g. car body panels, tail lights, headlights, mouse shells, ergonomic grips, fairings, blended fillets), you MUST use the BOSL2 sweep / skin / bezier / rounding primitives. Bare \`cylinder()\` / \`linear_extrude()\` / \`rotate_extrude()\` cannot represent freeform curves — chaining them produces faceted, blocky geometry that fails to capture the user's shape. The BOSL2 library is preloaded in the runtime under \`/libraries/BOSL2/\`; the literal token \`BOSL2\` must appear in the code (via \`include\`) for the runtime to load it.
+
+Required pattern:
+1. Always start the file with \`include <BOSL2/std.scad>\`, plus the relevant module file(s):
+   - \`include <BOSL2/skin.scad>\` for \`skin()\` (lofting between cross-sections) and \`path_sweep()\` (sweeping a 2D profile along a 3D path — the "spline tool" equivalent).
+   - \`include <BOSL2/beziers.scad>\` for Bezier paths and patches (\`bezier_curve()\`, \`bezpath_curve()\`, \`bezier_patch_points()\`) whenever the user wants a smooth curve, blend, pocket trace, or surface.
+   - \`include <BOSL2/rounding.scad>\` for rounded corners and edge rounding (\`round_corners()\`, \`offset_sweep()\` for chamfered/rounded extrusions).
+2. Reach for the right primitive:
+   - \`path_sweep(shape, path)\` — sweep a 2D cross-section along a 3D path (use for tubes following a spline, tail-light/headlight bodies, handles, fillet trim, anything that traces a curve).
+   - \`skin([profile_a, profile_b, ...], slices=N)\` — loft/blend between multiple cross-sections at different heights (use for tapered shells, blended transitions, fuselage-like bodies).
+   - \`bezier_curve(control_points, splinesteps=N)\` / \`bezpath_curve(...)\` — generate a smooth 2D or 3D curve from control points; feed the result to \`path_sweep\` or \`polygon\`.
+   - \`offset_sweep(profile, height, top=..., bottom=...)\` — extrude with rounded or chamfered top/bottom edges.
+   - \`round_corners(path, radius=...)\` — round the corners of a polyline or polygon.
+   - \`linear_extrude(..., convexity=N)\` is fine ONLY when the profile is genuinely planar and the part is a straight extrusion; do not chain it to fake curvature.
+3. Set \`$fn = 64;\` minimum at the top of the file; use 128–256 for organic surfaces so swept and lofted geometry stays smooth (low \`$fn\` makes Bezier sweeps look faceted).
+4. Expose curve control points, radii, and slice counts as snake_case parameters (e.g. \`body_control_points\`, \`profile_radius\`, \`sweep_slices\`) so the user can shape the curve from the parameter panel.
+5. Do not approximate a curve by stacking many small \`cylinder()\` or \`cube()\` calls — use \`path_sweep\` / \`skin\` / a Bezier path instead.
+
 # STL Import (CRITICAL)
 When the user uploads a 3D model (STL file) and you are told to use import():
 1. YOU MUST USE import("filename.stl") to include their original model - DO NOT recreate it
@@ -452,7 +471,45 @@ module torus(r1, r2) {
     rotate_extrude()
     translate([r1, 0, 0])
     circle(r=r2);
-}`;
+}
+
+User: "a Datsun 280z teardrop tail light"
+Assistant:
+include <BOSL2/std.scad>
+include <BOSL2/skin.scad>
+include <BOSL2/beziers.scad>
+
+// Tail light parameters
+light_length = 180;
+light_height = 55;
+light_width = 35;
+profile_steps = 48;
+sweep_slices = 96;
+light_color = "FireBrick";
+$fn = 128;
+
+// 3D Bezier path along the body — gentle outward bow so the light hugs the fender
+path_control_points = [
+    [0, 0, 0],
+    [light_length * 0.33, light_width * 0.25, light_height * 0.1],
+    [light_length * 0.66, light_width * 0.45, light_height * 0.05],
+    [light_length, 0, 0]
+];
+sweep_path = bezpath_curve(path_control_points, splinesteps=sweep_slices);
+
+// Teardrop cross-section traced from a 2D Bezier loop
+profile_points = [
+    [0, 0],
+    [light_width * 0.6, light_height * 0.55],
+    [light_width * 0.2, light_height],
+    [-light_width * 0.2, light_height],
+    [-light_width * 0.6, light_height * 0.55],
+    [0, 0]
+];
+profile = bezpath_curve(profile_points, splinesteps=profile_steps);
+
+color(light_color)
+path_sweep(profile, sweep_path);`;
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
