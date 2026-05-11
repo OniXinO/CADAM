@@ -81,14 +81,20 @@ export function useOpenSCAD() {
     const worker = getWorker();
     worker.addEventListener('message', eventHandler);
 
+    // The Set/Map objects in these refs are stable across the component's
+    // lifetime (refs are never reassigned, only their contents mutate), so
+    // capturing them here is equivalent to reading ref.current at cleanup.
+    const writtenFiles = writtenFilesRef.current;
+    const pendingRequests = pendingRequestsRef.current;
+
     return () => {
       workerRef.current?.terminate();
       workerRef.current = null;
-      writtenFilesRef.current.clear();
-      pendingRequestsRef.current.forEach((pending) => {
+      writtenFiles.clear();
+      pendingRequests.forEach((pending) => {
         pending.reject(new Error('Worker terminated'));
       });
-      pendingRequestsRef.current.clear();
+      pendingRequests.clear();
     };
   }, [eventHandler, getWorker]);
 
