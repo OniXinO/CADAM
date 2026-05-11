@@ -24,6 +24,17 @@ function getAppRedirectUrl(path: string) {
   return `${window.location.origin}${basePath}${path}`;
 }
 
+function getRedirectNavigationOptions(path: string) {
+  const url = new URL(path, window.location.origin);
+  const search = Object.fromEntries(url.searchParams.entries());
+
+  return {
+    to: url.pathname,
+    search,
+    hash: url.hash ? url.hash.slice(1) : undefined,
+  };
+}
+
 export function SignInView() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -89,7 +100,7 @@ export function SignInView() {
     try {
       await signIn(email, password);
       // Navigate to validated redirect path
-      navigate({ to: redirectPath });
+      navigate(getRedirectNavigationOptions(redirectPath));
     } catch (err) {
       const error = err as AuthError;
       const message =
@@ -137,7 +148,7 @@ export function SignInView() {
     setError(null);
     try {
       await verifyOtp(email, otp);
-      navigate({ to: redirectPath });
+      navigate(getRedirectNavigationOptions(redirectPath));
     } catch (err) {
       const error = err as AuthError;
       setError(error.message);
