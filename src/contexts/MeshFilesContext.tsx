@@ -1,19 +1,5 @@
-import { createContext, useContext, useRef, useCallback } from 'react';
-
-interface MeshFilesContextType {
-  // Store a mesh file by filename
-  setMeshFile: (filename: string, content: Blob) => void;
-  // Get a mesh file by filename
-  getMeshFile: (filename: string) => Blob | undefined;
-  // Check if a mesh file exists
-  hasMeshFile: (filename: string) => boolean;
-  // Clear all mesh files
-  clearMeshFiles: () => void;
-}
-
-export const MeshFilesContext = createContext<MeshFilesContextType | undefined>(
-  undefined,
-);
+import { useRef, useCallback } from 'react';
+import { MeshFilesContext } from './meshFiles';
 
 export function MeshFilesProvider({ children }: { children: React.ReactNode }) {
   // Use ref to avoid re-renders when files are added
@@ -43,12 +29,4 @@ export function MeshFilesProvider({ children }: { children: React.ReactNode }) {
       {children}
     </MeshFilesContext.Provider>
   );
-}
-
-export function useMeshFiles() {
-  const context = useContext(MeshFilesContext);
-  if (context === undefined) {
-    throw new Error('useMeshFiles must be used within a MeshFilesProvider');
-  }
-  return context;
 }

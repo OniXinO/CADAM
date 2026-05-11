@@ -63,7 +63,7 @@ import {
   renderMultipleAngles,
   BoundingBox,
 } from '@/utils/meshUtils';
-import { useMeshFiles } from '@/contexts/MeshFilesContext';
+import { useMeshFiles } from '@/contexts/meshFiles';
 import { AnimatePresence, motion } from 'framer-motion';
 
 interface TextAreaChatProps {

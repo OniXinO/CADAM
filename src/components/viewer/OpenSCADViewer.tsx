@@ -15,7 +15,7 @@ import { parseColoredOff } from '@/utils/offParser';
 import { Button } from '@/components/ui/button';
 import OpenSCADError from '@/lib/OpenSCADError';
 import { cn } from '@/lib/utils';
-import { MeshFilesContext } from '@/contexts/MeshFilesContext';
+import { MeshFilesContext } from '@/contexts/meshFiles';
 import { createDXFProjectionCode } from '@/utils/dxfUtils';
 import { DxfExporter } from '@/utils/downloadUtils';
 
