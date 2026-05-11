@@ -1,7 +1,7 @@
+import { useCallback, useMemo } from 'react';
 import { useThree, type ThreeEvent } from '@react-three/fiber';
 import { GizmoHelper, GizmoViewcube } from '@react-three/drei';
 import * as THREE from 'three';
-import { useCallback, useMemo } from 'react';
 
 type Alignment =
   | 'top-left'
@@ -19,6 +19,26 @@ interface ViewGizmoProps {
   margin?: [number, number];
 }
 
+type ControlsWithTarget = {
+  target?: THREE.Vector3;
+  update?: () => void;
+};
+
+function isControlsWithTarget(value: unknown): value is ControlsWithTarget {
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+
+  const hasTarget = 'target' in value;
+  const hasUpdate = 'update' in value;
+
+  return (
+    (!hasTarget || value.target instanceof THREE.Vector3) &&
+    (!hasUpdate || typeof value.update === 'function') &&
+    (hasTarget || hasUpdate)
+  );
+}
+
 // Drei's <GizmoHelper> animates the main camera toward a face/edge orientation
 // frame-by-frame, stopping once the angle delta falls below ~0.01 rad. During
 // the animation it temporarily rotates camera.up and then resets it on
@@ -32,26 +52,22 @@ interface ViewGizmoProps {
 //
 // Fix: bypass drei's animation. Provide a custom onClick to GizmoViewcube that
 // snaps the main camera directly to focus + direction * radius with up reset
-// to world-Y, then runs camera.lookAt(target) and controls.update() so
-// OrbitControls' internal spherical state is reconciled. Every click lands at
-// the same canonical orientation regardless of orbit history, in both
-// orthographic and perspective modes.
+// to a non-degenerate canonical axis, then runs camera.lookAt(target) and
+// controls.update() so OrbitControls' internal spherical state is reconciled.
+// Every click lands at the same canonical orientation regardless of orbit
+// history, in both orthographic and perspective modes.
 export function ViewGizmo({
   alignment = 'bottom-right',
   margin = [80, 80],
 }: ViewGizmoProps) {
   const camera = useThree((state) => state.camera);
-  const controls = useThree((state) => state.controls) as
-    | (THREE.EventDispatcher & {
-        target?: THREE.Vector3;
-        update?: () => void;
-      })
-    | null;
+  const rawControls = useThree((state) => state.controls);
+  const controls = isControlsWithTarget(rawControls) ? rawControls : null;
   const invalidate = useThree((state) => state.invalidate);
   const fallbackTarget = useMemo(() => new THREE.Vector3(), []);
 
   const handleClick = useCallback(
-    (e: ThreeEvent<MouseEvent>): null => {
+    (e: ThreeEvent<MouseEvent>): void => {
       e.stopPropagation();
       const eventObject = e.eventObject;
       const direction = new THREE.Vector3();
@@ -63,25 +79,28 @@ export function ViewGizmo({
       } else if (e.face) {
         direction.copy(e.face.normal);
       } else {
-        return null;
+        return;
       }
 
       const target =
         controls && controls.target ? controls.target : fallbackTarget;
       const radius = Math.max(camera.position.distanceTo(target), 1e-3);
 
-      camera.up.set(0, 1, 0);
+      if (Math.abs(direction.y) > 0.99) {
+        camera.up.set(0, 0, -1);
+      } else {
+        camera.up.set(0, 1, 0);
+      }
       camera.position.copy(target).addScaledVector(direction, radius);
       camera.lookAt(target);
       controls?.update?.();
       invalidate();
-      return null;
     },
     [camera, controls, invalidate, fallbackTarget],
   );
-
   return (
     <GizmoHelper alignment={alignment} margin={margin}>
+      {/* @ts-expect-error drei 10.0.7 types this ignored callback return as null. */}
       <GizmoViewcube onClick={handleClick} />
     </GizmoHelper>
   );
