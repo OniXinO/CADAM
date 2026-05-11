@@ -1,4 +1,4 @@
-import { Link, useNavigate, useLocation } from 'react-router-dom';
+import { Link, useNavigate, useLocation } from '@tanstack/react-router';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
@@ -15,14 +15,14 @@ export function SignUpView() {
   const { session, user, isLoading: authLoading } = useAuth();
 
   // Get and validate redirect parameter from URL
-  const searchParams = new URLSearchParams(location.search);
+  const searchParams = new URLSearchParams(location.searchStr);
   const rawRedirectPath = searchParams.get('redirect');
   const redirectPath = validateRedirectUrl(rawRedirectPath);
 
   // Redirect to home if already authenticated
   useEffect(() => {
     if (!authLoading && session && user) {
-      navigate('/', { replace: true });
+      navigate({ to: '/', replace: true });
     }
   }, [session, user, authLoading, navigate]);
 

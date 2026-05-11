@@ -1,4 +1,4 @@
-import { useNavigate, Link, useOutletContext } from 'react-router-dom';
+import { useNavigate, Link } from '@tanstack/react-router';
 import { ArrowUpRight, LogIn } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/hooks/use-toast';
@@ -18,6 +18,7 @@ import posthog from 'posthog-js';
 import * as Sentry from '@sentry/react';
 import { useSendContentMutation } from '@/services/messageService';
 import { useProfile } from '@/services/profileService';
+import { useLayoutContext } from '@/contexts/LayoutContext';
 
 const EXTENSION_PILLS = [
   {
@@ -38,7 +39,7 @@ export function PromptView() {
   const { user, billing, isLoading } = useAuth();
   const totalTokens = billing?.tokens.total ?? 0;
   const { data: profile, isLoading: isProfileLoading } = useProfile();
-  const { isSidebarOpen } = useOutletContext<{ isSidebarOpen: boolean }>();
+  const { isSidebarOpen } = useLayoutContext();
   const queryClient = useQueryClient();
 
   const firstName = useMemo(() => {
@@ -184,7 +185,7 @@ export function PromptView() {
           console.error('Error generating title:', error);
         });
       queryClient.invalidateQueries({ queryKey: ['conversations'] });
-      navigate(`/editor/${data.conversationId}`);
+      navigate({ to: '/editor/$id', params: { id: data.conversationId } });
     },
     onError: (error) => {
       Sentry.captureException(error);
@@ -217,12 +218,15 @@ export function PromptView() {
           <div className="fixed right-4 top-4 z-10 flex flex-row gap-2">
             <Button
               variant="light"
-              onClick={() => navigate('/signup')}
+              onClick={() => navigate({ to: '/signup' })}
               className="w-auto"
             >
               Sign Up
             </Button>
-            <Button onClick={() => navigate('/signin')} className="w-auto">
+            <Button
+              onClick={() => navigate({ to: '/signin' })}
+              className="w-auto"
+            >
               <LogIn className="mr-2 h-4 w-4" />
               Sign In
             </Button>
@@ -255,7 +259,7 @@ export function PromptView() {
                   }}
                   onFocus={() => {
                     if (!user) {
-                      navigate('/signin');
+                      navigate({ to: '/signin' });
                       return;
                     }
                   }}

@@ -23,7 +23,7 @@ import {
   getBackupModel,
   PARAMETRIC_MODELS,
 } from '@/lib/utils';
-import { Link } from 'react-router-dom';
+import { Link } from '@tanstack/react-router';
 import { TrialDialog } from '@/components/auth/TrialDialog';
 import { getLevel, useAuth } from '@/contexts/AuthContext';
 import { ImageViewer } from '@/components/ImageViewer';

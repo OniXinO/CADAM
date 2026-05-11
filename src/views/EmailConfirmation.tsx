@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation } from '@tanstack/react-router';
 import { Button } from '@/components/ui/button';
 import { Mail } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -8,7 +8,8 @@ import { useToast } from '@/hooks/use-toast';
 
 function EmailConfirmation() {
   const location = useLocation();
-  const email = location.state?.email || 'your email';
+  const email =
+    new URLSearchParams(location.searchStr).get('email') ?? 'your email';
   const [isResending, setIsResending] = useState(false);
   const { toast } = useToast();
 

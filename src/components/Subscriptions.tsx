@@ -1,4 +1,4 @@
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from '@tanstack/react-router';
 import { Check, Loader2, Sparkles } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
@@ -136,7 +136,7 @@ export function Subscriptions() {
 
   const handleSubscribe = (priceId: string) => {
     if (!user) {
-      navigate('/signin');
+      navigate({ to: '/signin' });
       return;
     }
     handleSubscribeMutation({ priceId, source: 'subscriptions' });

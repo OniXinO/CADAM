@@ -2,11 +2,11 @@
   "rewrites": [
     {
       "source": "/cadam",
-      "destination": "/cadam/index.html"
+      "destination": "/cadam/_shell.html"
     },
     {
       "source": "/cadam/",
-      "destination": "/cadam/index.html"
+      "destination": "/cadam/_shell.html"
     },
     {
       "source": "/cadam/assets/:path*",
@@ -14,7 +14,7 @@
     },
     {
       "source": "/cadam/:path*",
-      "destination": "/cadam/index.html"
+      "destination": "/cadam/_shell.html"
     }
   ],
   "trailingSlash": false

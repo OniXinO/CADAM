@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from '@tanstack/react-router';
 import { Menu, Plus, LogOut, Crown, Settings, LayoutGrid } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -67,7 +67,7 @@ function DesktopSidebar({ isSidebarOpen, setIsSidebarOpen }: SidebarProps) {
   const handleSignOut = async () => {
     try {
       await signOut();
-      navigate('/signin');
+      navigate({ to: '/signin' });
     } catch (error) {
       console.error('Error signing out:', error);
     }
@@ -77,7 +77,7 @@ function DesktopSidebar({ isSidebarOpen, setIsSidebarOpen }: SidebarProps) {
     if (isMobile) {
       setIsSidebarOpen(false); // setIsSidebarOpen is actually setOpen from Sheet component
     }
-    navigate(path);
+    navigate({ href: path });
   };
 
   const renderUserSectionTrigger = () => {
@@ -213,7 +213,7 @@ function DesktopSidebar({ isSidebarOpen, setIsSidebarOpen }: SidebarProps) {
                     </Tooltip>
                   )}
                 >
-                  <Link to={href}>
+                  <Link to="/history">
                     <Button
                       variant={
                         isSidebarOpen ? 'adam_dark' : 'adam_dark_collapsed'
@@ -239,7 +239,8 @@ function DesktopSidebar({ isSidebarOpen, setIsSidebarOpen }: SidebarProps) {
                       ) => {
                         return (
                           <Link
-                            to={`/editor/${conversation.id}`}
+                            to="/editor/$id"
+                            params={{ id: conversation.id }}
                             key={conversation.id}
                             onClick={() => {
                               if (isMobile) {

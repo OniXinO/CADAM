@@ -2,21 +2,25 @@ import { AuthProvider } from '@/contexts/AuthProvider';
 import { TooltipProvider } from './components/ui/tooltip';
 import { Toaster } from './components/ui/toaster';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { Outlet } from 'react-router-dom';
+import { Outlet } from '@tanstack/react-router';
 import { MeshFilesProvider } from '@/contexts/MeshFilesContext';
+import { PostHogProvider } from '@/contexts/PostHogProvider';
+import { ErrorView } from '@/views/ErrorView';
 
 const queryClient = new QueryClient();
 
-function App() {
+function App({ error }: { error?: unknown }) {
   return (
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
-        <MeshFilesProvider>
-          <TooltipProvider delayDuration={0}>
-            <Toaster />
-            <Outlet />
-          </TooltipProvider>
-        </MeshFilesProvider>
+        <PostHogProvider>
+          <MeshFilesProvider>
+            <TooltipProvider delayDuration={0}>
+              <Toaster />
+              {error ? <ErrorView error={error} /> : <Outlet />}
+            </TooltipProvider>
+          </MeshFilesProvider>
+        </PostHogProvider>
       </AuthProvider>
     </QueryClientProvider>
   );
