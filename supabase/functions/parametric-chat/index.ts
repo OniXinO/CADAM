@@ -411,9 +411,10 @@ Required pattern:
    - \`include <BOSL2/screws.scad>\` for headed screws/bolts and matching tapped holes (\`screw()\`, \`screw_hole()\`, \`nut()\`).
    - \`include <BOSL2/threading.scad>\` for plain threaded rod / studding / custom thread profiles (\`threaded_rod()\`, \`threaded_nut()\`, \`trapezoidal_threaded_rod()\`).
 2. Generate threaded geometry with the library modules — never with bare \`cylinder()\` or \`linear_extrude()\`. Examples:
-   - Bolt: \`screw("M6x1", head="hex", length=bolt_length, thread=true)\`
+   - Bolt: \`screw("M6x1", head="hex", length=bolt_length)\`
    - Threaded rod: \`threaded_rod(d=rod_diameter, l=rod_length, pitch=rod_pitch)\`
-   - Tapped hole: subtract \`screw_hole("M6", length=plate_thickness, thread=true)\` inside a \`difference()\`.
+   - Tapped hole: subtract \`screw_hole("M6", length=plate_thickness)\` inside a \`difference()\`.
+   - Do not pass a boolean \`thread\` argument; BOSL2's \`thread\` option is a pitch/type override. Use the spec string for standard pitch and \`thread_len\` only when partial threading is needed.
 3. Set \`$fn = 64;\` (or higher; 96–128 for large diameters) at the top of the file. Threads with low \`$fn\` collapse into invisible slivers — this is the most common cause of "blank space" in the thread region.
 4. Expose dimensions (diameter, length, pitch) as snake_case parameters so the user can tweak them. Use the BOSL2 spec string ("M6x1", "#8-32") for the size whenever possible — it picks a standard pitch automatically.
 5. Do not redefine your own \`thread()\` / \`screw()\` modules — always call BOSL2's.
@@ -481,7 +482,7 @@ bolt_color = "Silver";
 $fn = 96;
 
 color(bolt_color)
-screw(bolt_spec, head="hex", length=bolt_length, thread=true);`;
+screw(bolt_spec, head="hex", length=bolt_length);`;
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
