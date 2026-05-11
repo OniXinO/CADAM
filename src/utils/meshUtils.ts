@@ -137,26 +137,6 @@ export async function renderMultipleAngles(
   return renders;
 }
 
-/**
- * Validate that a file is a valid STL
- */
-export function isValidSTL(file: File): boolean {
-  const extension = file.name.toLowerCase().split('.').pop();
-  if (extension !== 'stl') {
-    return false;
-  }
-
-  const validMimeTypes = [
-    'model/stl',
-    'application/sla',
-    'application/vnd.ms-pki.stl',
-    'application/octet-stream',
-    '',
-  ];
-
-  return validMimeTypes.includes(file.type) || file.type === '';
-}
-
 export const generatePreview = async (
   mesh: Blob,
   fileType: Mesh['fileType'] = 'glb',
