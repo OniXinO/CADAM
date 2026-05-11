@@ -124,28 +124,27 @@ function DesktopSidebar({ isSidebarOpen, setIsSidebarOpen }: SidebarProps) {
             </Tooltip>
           )}
         >
-          <Link to="/">
-            <div
-              className="flex cursor-pointer items-center space-x-2"
-              onClick={() => sidebarNavigate('/')}
-            >
-              {isSidebarOpen ? (
-                <div className="flex w-full">
-                  <img
-                    className="mx-auto h-8 w-full"
-                    src={`${import.meta.env.BASE_URL}/adam-logo-full.svg`}
-                    alt="Logo"
-                  />
-                </div>
-              ) : (
+          <button
+            type="button"
+            className="flex w-full cursor-pointer items-center space-x-2"
+            onClick={() => sidebarNavigate('/')}
+          >
+            {isSidebarOpen ? (
+              <div className="flex w-full">
                 <img
-                  src={`${import.meta.env.BASE_URL}/adam-logo.svg`}
+                  className="mx-auto h-8 w-full"
+                  src={`${import.meta.env.BASE_URL}/adam-logo-full.svg`}
                   alt="Logo"
-                  className="h-8 w-8 min-w-8"
                 />
-              )}
-            </div>
-          </Link>
+              </div>
+            ) : (
+              <img
+                src={`${import.meta.env.BASE_URL}/adam-logo.svg`}
+                alt="Logo"
+                className="h-8 w-8 min-w-8"
+              />
+            )}
+          </button>
         </ConditionalWrapper>
       </div>
 
@@ -213,20 +212,18 @@ function DesktopSidebar({ isSidebarOpen, setIsSidebarOpen }: SidebarProps) {
                     </Tooltip>
                   )}
                 >
-                  <Link to="/history">
-                    <Button
-                      variant={
-                        isSidebarOpen ? 'adam_dark' : 'adam_dark_collapsed'
-                      }
-                      onClick={() => sidebarNavigate(href)}
-                      className={`${isSidebarOpen ? 'w-full justify-start' : 'ml-[1px] h-[46px] w-[46px] p-0'}`}
-                    >
-                      <Icon
-                        className={`${isSidebarOpen ? 'mr-2' : ''} h-[22px] w-[22px] min-w-[22px]`}
-                      />
-                      {isSidebarOpen && label}
-                    </Button>
-                  </Link>
+                  <Button
+                    variant={
+                      isSidebarOpen ? 'adam_dark' : 'adam_dark_collapsed'
+                    }
+                    onClick={() => sidebarNavigate(href)}
+                    className={`${isSidebarOpen ? 'w-full justify-start' : 'ml-[1px] h-[46px] w-[46px] p-0'}`}
+                  >
+                    <Icon
+                      className={`${isSidebarOpen ? 'mr-2' : ''} h-[22px] w-[22px] min-w-[22px]`}
+                    />
+                    {isSidebarOpen && label}
+                  </Button>
                 </ConditionalWrapper>
                 {isSidebarOpen && submenu && (
                   <ul className="ml-7 flex list-none flex-col gap-1 border-l border-adam-neutral-500 px-2">

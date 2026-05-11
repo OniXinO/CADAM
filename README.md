@@ -13,7 +13,7 @@
 [![Stars](https://img.shields.io/github/stars/Adam-CAD/cadam?style=social&logo=github)](https://github.com/Adam-CAD/cadam/stargazers)
 [![Forks](https://img.shields.io/github/forks/Adam-CAD/CADAM?style=flat)](https://github.com/Adam-CAD/CADAM/network)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg?style=flat)](https://www.gnu.org/licenses/gpl-3.0)
-[![Node.js](https://img.shields.io/badge/Node.js-18+-green.svg?style=flat&logo=node.js&logoColor=white)](https://nodejs.org/)
+[![Node.js](https://img.shields.io/badge/Node.js-20.19%2B%20%7C%2022.12%2B-green.svg?style=flat&logo=node.js&logoColor=white)](https://nodejs.org/)
 [![React](https://img.shields.io/badge/React-19.1-61DAFB.svg?style=flat&logo=react&logoColor=black)](https://reactjs.org/)
 [![Supabase](https://img.shields.io/badge/Supabase-Backend-3ECF8E.svg?style=flat&logo=supabase&logoColor=white)](https://supabase.com/)
 [![OpenSCAD](https://img.shields.io/badge/OpenSCAD-WASM-F9D64F.svg?style=flat)](https://openscad.org/)
@@ -92,7 +92,7 @@ npm run dev
 
 ## 📋 Prerequisites
 
-- Node.js and npm
+- Node.js ^20.19.0 or >=22.12.0, with npm 10+
 - Supabase CLI
 - ngrok (for local webhook development)
 
@@ -160,7 +160,7 @@ npx supabase functions serve --no-verify-jwt
 
 ## 🛠️ Built With
 
-- **Frontend:** React 18 + TypeScript + Vite
+- **Frontend:** React 19 + TypeScript + TanStack Start + Vite
 - **3D Rendering:** Three.js + React Three Fiber
 - **CAD Engine:** OpenSCAD WebAssembly
 - **Backend:** Supabase (PostgreSQL + Edge Functions)

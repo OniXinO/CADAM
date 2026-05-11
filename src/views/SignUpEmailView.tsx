@@ -90,8 +90,9 @@ export function SignUpEmailView() {
         description:
           'Please check your email to verify your account before signing in.',
       });
+      sessionStorage.setItem('pendingSignupEmail', email);
       navigate({
-        href: `/confirm-email?email=${encodeURIComponent(email)}`,
+        to: '/confirm-email',
       });
     } catch (error) {
       console.error(error);

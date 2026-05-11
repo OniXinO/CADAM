@@ -14,15 +14,25 @@ export function Layout() {
   const { user, isLoading } = useAuth();
   const isMobile = useIsMobile();
   const location = useLocation();
-  const [isSidebarOpen, setIsSidebarOpen] = useState(
-    typeof window === 'undefined'
-      ? true
-      : localStorage.getItem('sidebarOpen') !== 'false',
-  );
+  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const [hasLoadedSidebarPreference, setHasLoadedSidebarPreference] =
+    useState(false);
 
   useEffect(() => {
-    localStorage.setItem('sidebarOpen', isSidebarOpen.toString());
-  }, [isSidebarOpen]);
+    const storedSidebarPreference = localStorage.getItem('sidebarOpen');
+
+    if (storedSidebarPreference !== null) {
+      setIsSidebarOpen(storedSidebarPreference !== 'false');
+    }
+
+    setHasLoadedSidebarPreference(true);
+  }, []);
+
+  useEffect(() => {
+    if (hasLoadedSidebarPreference) {
+      localStorage.setItem('sidebarOpen', isSidebarOpen.toString());
+    }
+  }, [hasLoadedSidebarPreference, isSidebarOpen]);
 
   if (isLoading) {
     return (

@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Link, useLocation } from '@tanstack/react-router';
+import React, { useEffect, useState } from 'react';
+import { Link } from '@tanstack/react-router';
 import { Button } from '@/components/ui/button';
 import { Mail } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -7,11 +7,17 @@ import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
 
 function EmailConfirmation() {
-  const location = useLocation();
-  const email =
-    new URLSearchParams(location.searchStr).get('email') ?? 'your email';
+  const [email, setEmail] = useState('your email');
   const [isResending, setIsResending] = useState(false);
   const { toast } = useToast();
+
+  useEffect(() => {
+    const storedEmail = sessionStorage.getItem('pendingSignupEmail');
+
+    if (storedEmail) {
+      setEmail(storedEmail);
+    }
+  }, []);
 
   const handleResend = async () => {
     if (!email || email === 'your email') {
