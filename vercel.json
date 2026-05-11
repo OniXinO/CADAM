@@ -13,6 +13,54 @@
       "destination": "/cadam/assets/:path*"
     },
     {
+      "source": "/cadam/libraries/:path*",
+      "destination": "/cadam/libraries/:path*"
+    },
+    {
+      "source": "/cadam/Geist-Regular.ttf",
+      "destination": "/cadam/Geist-Regular.ttf"
+    },
+    {
+      "source": "/cadam/city.hdr",
+      "destination": "/cadam/city.hdr"
+    },
+    {
+      "source": "/cadam/Adam-Logo.png",
+      "destination": "/cadam/Adam-Logo.png"
+    },
+    {
+      "source": "/cadam/adam-icon.ico",
+      "destination": "/cadam/adam-icon.ico"
+    },
+    {
+      "source": "/cadam/adam-logo.svg",
+      "destination": "/cadam/adam-logo.svg"
+    },
+    {
+      "source": "/cadam/adam-logo-full.svg",
+      "destination": "/cadam/adam-logo-full.svg"
+    },
+    {
+      "source": "/cadam/Github-Banner-Dark.png",
+      "destination": "/cadam/Github-Banner-Dark.png"
+    },
+    {
+      "source": "/cadam/Github-Banner-Light.png",
+      "destination": "/cadam/Github-Banner-Light.png"
+    },
+    {
+      "source": "/cadam/screenshot-1.jpeg",
+      "destination": "/cadam/screenshot-1.jpeg"
+    },
+    {
+      "source": "/cadam/screenshot-2.jpeg",
+      "destination": "/cadam/screenshot-2.jpeg"
+    },
+    {
+      "source": "/cadam/screenshot-3.jpeg",
+      "destination": "/cadam/screenshot-3.jpeg"
+    },
+    {
       "source": "/cadam/:path*",
       "destination": "/cadam/_shell.html"
     }
