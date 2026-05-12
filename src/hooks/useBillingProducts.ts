@@ -1,7 +1,7 @@
 import { supabase } from '@/lib/supabase';
 import { useQuery } from '@tanstack/react-query';
 
-export type SubscriptionLevel = 'standard' | 'pro';
+export type SubscriptionLevel = 'standard' | 'pro' | 'max';
 
 export type BillingProduct = {
   id: string;

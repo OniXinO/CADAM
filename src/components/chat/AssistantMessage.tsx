@@ -669,7 +669,7 @@ function MeshLimitReachedMessage() {
     );
   }
 
-  if (level === 'pro') {
+  if (level === 'pro' || level === 'max') {
     return (
       <span>
         You have reached the limit of 1500 generations per month. Let us know if

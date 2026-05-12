@@ -17,6 +17,7 @@ import * as Sentry from '@sentry/react';
 import { useProfile, useUpdateProfile } from '@/services/profileService';
 import { AvatarUpdateDialog } from '@/components/auth/AvatarUpdateDialog';
 import { useTokenPacks } from '@/hooks/useTokenPacks';
+import { PLAN_DISPLAY_NAMES } from '@/config/plan-features';
 
 function formatPeriodEnd(iso: string | null | undefined): string | null {
   if (!iso) return null;
@@ -136,12 +137,7 @@ export default function SettingsView() {
       },
     });
 
-  const tierLabel =
-    level === 'free'
-      ? 'Adam Free'
-      : level === 'standard'
-        ? 'Adam Standard'
-        : 'Adam Pro';
+  const tierLabel = `Adam ${PLAN_DISPLAY_NAMES[level]}`;
 
   const tierAccent =
     level === 'free'
@@ -294,7 +290,9 @@ export default function SettingsView() {
                       tierAccent,
                     )}
                   >
-                    {level === 'pro' && <Sparkles className="h-3 w-3" />}
+                    {(level === 'pro' || level === 'max') && (
+                      <Sparkles className="h-3 w-3" />
+                    )}
                     {tierLabel}
                   </span>
                   {periodEnd && (

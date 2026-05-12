@@ -2,7 +2,7 @@
 // onshape-extension/src/lib/billing/client.ts so CADAM and onshape behave
 // identically against the same endpoints.
 
-export type SubscriptionLevel = 'standard' | 'pro';
+export type SubscriptionLevel = 'standard' | 'pro' | 'max';
 
 export type BillingStatus = {
   user: {
@@ -115,7 +115,10 @@ const devRefund = (tokens: number): RefundResult => ({
   totalBalance: DEV_TOKENS.total,
 });
 
-const devProducts: { subscriptions: BillingProduct[]; packs: BillingProduct[] } = {
+const devProducts: {
+  subscriptions: BillingProduct[];
+  packs: BillingProduct[];
+} = {
   subscriptions: [
     {
       id: 'dev_standard_monthly',
@@ -123,9 +126,9 @@ const devProducts: { subscriptions: BillingProduct[]; packs: BillingProduct[] } 
       stripePriceId: 'price_dev_standard_monthly',
       productType: 'subscription',
       subscriptionLevel: 'standard',
-      tokenAmount: 500_000,
+      tokenAmount: 4_000,
       name: 'Standard',
-      priceCents: 1900,
+      priceCents: 2000,
       interval: 'month',
       active: true,
     },
@@ -135,9 +138,21 @@ const devProducts: { subscriptions: BillingProduct[]; packs: BillingProduct[] } 
       stripePriceId: 'price_dev_pro_monthly',
       productType: 'subscription',
       subscriptionLevel: 'pro',
-      tokenAmount: 2_000_000,
+      tokenAmount: 10_000,
       name: 'Pro',
-      priceCents: 4900,
+      priceCents: 4000,
+      interval: 'month',
+      active: true,
+    },
+    {
+      id: 'dev_max_monthly',
+      stripeProductId: 'prod_dev_max',
+      stripePriceId: 'price_dev_max_monthly',
+      productType: 'subscription',
+      subscriptionLevel: 'max',
+      tokenAmount: 50_000,
+      name: 'Max',
+      priceCents: 20000,
       interval: 'month',
       active: true,
     },
@@ -257,10 +272,16 @@ export const billing = {
   },
 
   consume: (email: string, body: ConsumeBody) => {
-    if (isBypassed()) return Promise.resolve<ConsumeResult>(devConsume(body.tokens));
-    return call<ConsumeResult>('POST', `/v1/users/${enc(email)}/consume`, body, {
-      allowStatus: [422],
-    });
+    if (isBypassed())
+      return Promise.resolve<ConsumeResult>(devConsume(body.tokens));
+    return call<ConsumeResult>(
+      'POST',
+      `/v1/users/${enc(email)}/consume`,
+      body,
+      {
+        allowStatus: [422],
+      },
+    );
   },
 
   refund: (email: string, body: RefundBody) => {
@@ -270,12 +291,20 @@ export const billing = {
 
   createCheckout: (email: string, body: CheckoutBody) => {
     if (isBypassed()) return Promise.reject(devCheckoutError());
-    return call<{ url: string }>('POST', `/v1/users/${enc(email)}/checkout`, body);
+    return call<{ url: string }>(
+      'POST',
+      `/v1/users/${enc(email)}/checkout`,
+      body,
+    );
   },
 
   createPortal: (email: string, body: { returnUrl: string }) => {
     if (isBypassed()) return Promise.reject(devCheckoutError());
-    return call<{ url: string }>('POST', `/v1/users/${enc(email)}/portal`, body);
+    return call<{ url: string }>(
+      'POST',
+      `/v1/users/${enc(email)}/portal`,
+      body,
+    );
   },
 
   cancelSubscription: (email: string, body: CancelSubscriptionBody = {}) => {
