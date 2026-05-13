@@ -19,6 +19,10 @@ export function isUnauthorizedError(error: unknown) {
   return error instanceof Error && error.message === 'Unauthorized';
 }
 
+export function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
 export async function requireUser(request: Request): Promise<User> {
   const supabase = getAnonSupabaseClient({
     global: {

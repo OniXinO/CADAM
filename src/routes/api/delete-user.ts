@@ -1,6 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { billing } from '@/server/billingClient';
-import { json } from '@/server/api';
+import { isRecord, json } from '@/server/api';
 import {
   getServiceRoleSupabaseClient,
   type SupabaseClient,
@@ -16,6 +16,22 @@ type CancellationFeedback =
   | 'too_expensive'
   | 'unused';
 
+function isCancellationFeedback(value: unknown): value is CancellationFeedback {
+  switch (value) {
+    case 'customer_service':
+    case 'low_quality':
+    case 'missing_features':
+    case 'other':
+    case 'switched_service':
+    case 'too_complex':
+    case 'too_expensive':
+    case 'unused':
+      return true;
+    default:
+      return false;
+  }
+}
+
 export const Route = createFileRoute('/api/delete-user')({
   server: {
     handlers: {
@@ -24,9 +40,11 @@ export const Route = createFileRoute('/api/delete-user')({
         const token = request.headers
           .get('Authorization')
           ?.replace('Bearer ', '');
-        const { reason } = (await request.json().catch(() => ({}))) as {
-          reason?: CancellationFeedback;
-        };
+        const body = await request.json().catch(() => ({}));
+        const reason =
+          isRecord(body) && isCancellationFeedback(body.reason)
+            ? body.reason
+            : undefined;
         const { data, error } = await supabase.auth.getUser(token);
         if (error || !data.user?.email)
           return json({ error: 'Unauthorized' }, 401);
@@ -75,7 +93,7 @@ async function listAllPaths(
   const paths: string[] = [];
   for (const item of data ?? []) {
     const path = `${folder}/${item.name}`;
-    if ((item as { id?: string }).id) paths.push(path);
+    if ('id' in item && item.id) paths.push(path);
     else paths.push(...(await listAllPaths(supabase, bucket, path)));
   }
   return paths;

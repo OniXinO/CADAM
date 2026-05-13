@@ -914,45 +914,9 @@ export async function handleParametricChatRequest(req: Request) {
     });
   }
 
-  // Deduct chat token (1) via adam-billing
   if (!userData.user.email) {
     return new Response(JSON.stringify({ error: 'User email missing' }), {
       status: 400,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
-  }
-
-  try {
-    const result = await billing.consume(userData.user.email, {
-      tokens: CHAT_TOKEN_COST,
-      operation: 'chat',
-      referenceId: crypto.randomUUID(),
-    });
-    if (!result.ok) {
-      return new Response(
-        JSON.stringify({
-          error: {
-            message: 'insufficient_tokens',
-            code: 'insufficient_tokens',
-            tokensRequired: result.tokensRequired,
-            tokensAvailable: result.tokensAvailable,
-          },
-        }),
-        {
-          status: 402,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        },
-      );
-    }
-  } catch (err) {
-    const status = err instanceof BillingClientError ? err.status : 502;
-    logError(err, {
-      functionName: 'parametric-chat',
-      statusCode: status,
-      userId: userData.user.id,
-    });
-    return new Response(JSON.stringify({ error: 'billing_unavailable' }), {
-      status: 502,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   }
@@ -1030,6 +994,52 @@ export async function handleParametricChatRequest(req: Request) {
     });
   }
 
+  const messageTree = new Tree<Message>(messages);
+  const newMessage = messages.find((m) => m.id === messageId);
+  if (!newMessage) {
+    return new Response(JSON.stringify({ error: 'Message not found' }), {
+      status: 404,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    });
+  }
+  const currentMessageBranch = messageTree.getPath(newMessage.id);
+
+  const chatBillingReferenceId = crypto.randomUUID();
+  try {
+    const result = await billing.consume(userData.user.email, {
+      tokens: CHAT_TOKEN_COST,
+      operation: 'chat',
+      referenceId: chatBillingReferenceId,
+    });
+    if (!result.ok) {
+      return new Response(
+        JSON.stringify({
+          error: {
+            message: 'insufficient_tokens',
+            code: 'insufficient_tokens',
+            tokensRequired: result.tokensRequired,
+            tokensAvailable: result.tokensAvailable,
+          },
+        }),
+        {
+          status: 402,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        },
+      );
+    }
+  } catch (err) {
+    const status = err instanceof BillingClientError ? err.status : 502;
+    logError(err, {
+      functionName: 'parametric-chat',
+      statusCode: status,
+      userId: userData.user.id,
+    });
+    return new Response(JSON.stringify({ error: 'billing_unavailable' }), {
+      status: 502,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
+
   // Insert placeholder assistant message that we will stream updates into
   let content: Content = { model };
   const { data: newMessageData, error: newMessageError } = await supabaseClient
@@ -1045,6 +1055,19 @@ export async function handleParametricChatRequest(req: Request) {
     .single()
     .overrideTypes<{ content: Content; role: 'assistant' }>();
   if (!newMessageData) {
+    await billing
+      .refund(userData.user.email, {
+        tokens: CHAT_TOKEN_COST,
+        operation: 'chat',
+        referenceId: chatBillingReferenceId,
+      })
+      .catch((err) => {
+        logError(err, {
+          functionName: 'parametric-chat',
+          statusCode: err instanceof BillingClientError ? err.status : 502,
+          userId: userData.user.id,
+        });
+      });
     return new Response(
       JSON.stringify({
         error:
@@ -1060,13 +1083,6 @@ export async function handleParametricChatRequest(req: Request) {
   }
 
   try {
-    const messageTree = new Tree<Message>(messages);
-    const newMessage = messages.find((m) => m.id === messageId);
-    if (!newMessage) {
-      throw new Error('Message not found');
-    }
-    const currentMessageBranch = messageTree.getPath(newMessage.id);
-
     const messagesToSend: OpenAIMessage[] = await Promise.all(
       currentMessageBranch.map(async (msg: CoreMessage) => {
         if (msg.role === 'user') {

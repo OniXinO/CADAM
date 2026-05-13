@@ -1,12 +1,16 @@
 import { createFileRoute } from '@tanstack/react-router';
 import type { Content, CoreMessage } from '@shared/types';
 import { createAnthropicText } from '@/server/anthropic';
-import { isUnauthorizedError, json, requireUser } from '@/server/api';
+import { isRecord, isUnauthorizedError, json, requireUser } from '@/server/api';
 import { getAnonSupabaseClient } from '@/server/supabaseClient';
 import { formatUserMessage } from '@/server/messageUtils';
 
 const TITLE_SYSTEM_PROMPT =
   'Generate a concise, descriptive title under 80 characters for this CAD conversation. Return only the title. If unclear, return "New Conversation".';
+
+function isContent(value: unknown): value is Content {
+  return isRecord(value);
+}
 
 export const Route = createFileRoute('/api/title-generator')({
   server: {
@@ -22,10 +26,14 @@ export const Route = createFileRoute('/api/title-generator')({
           throw err;
         }
         try {
-          const body = (await request.json()) as {
-            content: Content;
-            conversationId: string;
-          };
+          const body = await request.json();
+          if (
+            !isRecord(body) ||
+            typeof body.conversationId !== 'string' ||
+            !isContent(body.content)
+          ) {
+            return json({ title: 'New Conversation' });
+          }
           const supabase = getAnonSupabaseClient({
             global: {
               headers: {
