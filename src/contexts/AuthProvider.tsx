@@ -7,6 +7,23 @@ import posthog from 'posthog-js';
 import { AuthContext, type BillingStatus, getLevel } from './AuthContext';
 import { apiJson } from '@/services/api';
 
+const LOCAL_BILLING_STATUS: BillingStatus = {
+  user: { hasTrialed: false },
+  subscription: {
+    level: 'pro',
+    status: 'active',
+    currentPeriodEnd: new Date(
+      Date.now() + 365 * 24 * 60 * 60 * 1000,
+    ).toISOString(),
+  },
+  tokens: {
+    free: 1_000_000,
+    subscription: 1_000_000,
+    purchased: 1_000_000,
+    total: 3_000_000,
+  },
+};
+
 const ensurePermission = async () => {
   if (typeof window === 'undefined' || !('Notification' in window)) {
     return false;
@@ -68,7 +85,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     enabled: !!user,
     refetchInterval: 30000,
     queryFn: async (): Promise<BillingStatus> => {
-      return apiJson<BillingStatus>('billing-status');
+      try {
+        return await apiJson<BillingStatus>('billing-status');
+      } catch (err) {
+        if (import.meta.env.DEV) return LOCAL_BILLING_STATUS;
+        throw err;
+      }
     },
   });
 

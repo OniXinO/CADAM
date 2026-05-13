@@ -19,6 +19,7 @@ import * as Sentry from '@sentry/react';
 import { useSendContentMutation } from '@/services/messageService';
 import { useProfile } from '@/services/profileService';
 import { useLayoutContext } from '@/contexts/LayoutContext';
+import { apiJson } from '@/services/api';
 
 const EXTENSION_PILLS = [
   {
@@ -155,12 +156,15 @@ export function PromptView() {
     },
     onSuccess: (data) => {
       // Generate title in the background if there's content
-      supabase.functions
-        .invoke('title-generator', {
-          body: { content: data.content, conversationId: data.conversationId },
-        })
-        .then(({ data: titleData, error }) => {
-          if (!error && titleData?.title) {
+      apiJson<{ title?: string }>('title-generator', {
+        method: 'POST',
+        body: JSON.stringify({
+          content: data.content,
+          conversationId: data.conversationId,
+        }),
+      })
+        .then((titleData) => {
+          if (titleData.title) {
             // Update conversation title once generated
             supabase
               .from('conversations')
