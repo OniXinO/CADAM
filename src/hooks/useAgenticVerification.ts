@@ -41,7 +41,7 @@ const logVerificationEvent = (
   event: string,
   details: Record<string, unknown>,
 ) => {
-  if (!import.meta.env.DEV) return;
+  if (localStorage.getItem('debug:agentic-verification') !== '1') return;
   console.info(`[agentic-verification] ${event}`, details);
 };
 

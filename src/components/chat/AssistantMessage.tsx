@@ -49,7 +49,6 @@ import { useIsMobile } from '@/hooks/useIsMobile';
 import { useMeshData } from '@/hooks/useMeshData';
 import { MeshImagePreview } from '@/components/viewer/MeshImagePreview';
 import { TreeNode } from '@shared/Tree';
-import { viewLabel } from '@/utils/agenticRenderer';
 
 const linkParametricMode = (text: string) =>
   text.replace(
@@ -533,11 +532,6 @@ export function AssistantMessage({
 }
 
 function VerificationToolCallCard({ toolCall }: { toolCall: ToolCall }) {
-  const viewLabels =
-    toolCall.views && toolCall.views.length > 0
-      ? toolCall.views.map((v) => viewLabel(v)).join(', ')
-      : '';
-
   const isPending =
     toolCall.status === 'pending' || toolCall.status === 'pending_verification';
   const isVerified = toolCall.status === 'verified';
@@ -558,17 +552,12 @@ function VerificationToolCallCard({ toolCall }: { toolCall: ToolCall }) {
             {isError
               ? 'Verification failed'
               : isVerified
-                ? `Verified${viewLabels ? ` from ${viewLabels}` : ''}`
-                : `Inspecting model${viewLabels ? ` from ${viewLabels}` : '...'}`}
+                ? 'Verified'
+                : 'Inspecting model...'}
           </span>
         </div>
         {isPending && <Loader2 className="h-4 w-4 animate-spin text-white" />}
       </div>
-      {toolCall.reasoning && (
-        <span className="px-1 text-xs text-adam-neutral-300">
-          {toolCall.reasoning}
-        </span>
-      )}
     </div>
   );
 }

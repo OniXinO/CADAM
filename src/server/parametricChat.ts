@@ -1949,7 +1949,6 @@ export async function handleParametricChatRequest(req: Request) {
                             ...c,
                             status: 'pending_verification',
                             views: verificationViews,
-                            reasoning: `${verificationReasoning} Attempt ${attempt}.`,
                           }
                         : c,
                     ),

@@ -13,6 +13,20 @@ type PendingRequest = {
   reject: (error: Error) => void;
 };
 
+type SerializedOpenSCADError = {
+  name: 'OpenSCADError';
+  message: string;
+  code: string;
+  stdErr: string[];
+};
+
+function toWorkerError(error: Error | SerializedOpenSCADError) {
+  if ('code' in error && 'stdErr' in error) {
+    return new OpenSCADError(error.message, error.code, error.stdErr);
+  }
+  return error;
+}
+
 export function useOpenSCAD() {
   const [isCompiling, setIsCompiling] = useState(false);
   const [error, setError] = useState<OpenSCADError | Error | undefined>();
@@ -45,7 +59,7 @@ export function useOpenSCAD() {
       pendingRequestsRef.current.delete(id);
 
       if (err) {
-        pending.reject(new Error(err.message || 'Worker operation failed'));
+        pending.reject(toWorkerError(err));
       } else {
         pending.resolve(event.data.data);
       }
@@ -66,7 +80,7 @@ export function useOpenSCAD() {
       }
 
       if (err) {
-        setError(err);
+        setError(toWorkerError(err));
         setIsError(true);
         setOutput(undefined);
         setOffOutput(undefined);
