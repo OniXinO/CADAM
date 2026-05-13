@@ -9,7 +9,7 @@ export function logError(
   },
 ) {
   console.error(`[${context.functionName}] Error (${context.statusCode}):`, {
-    error: error instanceof Error ? error.message : 'Unknown error',
+    error,
     userId: context.userId,
     conversationId: context.conversationId,
     additionalContext: context.additionalContext,

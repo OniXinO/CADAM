@@ -1,7 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router';
 import type { Content, CoreMessage } from '@shared/types';
 import { createAnthropicText } from '@/server/anthropic';
-import { json, requireUser } from '@/server/api';
+import { isUnauthorizedError, json, requireUser } from '@/server/api';
 import { getAnonSupabaseClient } from '@/server/supabaseClient';
 import { formatUserMessage } from '@/server/messageUtils';
 
@@ -12,8 +12,16 @@ export const Route = createFileRoute('/api/title-generator')({
   server: {
     handlers: {
       POST: async ({ request }) => {
+        let user;
         try {
-          const user = await requireUser(request);
+          user = await requireUser(request);
+        } catch (err) {
+          if (isUnauthorizedError(err)) {
+            return json({ error: 'Unauthorized' }, 401);
+          }
+          throw err;
+        }
+        try {
           const body = (await request.json()) as {
             content: Content;
             conversationId: string;

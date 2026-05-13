@@ -22,9 +22,9 @@ export function ParametricPreviewSection({
 }: ParametricPreviewSectionProps) {
   const { currentMessage: message } = useCurrentMessage();
   const artifact = message?.content.artifact;
-  const hasPreviewContent =
-    !!artifact?.code ||
-    (message?.content.images && Array.isArray(message.content.images));
+  const images = message?.content.images;
+  const hasImages = Array.isArray(images) && images.length > 0;
+  const hasPreviewContent = !!artifact?.code || hasImages;
 
   return (
     <div className="flex h-full w-full items-center justify-center bg-adam-neutral-700">
@@ -36,9 +36,7 @@ export function ParametricPreviewSection({
         </div>
       ) : (
         <div className="flex h-full w-full flex-1 flex-col items-center justify-center gap-2">
-          {message?.content.images && Array.isArray(message.content.images) && (
-            <ImageGallery imageIds={message.content.images} />
-          )}
+          {hasImages && <ImageGallery imageIds={images} />}
           {artifact?.code && (
             <OpenSCADPreview
               scadCode={artifact.code}

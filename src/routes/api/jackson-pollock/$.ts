@@ -24,12 +24,15 @@ async function proxyPostHog({ request }: { request: Request }) {
   nextUrl.port = '';
   nextUrl.pathname = path;
 
-  const headers = new Headers(request.headers);
-  headers.set('host', hostname);
+  const headers = new Headers();
+  for (const name of ['accept', 'content-type', 'user-agent']) {
+    const value = request.headers.get(name);
+    if (value) headers.set(name, value);
+  }
   const response = await fetch(nextUrl, {
     method: request.method,
     headers,
-    body: request.body,
+    body: request.method === 'GET' ? undefined : request.body,
   });
   return new Response(response.body, {
     status: response.status,

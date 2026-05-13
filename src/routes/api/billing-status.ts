@@ -1,5 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router';
-import { json, requireUser } from '@/server/api';
+import { isUnauthorizedError, json, requireUser } from '@/server/api';
 import { billing } from '@/server/billingClient';
 
 export const Route = createFileRoute('/api/billing-status')({
@@ -9,8 +9,15 @@ export const Route = createFileRoute('/api/billing-status')({
         try {
           const user = await requireUser(request);
           return json(await billing.getStatus(user.email!));
-        } catch {
-          return json({ error: 'Unauthorized' }, 401);
+        } catch (err) {
+          return json(
+            {
+              error: isUnauthorizedError(err)
+                ? 'Unauthorized'
+                : 'billing_failed',
+            },
+            isUnauthorizedError(err) ? 401 : 502,
+          );
         }
       },
     },

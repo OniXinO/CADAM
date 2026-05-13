@@ -1,11 +1,12 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { createAnthropicText } from '@/server/anthropic';
-import { json, requireUser } from '@/server/api';
+import { isUnauthorizedError, json, requireUser } from '@/server/api';
 
 const CREATIVE_PROMPT =
   'Generate a short creative prompt for an organic 3D form, character, figurine, sculpture, or artistic object. Return only the prompt text.';
 const PARAMETRIC_PROMPT =
   'Generate a short prompt for a practical dimensional household object or functional part. Include dimensions when useful. Return only the prompt text.';
+const MAX_EXISTING_TEXT_LENGTH = 2000;
 
 export const Route = createFileRoute('/api/prompt-generator')({
   server: {
@@ -17,6 +18,13 @@ export const Route = createFileRoute('/api/prompt-generator')({
             existingText?: string;
             type?: 'parametric' | 'creative';
           };
+          if (
+            body.existingText !== undefined &&
+            (typeof body.existingText !== 'string' ||
+              body.existingText.length > MAX_EXISTING_TEXT_LENGTH)
+          ) {
+            return json({ error: 'invalid_existing_text' }, 400);
+          }
           const base =
             body.type === 'parametric' ? PARAMETRIC_PROMPT : CREATIVE_PROMPT;
           const content = body.existingText
@@ -32,8 +40,12 @@ export const Route = createFileRoute('/api/prompt-generator')({
           return json({ prompt });
         } catch (err) {
           return json(
-            { error: err instanceof Error ? err.message : 'prompt_failed' },
-            err instanceof Error && err.message === 'Unauthorized' ? 401 : 500,
+            {
+              error: isUnauthorizedError(err)
+                ? 'Unauthorized'
+                : 'prompt_failed',
+            },
+            isUnauthorizedError(err) ? 401 : 500,
           );
         }
       },

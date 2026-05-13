@@ -1,5 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router';
-import { json, requireUser } from '@/server/api';
+import { isUnauthorizedError, json, requireUser } from '@/server/api';
 import { billing } from '@/server/billingClient';
 import { env } from '@/server/env';
 
@@ -11,10 +11,13 @@ export const Route = createFileRoute('/api/billing-checkout')({
       POST: async ({ request }) => {
         try {
           const user = await requireUser(request);
-          const body = (await request.json()) as {
+          const body = (await request.json().catch(() => null)) as {
             priceId: string;
             trialPeriodDays?: number;
-          };
+          } | null;
+          if (!body || typeof body.priceId !== 'string') {
+            return json({ error: 'invalid_request' }, 400);
+          }
           const result = await billing.createCheckout(user.email!, {
             priceId: body.priceId,
             successUrl: appUrl(),
@@ -25,12 +28,11 @@ export const Route = createFileRoute('/api/billing-checkout')({
         } catch (err) {
           return json(
             {
-              error:
-                err instanceof Error && err.message === 'Unauthorized'
-                  ? 'Unauthorized'
-                  : 'checkout_failed',
+              error: isUnauthorizedError(err)
+                ? 'Unauthorized'
+                : 'checkout_failed',
             },
-            err instanceof Error && err.message === 'Unauthorized' ? 401 : 502,
+            isUnauthorizedError(err) ? 401 : 502,
           );
         }
       },

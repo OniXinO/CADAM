@@ -15,6 +15,10 @@ export function json(data: unknown, status = 200) {
   });
 }
 
+export function isUnauthorizedError(error: unknown) {
+  return error instanceof Error && error.message === 'Unauthorized';
+}
+
 export async function requireUser(request: Request): Promise<User> {
   const supabase = getAnonSupabaseClient({
     global: {
