@@ -32,18 +32,19 @@ export const Route = createFileRoute('/api/delete-user')({
           return json({ error: 'Unauthorized' }, 401);
 
         await billing.cancelSubscription(data.user.email, { feedback: reason });
+        let storageCleanupFailed = false;
         try {
           await deleteUserStorageItems(supabase, data.user.id);
         } catch (storageError) {
+          storageCleanupFailed = true;
           console.error('Failed to delete user storage items:', storageError);
-          return json({ error: 'Failed to delete user storage' }, 500);
         }
 
         const { error: deleteError } = await supabase.auth.admin.deleteUser(
           data.user.id,
         );
         if (deleteError) return json({ error: 'Failed to delete user' }, 500);
-        return json({ success: true });
+        return json({ success: true, storageCleanupFailed });
       },
     },
   },
