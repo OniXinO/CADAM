@@ -1,8 +1,8 @@
-import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
 import { useMutation } from '@tanstack/react-query';
 import posthog from 'posthog-js';
 import * as Sentry from '@sentry/react';
+import { apiJson } from '@/services/api';
 
 type CheckoutResponse = { url: string };
 
@@ -10,12 +10,12 @@ async function invokeCheckout(body: {
   priceId: string;
   trialPeriodDays?: number;
 }): Promise<CheckoutResponse> {
-  const { data, error } = await supabase.functions.invoke('billing-checkout', {
-    body,
+  const data = await apiJson<CheckoutResponse>('billing-checkout', {
+    method: 'POST',
+    body: JSON.stringify(body),
   });
-  if (error) throw error;
-  if (!data?.url) throw new Error('No checkout URL returned');
-  return data as CheckoutResponse;
+  if (!data.url) throw new Error('No checkout URL returned');
+  return data;
 }
 
 export const useSubscriptionService = () => {
@@ -78,10 +78,11 @@ export const useManageSubscription = () => {
 
   return useMutation({
     mutationFn: async () => {
-      const { data, error } = await supabase.functions.invoke('billing-portal');
-      if (error) throw error;
-      if (!data?.url) throw new Error('No portal URL returned');
-      return data as { url: string };
+      const data = await apiJson<{ url: string }>('billing-portal', {
+        method: 'POST',
+      });
+      if (!data.url) throw new Error('No portal URL returned');
+      return data;
     },
     onSuccess: (data) => {
       window.location.href = data.url;

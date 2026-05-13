@@ -2,9 +2,9 @@ import posthog from 'posthog-js';
 
 const POSTHOG_KEY =
   import.meta.env.VITE_POSTHOG_PROJECT_KEY ?? import.meta.env.VITE_POSTHOG_KEY;
-const POSTHOG_HOST = import.meta.env.VITE_SUPABASE_URL
-  ? `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/jackson-pollock`
-  : import.meta.env.VITE_POSTHOG_HOST || 'https://us.i.posthog.com';
+const POSTHOG_HOST =
+  import.meta.env.VITE_POSTHOG_HOST ||
+  `${import.meta.env.BASE_URL}api/jackson-pollock`;
 
 let isInitialized = false;
 

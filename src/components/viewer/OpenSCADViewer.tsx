@@ -1,5 +1,12 @@
 import { useOpenSCAD } from '@/hooks/useOpenSCAD';
-import { useCallback, useEffect, useState, useContext, useRef } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useState,
+  useContext,
+  useRef,
+  useMemo,
+} from 'react';
 import { ThreeScene } from '@/components/viewer/ThreeScene';
 import { STLLoader } from 'three/addons/loaders/STLLoader.js';
 import {
@@ -10,14 +17,13 @@ import {
   Mesh,
   MeshStandardMaterial,
 } from 'three';
-import { Loader2, CircleAlert, Wrench } from 'lucide-react';
+import { Loader2, CircleAlert } from 'lucide-react';
 import { parseColoredOff } from '@/utils/offParser';
-import { Button } from '@/components/ui/button';
-import OpenSCADError from '@/lib/OpenSCADError';
-import { cn } from '@/lib/utils';
+import type OpenSCADError from '@/lib/OpenSCADError';
 import { MeshFilesContext } from '@/contexts/MeshFilesContext';
 import { createDXFProjectionCode } from '@/utils/dxfUtils';
 import { DxfExporter } from '@/utils/downloadUtils';
+import type { AgenticCompileResult } from '@/hooks/useAgenticVerification';
 
 // Extract import() filenames from OpenSCAD code
 function extractImportFilenames(code: string): string[] {
@@ -46,21 +52,35 @@ function disposeGroup(group: Group) {
 interface OpenSCADPreviewProps {
   scadCode: string | null;
   color: string;
-  onOutputChange?: (output: Blob | undefined) => void;
+  onCompileResult?: (result: AgenticCompileResult) => void;
   onDxfExportChange?: (exporter: DxfExporter | null) => void;
-  fixError?: (error: OpenSCADError) => void;
   isMobile?: boolean;
   backgroundColor?: string;
+  suppressCompileErrors?: boolean;
+  // Optional set of supplementary .scad files for multi-file artifacts.
+  // Each is written to the WASM filesystem before compile so the entry
+  // (`scadCode`) can `use <name.scad>` / `include <name.scad>` them.
+  // Bare filenames only — no directories.
+  files?: { name: string; content: string }[];
+  // Filename of the entry file inside `files`. The entry's content is
+  // already passed to `compileScad` via `scadCode`, so we skip writing
+  // it again. We key the skip on filename (not on content equality)
+  // because two distinct files could share identical content, and
+  // during `update_file` streams the `files` prop updates one render
+  // ahead of `scadCode` — so identity by content briefly disagrees.
+  entryFile?: string;
 }
 
 export function OpenSCADPreview({
   scadCode,
   color,
-  onOutputChange,
+  onCompileResult,
   onDxfExportChange,
-  fixError,
   isMobile,
   backgroundColor,
+  suppressCompileErrors = false,
+  files,
+  entryFile,
 }: OpenSCADPreviewProps) {
   const {
     compileScad,
@@ -94,10 +114,61 @@ export function OpenSCADPreview({
     fallbackColorRef.current = color;
   }, [color]);
 
+  const showCompiling = isCompiling || (suppressCompileErrors && isError);
+  const pendingPreviewCodeRef = useRef<string | null>(null);
+
+  // Track which `.scad` aux files we've written (and their content) so we
+  // skip the worker round-trip when nothing changed between recompiles —
+  // critical for streaming multi-file artifacts where this fires dozens
+  // of times as files arrive.
+  const writtenScadFilesRef = useRef<Map<string, string>>(new Map());
+  const filesRef = useRef(files);
+  useEffect(() => {
+    filesRef.current = files;
+  }, [files]);
+
+  const scadFilesKey = useMemo(
+    () =>
+      (files ?? [])
+        .map(
+          (f) => `${f.name.length}:${f.name}:${f.content.length}:${f.content}`,
+        )
+        .join('\n'),
+    [files],
+  );
+
   // Shared by preview compilation and on-demand exports so import() files are
-  // available in the OpenSCAD worker before either operation runs.
+  // available in the OpenSCAD worker before either operation runs. Also
+  // covers multi-file artifacts: each supplementary `.scad` from `files`
+  // is written so the entry can `use <name.scad>` / `include <name.scad>`.
   const prepareMeshFiles = useCallback(
     async (code: string) => {
+      // Write supplementary .scad files first — the entry's `use <...>`
+      // resolution needs them on disk before compileScad runs.
+      const scadFiles = filesRef.current;
+      if (scadFilesKey && scadFiles && scadFiles.length > 0) {
+        for (const f of scadFiles) {
+          // Skip the entry file BY NAME — its content is passed to
+          // compileScad directly via `scadCode`. Keying on content
+          // equality (the previous approach) was fragile in two ways:
+          // (1) two distinct files could share identical content; (2)
+          // when `update_file` streams a patched entry, the `files`
+          // prop updates one render before `scadCode`, so for one
+          // frame the entry's content in `files` no longer equals
+          // `code` and the entry would get duplicate-written to the
+          // WASM fs alongside the compileScad call → OpenSCAD would
+          // see redeclared top-level vars and error out.
+          if (entryFile && f.name === entryFile) continue;
+          const previous = writtenScadFilesRef.current.get(f.name);
+          if (previous === f.content) continue;
+          await writeFile(
+            f.name,
+            new Blob([f.content], { type: 'text/plain' }),
+          );
+          writtenScadFilesRef.current.set(f.name, f.content);
+        }
+      }
+
       // Extract any import() filenames from the code
       const importedFiles = extractImportFilenames(code);
 
@@ -116,7 +187,7 @@ export function OpenSCADPreview({
         }
       }
     },
-    [writeFile, meshFilesCtx],
+    [writeFile, meshFilesCtx, scadFilesKey, entryFile],
   );
 
   // Recompile the preview whenever the current SCAD code changes.
@@ -126,14 +197,29 @@ export function OpenSCADPreview({
     const compileWithMeshFiles = async () => {
       try {
         await prepareMeshFiles(scadCode);
+        pendingPreviewCodeRef.current = scadCode;
+        onCompileResult?.({ type: 'pending' });
         compileScad(scadCode);
       } catch (err) {
+        if (err instanceof Error && err.message === 'Worker terminated') return;
         console.error('[OpenSCAD] Error preparing files for compilation:', err);
       }
     };
 
     compileWithMeshFiles();
-  }, [scadCode, compileScad, prepareMeshFiles]);
+  }, [scadCode, compileScad, onCompileResult, prepareMeshFiles]);
+
+  useEffect(() => {
+    if (!onCompileResult || !scadCode || !isError || !error) return;
+    if (error.name !== 'OpenSCADError') throw error;
+
+    const compileError = error as OpenSCADError;
+    onCompileResult({
+      type: 'compile_error',
+      sourceCode: scadCode,
+      errorText: compileError.stdErr.join('\n').trim(),
+    });
+  }, [error, isError, onCompileResult, scadCode]);
 
   // Register a parent-owned DXF exporter for the current SCAD code. The export
   // runs only when the user chooses DXF from the download menu.
@@ -149,7 +235,12 @@ export function OpenSCADPreview({
   }, [scadCode, exportScad, onDxfExportChange, prepareMeshFiles]);
 
   useEffect(() => {
-    onOutputChange?.(output);
+    const sourceCode = pendingPreviewCodeRef.current;
+    if (output && sourceCode) {
+      onCompileResult?.({ type: 'stl', output, sourceCode });
+    } else {
+      onCompileResult?.({ type: 'pending' });
+    }
 
     // Mirror the colored-group pattern: every path that clears geometry
     // state must first release the previous vertex buffers, otherwise
@@ -187,7 +278,7 @@ export function OpenSCADPreview({
     } else {
       clearGeometry();
     }
-  }, [output, onOutputChange]);
+  }, [output, onCompileResult]);
 
   useEffect(() => {
     let cancelled = false;
@@ -340,14 +431,14 @@ export function OpenSCADPreview({
           </div>
         ) : (
           <>
-            {isError && (
+            {isError && !suppressCompileErrors && (
               <div className="flex h-full items-center justify-center">
-                <FixWithAIButton error={error} fixError={fixError} />
+                <CompileErrorState isRepairing={!!onCompileResult} />
               </div>
             )}
           </>
         )}
-        {isCompiling && (
+        {showCompiling && (
           <div className="absolute inset-0 flex items-center justify-center rounded-lg bg-adam-neutral-700/30 backdrop-blur-sm">
             <div className="flex flex-col items-center gap-3">
               <Loader2 className="h-6 w-6 animate-spin text-adam-blue" />
@@ -365,18 +456,14 @@ export function OpenSCADPreview({
 // Alias for backwards compatibility (ViewerSection imports OpenSCADViewer)
 export { OpenSCADPreview as OpenSCADViewer };
 
-function FixWithAIButton({
-  error,
-  fixError,
-}: {
-  error?: OpenSCADError | Error;
-  fixError?: (error: OpenSCADError) => void;
-}) {
+function CompileErrorState({ isRepairing }: { isRepairing: boolean }) {
   return (
     <div className="flex h-full flex-col items-center justify-center gap-4 p-6">
       <div className="flex flex-col items-center gap-3">
         <div className="relative">
-          <div className="absolute inset-0 animate-ping rounded-full bg-adam-blue/20" />
+          {isRepairing && (
+            <div className="absolute inset-0 animate-ping rounded-full bg-adam-blue/20" />
+          )}
           <CircleAlert className="h-8 w-8 text-adam-blue" />
         </div>
         <div className="text-center">
@@ -384,40 +471,12 @@ function FixWithAIButton({
             Error Compiling Model
           </p>
           <p className="mt-1 text-xs text-adam-text-primary/60">
-            Adam encountered an error while compiling
+            {isRepairing
+              ? 'Sending compile error back to Adam'
+              : 'Adam encountered an error while compiling'}
           </p>
         </div>
       </div>
-      {fixError && error && error.name === 'OpenSCADError' && (
-        <Button
-          variant="ghost"
-          className={cn(
-            'group relative flex items-center gap-2 rounded-lg border',
-            'bg-gradient-to-br from-adam-blue/20 to-adam-neutral-800/70 p-3',
-            'border-adam-blue/30 text-adam-text-primary',
-            'transition-all duration-300 ease-in-out',
-            'hover:border-adam-blue/70 hover:bg-adam-blue/50 hover:text-white',
-            'hover:shadow-[0_0_25px_rgba(249,115,184,0.4)]',
-            'focus:outline-none focus:ring-2 focus:ring-adam-blue/30',
-          )}
-          onClick={() => {
-            // error crosses the worker boundary as a plain object, so
-            // instanceof OpenSCADError won't narrow — check the name
-            // discriminator and narrow via a local type guard instead of
-            // a cast.
-            const isOpenSCADError = (e: unknown): e is OpenSCADError =>
-              !!e &&
-              typeof e === 'object' &&
-              'name' in e &&
-              e.name === 'OpenSCADError';
-            if (isOpenSCADError(error)) fixError?.(error);
-          }}
-        >
-          <div className="absolute inset-0 rounded-lg bg-gradient-to-br from-adam-blue/20 to-transparent opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
-          <Wrench className="h-4 w-4 transition-transform duration-300 group-hover:rotate-12" />
-          <span className="relative text-sm font-medium">Fix with AI</span>
-        </Button>
-      )}
     </div>
   );
 }

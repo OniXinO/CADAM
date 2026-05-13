@@ -4,7 +4,6 @@ import { useIsMutating, useQueryClient } from '@tanstack/react-query';
 import { updateParameter } from '@/lib/utils';
 import ParametricView from './ParametricView';
 import { useConversation } from '@/contexts/ConversationContext';
-import OpenSCADError from '@/lib/OpenSCADError';
 import { useCurrentMessage } from '@/contexts/CurrentMessageContext';
 import {
   useEditMessageMutation,
@@ -15,19 +14,25 @@ import {
   useUpdateMessageOptimisticMutation,
   useChangeRatingMutation,
 } from '@/services/messageService';
-import { useAuth } from '@/contexts/AuthContext';
 import Tree from '@shared/Tree';
 import { useRequestCancellation } from '@/hooks/useRequestCancellation';
+import { useAgenticVerification } from '@/hooks/useAgenticVerification';
+import type { AgenticCompileResult } from '@/hooks/useAgenticVerification';
 import posthog from 'posthog-js';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 
 export function ParametricEditorView() {
   const { conversation, updateConversationAsync } = useConversation();
   const queryClient = useQueryClient();
-  const { currentMessage, setCurrentMessage } = useCurrentMessage();
-  const { billing } = useAuth();
-  const totalTokens = billing?.tokens.total ?? 0;
+  const { setCurrentMessage } = useCurrentMessage();
   const [currentOutput, setCurrentOutput] = useState<Blob | undefined>();
+  const [compileResult, setCompileResult] = useState<AgenticCompileResult>({
+    type: 'pending',
+  });
+  const handleCompileResult = useCallback((result: AgenticCompileResult) => {
+    setCompileResult(result);
+    setCurrentOutput(result.type === 'stl' ? result.output : undefined);
+  }, []);
   // Brand fallback color used when OFF parsing fails and we drop back to
   // the single-color STL mesh.
   const color = '#00A6FF';
@@ -178,17 +183,10 @@ export function ParametricEditorView() {
     [sendMessageMutation, conversation.id, conversation.settings?.model],
   );
 
-  const fixError = useCallback(
-    async (error: OpenSCADError) => {
-      const newContent: Content = {
-        text: 'Fix with AI',
-        error: error.stdErr.join('\n'),
-      };
-
-      sendMessage(newContent);
-    },
-    [sendMessage],
-  );
+  // Browser side of build_parametric_model's write -> compile -> screenshot loop.
+  useAgenticVerification({
+    compileResult,
+  });
 
   return (
     <ParametricView
@@ -198,14 +196,12 @@ export function ParametricEditorView() {
       retryMessage={retryMessage}
       isLoading={isLoading}
       currentOutput={currentOutput}
-      setCurrentOutput={setCurrentOutput}
+      onCompileResult={handleCompileResult}
       color={color}
       changeParameters={changeParameters}
       stopGenerating={stopGenerating}
-      fixError={currentMessage?.id === lastMessage?.id ? fixError : undefined}
       changeRating={changeRating}
       restoreMessage={restoreMessage}
-      limitReached={totalTokens <= 0}
     />
   );
 }

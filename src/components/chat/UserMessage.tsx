@@ -4,10 +4,10 @@ import {
   ChevronLeft,
   ChevronRight,
   Check,
+  CircleAlert,
   Copy,
   Pencil,
   X,
-  Wrench,
   Box,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -117,16 +117,12 @@ export function UserMessage({
           <div className="rounded-lg bg-adam-bg-secondary-dark">
             <div
               className={cn(
-                'group relative flex items-center gap-2 rounded-lg border',
-                'bg-gradient-to-br from-adam-blue/20 to-adam-neutral-800/70 p-3',
-                'border-adam-blue/30 text-adam-text-primary',
-                'transition-all duration-300 ease-in-out',
-                'hover:border-adam-blue/30 hover:bg-adam-blue/20 hover:text-white',
-                'focus:outline-none focus:ring-2 focus:ring-adam-blue/20',
+                'relative flex items-center gap-2 rounded-lg border p-3',
+                'border-adam-blue/25 bg-adam-blue/10 text-adam-text-primary',
               )}
             >
-              <Wrench className="h-4 w-4 transition-all duration-300 group-hover:rotate-12" />
-              <span className="text-xs">Fix with AI</span>
+              <CircleAlert className="h-4 w-4 text-adam-blue" />
+              <span className="text-xs">Compile feedback sent to Adam</span>
             </div>
             {hovering && updateConversation && message.siblings.length > 1 && (
               <div className="absolute bottom-[-1.5rem] right-2 flex items-center gap-0.5 rounded-sm border border-adam-neutral-700 bg-adam-bg-secondary-dark p-0.5">

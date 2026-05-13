@@ -1,0 +1,76 @@
+import { createFileRoute } from '@tanstack/react-router';
+import { billing } from '@/server/billingClient';
+import { json } from '@/server/api';
+import {
+  getServiceRoleSupabaseClient,
+  type SupabaseClient,
+} from '@/server/supabaseClient';
+
+type CancellationFeedback =
+  | 'customer_service'
+  | 'low_quality'
+  | 'missing_features'
+  | 'other'
+  | 'switched_service'
+  | 'too_complex'
+  | 'too_expensive'
+  | 'unused';
+
+export const Route = createFileRoute('/api/delete-user')({
+  server: {
+    handlers: {
+      POST: async ({ request }) => {
+        const supabase = getServiceRoleSupabaseClient();
+        const token = request.headers
+          .get('Authorization')
+          ?.replace('Bearer ', '');
+        const { reason } = (await request.json().catch(() => ({}))) as {
+          reason?: CancellationFeedback;
+        };
+        const { data, error } = await supabase.auth.getUser(token);
+        if (error || !data.user?.email)
+          return json({ error: 'Unauthorized' }, 401);
+
+        await billing.cancelSubscription(data.user.email, { feedback: reason });
+        void deleteUserStorageItems(supabase, data.user.id);
+
+        const { error: deleteError } = await supabase.auth.admin.deleteUser(
+          data.user.id,
+        );
+        if (deleteError) return json({ error: 'Failed to delete user' }, 500);
+        return json({ success: true });
+      },
+    },
+  },
+});
+
+async function deleteUserStorageItems(
+  supabase: SupabaseClient,
+  userId: string,
+) {
+  for (const bucket of ['images', 'meshes', 'previews']) {
+    const paths = await listAllPaths(supabase, bucket, userId);
+    for (let i = 0; i < paths.length; i += 1000) {
+      await supabase.storage.from(bucket).remove(paths.slice(i, i + 1000));
+    }
+  }
+}
+
+async function listAllPaths(
+  supabase: SupabaseClient,
+  bucket: string,
+  folder: string,
+): Promise<string[]> {
+  const { data, error } = await supabase.storage.from(bucket).list(folder, {
+    limit: 1000,
+    sortBy: { column: 'name', order: 'asc' },
+  });
+  if (error) throw error;
+  const paths: string[] = [];
+  for (const item of data ?? []) {
+    const path = `${folder}/${item.name}`;
+    if ((item as { id?: string }).id) paths.push(path);
+    else paths.push(...(await listAllPaths(supabase, bucket, path)));
+  }
+  return paths;
+}

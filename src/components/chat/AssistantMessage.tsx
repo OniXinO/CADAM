@@ -1,9 +1,12 @@
-import { Message, Model } from '@shared/types';
+import { Message, Model, ToolCall } from '@shared/types';
 import {
   ArrowUpRight,
   Box,
+  Camera,
+  Check,
   ChevronLeft,
   ChevronRight,
+  CircleSlash,
   History,
   ThumbsDown,
   ThumbsUp,
@@ -46,6 +49,7 @@ import { useIsMobile } from '@/hooks/useIsMobile';
 import { useMeshData } from '@/hooks/useMeshData';
 import { MeshImagePreview } from '@/components/viewer/MeshImagePreview';
 import { TreeNode } from '@shared/Tree';
+import { viewLabel } from '@/utils/agenticRenderer';
 
 const linkParametricMode = (text: string) =>
   text.replace(
@@ -254,6 +258,20 @@ export function AssistantMessage({
                         );
                       }
 
+                      if (
+                        toolCall.name === 'build_parametric_model' &&
+                        (toolCall.status === 'pending_verification' ||
+                          toolCall.status === 'verified') &&
+                        toolCall.views
+                      ) {
+                        return (
+                          <VerificationToolCallCard
+                            key={toolCall.id ?? `${toolCall.name}`}
+                            toolCall={toolCall}
+                          />
+                        );
+                      }
+
                       return (
                         <div
                           key={toolCall.id ?? `${toolCall.name}`}
@@ -267,7 +285,8 @@ export function AssistantMessage({
                               <Box className="h-4 w-4 text-white" />
                             )}
                             {(toolCall.name === 'build_parametric_model' ||
-                              toolCall.name === 'apply_parameter_changes') && (
+                              toolCall.name === 'apply_parameter_changes' ||
+                              toolCall.name === 'update_file') && (
                               <Box className="h-4 w-4 text-white" />
                             )}
                             {toolCall.status === 'pending' && (
@@ -276,12 +295,14 @@ export function AssistantMessage({
                                   ? 'Queuing image...'
                                   : toolCall.name === 'create_mesh'
                                     ? 'Queuing mesh...'
-                                    : toolCall.name ===
-                                          'build_parametric_model' ||
-                                        toolCall.name ===
-                                          'apply_parameter_changes'
-                                      ? 'Building CAD...'
-                                      : `${toolCall.name}...`}
+                                    : toolCall.name === 'update_file'
+                                      ? 'Updating file...'
+                                      : toolCall.name ===
+                                            'build_parametric_model' ||
+                                          toolCall.name ===
+                                            'apply_parameter_changes'
+                                        ? 'Building CAD...'
+                                        : `${toolCall.name}...`}
                               </span>
                             )}
                             {toolCall.status === 'error' && (
@@ -290,12 +311,14 @@ export function AssistantMessage({
                                   ? 'Failed to start image generation'
                                   : toolCall.name === 'create_mesh'
                                     ? 'Failed to start mesh generation'
-                                    : toolCall.name ===
-                                          'build_parametric_model' ||
-                                        toolCall.name ===
-                                          'apply_parameter_changes'
-                                      ? 'Failed to generate CAD'
-                                      : `${toolCall.name}...`}
+                                    : toolCall.name === 'update_file'
+                                      ? 'Failed to update file'
+                                      : toolCall.name ===
+                                            'build_parametric_model' ||
+                                          toolCall.name ===
+                                            'apply_parameter_changes'
+                                        ? 'Failed to generate CAD'
+                                        : `${toolCall.name}...`}
                               </span>
                             )}
                           </div>
@@ -509,6 +532,47 @@ export function AssistantMessage({
   );
 }
 
+function VerificationToolCallCard({ toolCall }: { toolCall: ToolCall }) {
+  const viewLabels =
+    toolCall.views && toolCall.views.length > 0
+      ? toolCall.views.map((v) => viewLabel(v)).join(', ')
+      : '';
+
+  const isPending =
+    toolCall.status === 'pending' || toolCall.status === 'pending_verification';
+  const isVerified = toolCall.status === 'verified';
+  const isError = toolCall.status === 'error';
+
+  return (
+    <div className="flex w-full flex-col gap-2 rounded-md bg-adam-neutral-950 px-3 py-2">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-2">
+          {isError ? (
+            <CircleSlash className="h-4 w-4 text-adam-neutral-300" />
+          ) : isVerified ? (
+            <Check className="h-4 w-4 text-adam-blue" />
+          ) : (
+            <Camera className="h-4 w-4 text-white" />
+          )}
+          <span className="truncate text-sm">
+            {isError
+              ? 'Verification failed'
+              : isVerified
+                ? `Verified${viewLabels ? ` from ${viewLabels}` : ''}`
+                : `Inspecting model${viewLabels ? ` from ${viewLabels}` : '...'}`}
+          </span>
+        </div>
+        {isPending && <Loader2 className="h-4 w-4 animate-spin text-white" />}
+      </div>
+      {toolCall.reasoning && (
+        <span className="px-1 text-xs text-adam-neutral-300">
+          {toolCall.reasoning}
+        </span>
+      )}
+    </div>
+  );
+}
+
 function ObjectButton({
   message,
   currentMessage,
@@ -525,6 +589,10 @@ function ObjectButton({
   if (message.content.artifact) {
     title = message.content.artifact.title;
   }
+  // Multi-file artifacts surface a small file count next to the title
+  // so the user knows the model is decomposed into several .scad files.
+  // Single-file artifacts hide it entirely.
+  const fileCount = message.content.artifact?.files?.length ?? 0;
 
   return (
     <Button
@@ -545,6 +613,11 @@ function ObjectButton({
           <span className="truncate font-medium text-adam-text-primary">
             {title}
           </span>
+          {fileCount > 1 && (
+            <span className="shrink-0 rounded border border-adam-neutral-700 bg-adam-neutral-900 px-1 text-[10px] text-adam-neutral-300">
+              {fileCount} files
+            </span>
+          )}
         </div>
         <span
           className={cn(

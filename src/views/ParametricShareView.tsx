@@ -2,12 +2,13 @@ import ParametricView from './ParametricView';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Content, Message, Parameter } from '@shared/types';
 import { supabase } from '@/lib/supabase';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { updateParameter } from '@/lib/utils';
 import { useConversation } from '@/contexts/ConversationContext';
 import { useCurrentMessage } from '@/contexts/CurrentMessageContext';
 import Tree from '@shared/Tree';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
+import type { AgenticCompileResult } from '@/hooks/useAgenticVerification';
 
 export default function ParametricShareView() {
   const { conversation } = useConversation();
@@ -15,6 +16,9 @@ export default function ParametricShareView() {
   // single-color STL mesh.
   const color = '#00A6FF';
   const [currentOutput, setCurrentOutput] = useState<Blob | undefined>();
+  const handleCompileResult = useCallback((result: AgenticCompileResult) => {
+    setCurrentOutput(result.type === 'stl' ? result.output : undefined);
+  }, []);
   const { setCurrentMessage } = useCurrentMessage();
   const queryClient = useQueryClient();
   const isTabletOrMobile = useMediaQuery('(max-width: 1024px)');
@@ -105,7 +109,7 @@ export default function ParametricShareView() {
       messages={currentMessageBranch}
       isLoading={false}
       currentOutput={currentOutput}
-      setCurrentOutput={setCurrentOutput}
+      onCompileResult={handleCompileResult}
     />
   );
 }

@@ -2,31 +2,33 @@ import { ImageGallery } from '@/components/viewer/ImageGallery';
 import { useCurrentMessage } from '@/contexts/CurrentMessageContext';
 import Loader from '@/components/viewer/Loader';
 import { OpenSCADPreview } from './OpenSCADViewer';
-import OpenSCADError from '@/lib/OpenSCADError';
 import { DxfExporter } from '@/utils/downloadUtils';
+import type { AgenticCompileResult } from '@/hooks/useAgenticVerification';
 
 interface ParametricPreviewSectionProps {
   isLoading: boolean;
   color: string;
-  onOutputChange?: (output: Blob | undefined) => void;
+  onCompileResult?: (result: AgenticCompileResult) => void;
   onDxfExportChange?: (exporter: DxfExporter | null) => void;
-  fixError?: (error: OpenSCADError) => void;
   isMobile?: boolean;
 }
 
 export function ParametricPreviewSection({
   isLoading,
   color,
-  onOutputChange,
+  onCompileResult,
   onDxfExportChange,
-  fixError,
   isMobile,
 }: ParametricPreviewSectionProps) {
   const { currentMessage: message } = useCurrentMessage();
+  const artifact = message?.content.artifact;
+  const hasPreviewContent =
+    !!artifact?.code ||
+    (message?.content.images && Array.isArray(message.content.images));
 
   return (
     <div className="flex h-full w-full items-center justify-center bg-adam-neutral-700">
-      {isLoading ? (
+      {isLoading && !hasPreviewContent ? (
         <div
           className={`flex h-full items-center justify-center ${isMobile ? 'pb-20 pt-0' : ''}`}
         >
@@ -37,13 +39,15 @@ export function ParametricPreviewSection({
           {message?.content.images && Array.isArray(message.content.images) && (
             <ImageGallery imageIds={message.content.images} />
           )}
-          {message?.content.artifact?.code && (
+          {artifact?.code && (
             <OpenSCADPreview
-              scadCode={message.content.artifact.code}
+              scadCode={artifact.code}
+              files={artifact.files}
+              entryFile={artifact.entryFile}
               color={color}
-              onOutputChange={onOutputChange}
+              onCompileResult={onCompileResult}
               onDxfExportChange={onDxfExportChange}
-              fixError={fixError}
+              suppressCompileErrors={isLoading}
             />
           )}
         </div>

@@ -163,7 +163,7 @@ export function useCreativeChatMutation({
 
       // Start streaming request
       const response = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/creative-chat`,
+        `${import.meta.env.BASE_URL}api/creative-chat`,
         {
           method: 'POST',
           headers: {
@@ -369,7 +369,7 @@ export function useParametricChatMutation({
 
       // Start streaming request
       const response = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/parametric-chat`,
+        `${import.meta.env.BASE_URL}api/parametric-chat`,
         {
           method: 'POST',
           headers: {
@@ -901,24 +901,21 @@ export function useUpscaleMutation({
         });
       }
 
-      const response = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/mesh`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${
-              (await supabase.auth.getSession()).data.session?.access_token
-            }`,
-          },
-          body: JSON.stringify({
-            action: 'upscale',
-            meshId,
-            conversationId: conversation.id,
-            parentMessageId,
-          }),
+      const response = await fetch(`${import.meta.env.BASE_URL}api/mesh`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${
+            (await supabase.auth.getSession()).data.session?.access_token
+          }`,
         },
-      );
+        body: JSON.stringify({
+          action: 'upscale',
+          meshId,
+          conversationId: conversation.id,
+          parentMessageId,
+        }),
+      });
 
       if (!response.ok) {
         throw new Error('Failed to upscale');

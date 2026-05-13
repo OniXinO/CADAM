@@ -3,6 +3,7 @@ import { Conversation, Content } from '@shared/types';
 import { supabase } from '@/lib/supabase';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useParams } from '@tanstack/react-router';
+import { apiJson } from './api';
 
 const defaultConversation: Conversation = {
   id: '',
@@ -128,25 +129,10 @@ export async function generateConversationTitle(
     throw new Error('No active session');
   }
 
-  const response = await fetch(
-    `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/title-generator`,
-    {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${session.access_token}`,
-      },
-      body: JSON.stringify({
-        content,
-        conversationId,
-      }),
-    },
-  );
-
-  if (!response.ok) {
-    throw new Error(`Failed to generate title: ${response.statusText}`);
-  }
-
-  const data = await response.json();
+  const data = await apiJson<{ title?: string }>('title-generator', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${session.access_token}` },
+    body: JSON.stringify({ content, conversationId }),
+  });
   return data.title || 'New Conversation';
 }

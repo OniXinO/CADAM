@@ -20,6 +20,7 @@ export function useOpenSCAD() {
   const [output, setOutput] = useState<Blob | undefined>();
   const [offOutput, setOffOutput] = useState<Blob | undefined>();
   const workerRef = useRef<Worker | null>(null);
+  const latestPreviewRequestIdRef = useRef<string | null>(null);
   // Track files written to the worker filesystem
   const writtenFilesRef = useRef<Set<string>>(new Set());
   // Track pending requests waiting for worker responses
@@ -56,6 +57,14 @@ export function useOpenSCAD() {
       type === WorkerMessageType.PREVIEW ||
       type === WorkerMessageType.EXPORT
     ) {
+      if (
+        type === WorkerMessageType.PREVIEW &&
+        id &&
+        id !== latestPreviewRequestIdRef.current
+      ) {
+        return;
+      }
+
       if (err) {
         setError(err);
         setIsError(true);
@@ -135,8 +144,11 @@ export function useOpenSCAD() {
       setIsError(false);
 
       const worker = getWorker();
+      const requestId = `preview-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      latestPreviewRequestIdRef.current = requestId;
 
       const message: WorkerMessage = {
+        id: requestId,
         type: WorkerMessageType.PREVIEW,
         data: {
           code,

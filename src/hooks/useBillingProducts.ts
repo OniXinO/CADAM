@@ -1,4 +1,4 @@
-import { supabase } from '@/lib/supabase';
+import { apiJson } from '@/services/api';
 import { useQuery } from '@tanstack/react-query';
 
 export type SubscriptionLevel = 'standard' | 'pro';
@@ -20,12 +20,7 @@ export function useSubscriptionProducts() {
   return useQuery<BillingProduct[]>({
     queryKey: ['billing', 'products', 'subscription'],
     queryFn: async () => {
-      const { data, error } = await supabase.functions.invoke(
-        'billing-products?type=subscription',
-        { method: 'GET' },
-      );
-      if (error) throw error;
-      return (data as BillingProduct[]) ?? [];
+      return apiJson<BillingProduct[]>('billing-products?type=subscription');
     },
   });
 }

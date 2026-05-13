@@ -5,6 +5,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
 import posthog from 'posthog-js';
 import { AuthContext, type BillingStatus, getLevel } from './AuthContext';
+import { apiJson } from '@/services/api';
 
 const ensurePermission = async () => {
   if (typeof window === 'undefined' || !('Notification' in window)) {
@@ -67,9 +68,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     enabled: !!user,
     refetchInterval: 30000,
     queryFn: async (): Promise<BillingStatus> => {
-      const { data, error } = await supabase.functions.invoke('billing-status');
-      if (error) throw error;
-      return data as BillingStatus;
+      return apiJson<BillingStatus>('billing-status');
     },
   });
 

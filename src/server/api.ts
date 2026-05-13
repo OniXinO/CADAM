@@ -1,0 +1,27 @@
+import type { User } from '@supabase/supabase-js';
+import { getAnonSupabaseClient } from './supabaseClient';
+
+export const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers':
+    'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+};
+
+export function json(data: unknown, status = 200) {
+  return Response.json(data, {
+    status,
+    headers: corsHeaders,
+  });
+}
+
+export async function requireUser(request: Request): Promise<User> {
+  const supabase = getAnonSupabaseClient({
+    global: {
+      headers: { Authorization: request.headers.get('Authorization') ?? '' },
+    },
+  });
+  const { data, error } = await supabase.auth.getUser();
+  if (error || !data.user?.email) throw new Error('Unauthorized');
+  return data.user;
+}

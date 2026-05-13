@@ -12,61 +12,6 @@ enabled = true
 client_id = "env(GOOGLE_CLIENT_ID)"
 secret = "env(GOOGLE_SECRET)"
 
-[edge_runtime]
-enabled = true
-policy = "per_worker"
-
-[functions.parametric-chat]
-enabled = true
-verify_jwt = true
-
-[functions.billing-status]
-enabled = true
-verify_jwt = true
-
-[functions.billing-checkout]
-enabled = true
-verify_jwt = true
-
-[functions.billing-portal]
-enabled = true
-verify_jwt = true
-
-[functions.billing-products]
-enabled = true
-verify_jwt = false
-
-[functions.mesh]
-enabled = true
-verify_jwt = true
-
-[functions.jackson-pollock]
-enabled = true
-verify_jwt = false
-
-[functions.title-generator]
-enabled = true
-verify_jwt = true
-
-[functions.prompt-generator]
-enabled = true
-verify_jwt = true
-
-[functions.delete-user]
-enabled = true
-verify_jwt = true
-
-[functions.fal-webhook]
-enabled = true
-verify_jwt = false
-import_map = "./functions/fal-webhook/deno.json"
-
-[functions.creative-chat]
-enabled = true
-verify_jwt = true
-import_map = "./functions/creative-chat/deno.json"
-entrypoint = "./functions/creative-chat/index.ts"
-
 [storage.buckets.meshes]
 public = false
 

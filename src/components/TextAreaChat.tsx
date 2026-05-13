@@ -65,6 +65,7 @@ import {
 } from '@/utils/meshUtils';
 import { useMeshFiles } from '@/contexts/MeshFilesContext';
 import { AnimatePresence, motion } from 'framer-motion';
+import { apiJson } from '@/services/api';
 
 interface TextAreaChatProps {
   type: 'parametric' | 'creative';
@@ -1150,18 +1151,13 @@ function TextAreaChat({
     if (isGeneratingPrompt) return;
     setIsGeneratingPrompt(true);
     try {
-      const { data, error } = await supabase.functions.invoke(
-        'prompt-generator',
-        {
-          method: 'POST',
-          body: {
-            existingText: input.trim() || null,
-            type: type, // Send the mode type (parametric or creative)
-          },
-        },
-      );
-
-      if (error) throw error;
+      const data = await apiJson<{ prompt?: string }>('prompt-generator', {
+        method: 'POST',
+        body: JSON.stringify({
+          existingText: input.trim() || undefined,
+          type,
+        }),
+      });
       if (!data?.prompt) throw new Error('No prompt generated');
 
       setInput(data.prompt);
