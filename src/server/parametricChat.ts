@@ -837,6 +837,26 @@ export async function handleParametricChatRequest(req: Request) {
     });
   }
 
+  const body = (await req.json().catch(() => null)) as {
+    messageId?: string;
+    conversationId?: string;
+    model?: Model;
+    newMessageId?: string;
+    thinking?: boolean;
+  } | null;
+  if (
+    !body ||
+    typeof body.messageId !== 'string' ||
+    typeof body.conversationId !== 'string' ||
+    typeof body.model !== 'string' ||
+    typeof body.newMessageId !== 'string'
+  ) {
+    return new Response(JSON.stringify({ error: 'invalid_request' }), {
+      status: 400,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
+
   // Deduct chat token (1) via adam-billing
   if (!userData.user.email) {
     return new Response(JSON.stringify({ error: 'User email missing' }), {
@@ -880,19 +900,7 @@ export async function handleParametricChatRequest(req: Request) {
     });
   }
 
-  const {
-    messageId,
-    conversationId,
-    model,
-    newMessageId,
-    thinking, // Add thinking parameter
-  }: {
-    messageId: string;
-    conversationId: string;
-    model: Model;
-    newMessageId: string;
-    thinking?: boolean;
-  } = await req.json();
+  const { messageId, conversationId, model, newMessageId, thinking } = body;
 
   // Authoritative server-side capability: don't trust the client to self-report.
   const supportsVision = !TEXT_ONLY_MODELS.has(model);

@@ -14,7 +14,12 @@ export const Route = createFileRoute('/api/jackson-pollock/$')({
 
 async function proxyPostHog({ request }: { request: Request }) {
   const url = new URL(request.url);
-  const path = url.pathname.replace(/^\/cadam\/api\/jackson-pollock/, '');
+  const routePath = '/api/jackson-pollock';
+  const routeIndex = url.pathname.indexOf(routePath);
+  const path =
+    routeIndex === -1
+      ? '/'
+      : url.pathname.slice(routeIndex + routePath.length) || '/';
   const hostname = path.startsWith('/static/')
     ? POSTHOG_ASSET_HOST
     : POSTHOG_API_HOST;

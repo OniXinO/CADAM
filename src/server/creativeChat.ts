@@ -367,6 +367,25 @@ export async function handleCreativeChatRequest(req: Request) {
     });
   }
 
+  const body = (await req.json().catch(() => null)) as {
+    messageId?: string;
+    conversationId?: string;
+    model?: Model;
+    newMessageId?: string;
+  } | null;
+  if (
+    !body ||
+    typeof body.messageId !== 'string' ||
+    typeof body.conversationId !== 'string' ||
+    typeof body.model !== 'string' ||
+    typeof body.newMessageId !== 'string'
+  ) {
+    return new Response(JSON.stringify({ error: 'invalid_request' }), {
+      status: 400,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
+
   // Deduct chat token (1) via adam-billing
   if (!userData.user.email) {
     return new Response(JSON.stringify({ error: 'User email missing' }), {
@@ -412,17 +431,7 @@ export async function handleCreativeChatRequest(req: Request) {
 
   const appBaseUrl = webhookBaseUrl();
 
-  const {
-    messageId,
-    conversationId,
-    model,
-    newMessageId,
-  }: {
-    messageId: string;
-    conversationId: string;
-    model: Model;
-    newMessageId: string;
-  } = await req.json();
+  const { messageId, conversationId, model, newMessageId } = body;
 
   // Set up cancellation via realtime
   const abortController = new AbortController();
