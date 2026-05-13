@@ -12,6 +12,8 @@ import parseParameters from './parseParameter';
 import { formatUserMessage, getSignedUrls } from './messageUtils';
 import { billing, BillingClientError } from './billingClient';
 import { env } from './env';
+import { corsHeaders, isRecord } from './api';
+import { logError } from './serverLog';
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
 import {
   jsonSchema,
@@ -26,31 +28,6 @@ const CHAT_TOKEN_COST = 1;
 const PARAMETRIC_TOKEN_COST = 5;
 const ENVIRONMENT = env('ENVIRONMENT').toLowerCase();
 const IS_LOCAL_ENV = !['production', 'prod'].includes(ENVIRONMENT);
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers':
-    'authorization, x-client-info, apikey, content-type',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-};
-
-function logError(
-  error: unknown,
-  context: {
-    functionName: string;
-    statusCode: number;
-    userId?: string;
-    conversationId?: string;
-    additionalContext?: Record<string, unknown>;
-  },
-) {
-  console.error(`[${context.functionName}] Error (${context.statusCode}):`, {
-    error: error instanceof Error ? error.message : 'Unknown error',
-    userId: context.userId,
-    conversationId: context.conversationId,
-    additionalContext: context.additionalContext,
-  });
-}
 
 function logVerificationEvent(event: string, details: Record<string, unknown>) {
   if (!IS_LOCAL_ENV) return;
@@ -570,10 +547,6 @@ type UpdateFileInput = {
 type ApplyParameterChangesInput = {
   updates: Array<{ name: string; value: string }>;
 };
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
-}
 
 function optionalString(
   input: Record<string, unknown>,

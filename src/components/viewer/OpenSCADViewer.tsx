@@ -19,7 +19,7 @@ import {
 } from 'three';
 import { Loader2, CircleAlert } from 'lucide-react';
 import { parseColoredOff } from '@/utils/offParser';
-import type OpenSCADError from '@/lib/OpenSCADError';
+import OpenSCADError from '@/lib/OpenSCADError';
 import { MeshFilesContext } from '@/contexts/MeshFilesContext';
 import { createDXFProjectionCode } from '@/utils/dxfUtils';
 import { DxfExporter } from '@/utils/downloadUtils';
@@ -211,13 +211,15 @@ export function OpenSCADPreview({
 
   useEffect(() => {
     if (!onCompileResult || !scadCode || !isError || !error) return;
-    if (error.name !== 'OpenSCADError') throw error;
+    if (!(error instanceof OpenSCADError)) {
+      console.error('[OpenSCAD] Unexpected compile error:', error);
+      return;
+    }
 
-    const compileError = error as OpenSCADError;
     onCompileResult({
       type: 'compile_error',
       sourceCode: scadCode,
-      errorText: compileError.stdErr.join('\n').trim(),
+      errorText: error.stdErr.join('\n').trim(),
     });
   }, [error, isError, onCompileResult, scadCode]);
 
