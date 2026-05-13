@@ -1,11 +1,17 @@
 import { supabase } from '@/lib/supabase';
 
+export function apiUrl(path: string) {
+  const basePath = import.meta.env.BASE_URL.replace(/\/$/, '');
+  return `${basePath}/api/${path}`;
+}
+
 export async function apiJson<T>(
   path: string,
   init: RequestInit = {},
 ): Promise<T> {
   const token = (await supabase.auth.getSession()).data.session?.access_token;
-  const response = await fetch(`${import.meta.env.BASE_URL}api/${path}`, {
+  const url = apiUrl(path);
+  const response = await fetch(url, {
     ...init,
     headers: {
       'Content-Type': 'application/json',
@@ -13,6 +19,11 @@ export async function apiJson<T>(
       ...init.headers,
     },
   });
+  const contentType = response.headers.get('Content-Type') ?? '';
+  if (!contentType.includes('application/json')) {
+    const preview = (await response.text()).slice(0, 160);
+    throw new Error(`Unexpected API response from ${url}: ${preview}`);
+  }
   const data: T = await response.json();
   if (!response.ok) {
     const errorValue =

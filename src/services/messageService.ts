@@ -10,6 +10,7 @@ import {
   useQueryClient,
 } from '@tanstack/react-query';
 import * as Sentry from '@sentry/react';
+import { apiUrl } from '@/services/api';
 
 function messageSentConversationUpdate(
   newMessage: Message,
@@ -270,24 +271,21 @@ export function useCreativeChatMutation({
     }) => {
       const newMessageId = crypto.randomUUID();
       // Start streaming request
-      const response = await fetch(
-        `${import.meta.env.BASE_URL}api/creative-chat`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${
-              (await supabase.auth.getSession()).data.session?.access_token
-            }`,
-          },
-          body: JSON.stringify({
-            conversationId,
-            messageId,
-            model,
-            newMessageId,
-          }),
+      const response = await fetch(apiUrl('creative-chat'), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${
+            (await supabase.auth.getSession()).data.session?.access_token
+          }`,
         },
-      );
+        body: JSON.stringify({
+          conversationId,
+          messageId,
+          model,
+          newMessageId,
+        }),
+      });
 
       if (!response.ok) {
         throw new Error(
@@ -364,24 +362,21 @@ export function useParametricChatMutation({
     }) => {
       const newMessageId = crypto.randomUUID();
       // Start streaming request
-      const response = await fetch(
-        `${import.meta.env.BASE_URL}api/parametric-chat`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${
-              (await supabase.auth.getSession()).data.session?.access_token
-            }`,
-          },
-          body: JSON.stringify({
-            conversationId,
-            messageId,
-            model,
-            newMessageId,
-          }),
+      const response = await fetch(apiUrl('parametric-chat'), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${
+            (await supabase.auth.getSession()).data.session?.access_token
+          }`,
         },
-      );
+        body: JSON.stringify({
+          conversationId,
+          messageId,
+          model,
+          newMessageId,
+        }),
+      });
 
       if (!response.ok) {
         throw new Error(
@@ -787,7 +782,7 @@ export function useUpscaleMutation({
         });
       }
 
-      const response = await fetch(`${import.meta.env.BASE_URL}api/mesh`, {
+      const response = await fetch(apiUrl('mesh'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -865,8 +860,8 @@ export function useUpscaleMutation({
               await initialize(data.id);
               initialized = true;
             }
-          } catch (parseError) {
-            console.error('Error parsing streaming data:', parseError);
+          } catch {
+            throw new Error(`Invalid mesh stream line: ${line.slice(0, 160)}`);
           }
         }
       }
@@ -892,8 +887,10 @@ export function useUpscaleMutation({
               }
             },
           );
-        } catch (parseError) {
-          console.error('Error parsing final streaming data:', parseError);
+        } catch {
+          throw new Error(
+            `Invalid final mesh stream line: ${tail.slice(0, 160)}`,
+          );
         }
       }
 

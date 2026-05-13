@@ -1,10 +1,10 @@
 import posthog from 'posthog-js';
+import { apiUrl } from '@/services/api';
 
 const POSTHOG_KEY =
   import.meta.env.VITE_POSTHOG_PROJECT_KEY ?? import.meta.env.VITE_POSTHOG_KEY;
 const POSTHOG_HOST =
-  import.meta.env.VITE_POSTHOG_HOST ||
-  `${import.meta.env.BASE_URL}api/jackson-pollock`;
+  import.meta.env.VITE_POSTHOG_HOST || apiUrl('jackson-pollock');
 
 let isInitialized = false;
 
