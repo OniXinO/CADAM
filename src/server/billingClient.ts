@@ -1,6 +1,6 @@
 import { env, requiredEnv } from './env';
 
-export type SubscriptionLevel = 'standard' | 'pro';
+export type SubscriptionLevel = 'standard' | 'pro' | 'max';
 
 export type BillingStatus = {
   user: { hasTrialed: boolean };
@@ -100,6 +100,79 @@ const devConsume = (tokens: number): ConsumeSuccess => ({
   totalBalance: DEV_TOKENS.total,
 });
 
+const devRefund = (tokens: number): RefundResult => ({
+  ok: true,
+  tokensRefunded: tokens,
+  source: 'subscription',
+  freeBalance: DEV_TOKENS.free,
+  subscriptionBalance: DEV_TOKENS.subscription,
+  purchasedBalance: DEV_TOKENS.purchased,
+  totalBalance: DEV_TOKENS.total,
+});
+
+const devProducts: {
+  subscriptions: BillingProduct[];
+  packs: BillingProduct[];
+} = {
+  subscriptions: [
+    {
+      id: 'dev_standard_monthly',
+      stripeProductId: 'prod_dev_standard',
+      stripePriceId: 'price_dev_standard_monthly',
+      productType: 'subscription',
+      subscriptionLevel: 'standard',
+      tokenAmount: 4_000,
+      name: 'Standard',
+      priceCents: 2000,
+      interval: 'month',
+      active: true,
+    },
+    {
+      id: 'dev_pro_monthly',
+      stripeProductId: 'prod_dev_pro',
+      stripePriceId: 'price_dev_pro_monthly',
+      productType: 'subscription',
+      subscriptionLevel: 'pro',
+      tokenAmount: 10_000,
+      name: 'Pro',
+      priceCents: 4000,
+      interval: 'month',
+      active: true,
+    },
+    {
+      id: 'dev_max_monthly',
+      stripeProductId: 'prod_dev_max',
+      stripePriceId: 'price_dev_max_monthly',
+      productType: 'subscription',
+      subscriptionLevel: 'max',
+      tokenAmount: 50_000,
+      name: 'Max',
+      priceCents: 20000,
+      interval: 'month',
+      active: true,
+    },
+  ],
+  packs: [
+    {
+      id: 'dev_pack_small',
+      stripeProductId: 'prod_dev_pack_small',
+      stripePriceId: 'price_dev_pack_small',
+      productType: 'pack',
+      subscriptionLevel: null,
+      tokenAmount: 100_000,
+      name: 'Token Pack',
+      priceCents: 1000,
+      interval: null,
+      active: true,
+    },
+  ],
+};
+
+const devCheckoutError = () =>
+  new BillingClientError('billing bypassed in local dev mode', 503, {
+    reason: 'bypassed',
+  });
+
 const baseUrl = () => requiredEnv('BILLING_SERVICE_URL').replace(/\/$/, '');
 const apiKey = () => requiredEnv('BILLING_SERVICE_KEY');
 const enc = (email: string) => encodeURIComponent(email.toLowerCase());
@@ -123,7 +196,7 @@ async function call<T>(
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const text = await res.text();
-  const parsed = text ? JSON.parse(text) : undefined;
+  const parsed: T = text ? JSON.parse(text) : undefined;
   if (!res.ok && !options?.allowStatus?.includes(res.status)) {
     throw new BillingClientError(
       `billing ${method} ${path} -> ${res.status}`,
@@ -131,10 +204,16 @@ async function call<T>(
       parsed,
     );
   }
-  return parsed as T;
+  return parsed;
 }
 
 type ConsumeBody = {
+  tokens: number;
+  operation?: string;
+  referenceId?: string;
+};
+
+type RefundBody = {
   tokens: number;
   operation?: string;
   referenceId?: string;
@@ -157,54 +236,12 @@ type CancelSubscriptionBody = {
     | 'too_complex'
     | 'too_expensive'
     | 'unused';
+  comment?: string;
 };
 
-const devSubscriptions: BillingProduct[] = [
-  {
-    id: 'dev_standard_monthly',
-    stripeProductId: 'prod_dev_standard',
-    stripePriceId: 'price_dev_standard_monthly',
-    productType: 'subscription',
-    subscriptionLevel: 'standard',
-    tokenAmount: 500_000,
-    name: 'Standard',
-    priceCents: 1900,
-    interval: 'month',
-    active: true,
-  },
-  {
-    id: 'dev_pro_monthly',
-    stripeProductId: 'prod_dev_pro',
-    stripePriceId: 'price_dev_pro_monthly',
-    productType: 'subscription',
-    subscriptionLevel: 'pro',
-    tokenAmount: 2_000_000,
-    name: 'Pro',
-    priceCents: 4900,
-    interval: 'month',
-    active: true,
-  },
-];
-
-const devPacks: BillingProduct[] = [
-  {
-    id: 'dev_pack_small',
-    stripeProductId: 'prod_dev_pack_small',
-    stripePriceId: 'price_dev_pack_small',
-    productType: 'pack',
-    subscriptionLevel: null,
-    tokenAmount: 100_000,
-    name: 'Token Pack',
-    priceCents: 1000,
-    interval: null,
-    active: true,
-  },
-];
-
-const devCheckoutError = () =>
-  new BillingClientError('billing bypassed in local dev mode', 503, {
-    reason: 'bypassed',
-  });
+export type CancelSubscriptionResult =
+  | { canceled: true }
+  | { canceled: false; reason: 'no_subscription' | 'already_canceled' };
 
 export const billing = {
   getStatus(email: string) {
@@ -223,6 +260,11 @@ export const billing = {
         allowStatus: [422],
       },
     );
+  },
+
+  refund(email: string, body: RefundBody) {
+    if (isBypassed()) return Promise.resolve(devRefund(body.tokens));
+    return call<RefundResult>('POST', `/v1/users/${enc(email)}/refund`, body);
   },
 
   createCheckout(email: string, body: CheckoutBody) {
@@ -244,8 +286,9 @@ export const billing = {
   },
 
   cancelSubscription(email: string, body: CancelSubscriptionBody = {}) {
-    if (isBypassed()) return Promise.resolve({ canceled: true });
-    return call<{ canceled: true } | { canceled: false; reason: string }>(
+    if (isBypassed())
+      return Promise.resolve<CancelSubscriptionResult>({ canceled: true });
+    return call<CancelSubscriptionResult>(
       'POST',
       `/v1/users/${enc(email)}/cancel-subscription`,
       body,
@@ -255,15 +298,18 @@ export const billing = {
   getProductsByType(type: 'subscription' | 'pack') {
     if (isBypassed()) {
       return Promise.resolve(
-        type === 'subscription' ? devSubscriptions : devPacks,
+        type === 'subscription' ? devProducts.subscriptions : devProducts.packs,
       );
     }
     return call<BillingProduct[]>('GET', `/v1/products?type=${type}`);
   },
 
-  async getAllProducts() {
+  getAllProducts() {
     if (isBypassed()) {
-      return { subscriptions: devSubscriptions, packs: devPacks };
+      return Promise.resolve({
+        subscriptions: devProducts.subscriptions,
+        packs: devProducts.packs,
+      });
     }
     return call<{ subscriptions: BillingProduct[]; packs: BillingProduct[] }>(
       'GET',

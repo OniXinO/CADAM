@@ -2,7 +2,7 @@
 // from the billing service (/v1/products), but the bullets below are a
 // product decision that doesn't belong in the billing catalog.
 
-export type PlanLevel = 'free' | 'standard' | 'pro';
+export type PlanLevel = 'free' | 'standard' | 'pro' | 'max';
 
 type PlanCopy = {
   description: string;
@@ -18,7 +18,7 @@ export const PLAN_FEATURES: Record<PlanLevel, PlanCopy> = {
     description: 'For regular use',
     features: [
       'All AI features',
-      'Tokens shared between CADAM and the Onshape extension',
+      'Tokens shared across CADAM, Onshape, and Fusion',
     ],
   },
   pro: {
@@ -26,7 +26,15 @@ export const PLAN_FEATURES: Record<PlanLevel, PlanCopy> = {
     features: [
       'All AI features',
       'Priority support',
-      'Tokens shared between CADAM and the Onshape extension',
+      'Tokens shared across CADAM, Onshape, and Fusion',
+    ],
+  },
+  max: {
+    description: 'For teams and heavy workloads',
+    features: [
+      'All AI features',
+      'Priority support',
+      'Tokens shared across CADAM, Onshape, and Fusion',
     ],
   },
 };
@@ -35,6 +43,7 @@ export const PLAN_DISPLAY_NAMES: Record<PlanLevel, string> = {
   free: 'Free',
   standard: 'Standard',
   pro: 'Pro',
+  max: 'Max',
 };
 
-export const PLAN_ORDER: PlanLevel[] = ['free', 'standard', 'pro'];
+export const PLAN_ORDER: PlanLevel[] = ['free', 'standard', 'pro', 'max'];
