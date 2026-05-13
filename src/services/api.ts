@@ -13,7 +13,15 @@ export async function apiJson<T>(
       ...init.headers,
     },
   });
-  const data = await response.json();
-  if (!response.ok) throw new Error(data.error ?? response.statusText);
-  return data as T;
+  const data: T = await response.json();
+  if (!response.ok) {
+    const errorValue =
+      typeof data === 'object' && data !== null
+        ? Reflect.get(data, 'error')
+        : undefined;
+    throw new Error(
+      typeof errorValue === 'string' ? errorValue : response.statusText,
+    );
+  }
+  return data;
 }

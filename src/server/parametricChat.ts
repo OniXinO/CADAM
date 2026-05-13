@@ -1,6 +1,5 @@
 import {
   Message,
-  Model,
   Content,
   CoreMessage,
   ParametricArtifact,
@@ -572,6 +571,70 @@ type ApplyParameterChangesInput = {
   updates: Array<{ name: string; value: string }>;
 };
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function optionalString(
+  input: Record<string, unknown>,
+  key: string,
+): string | undefined {
+  const value = input[key];
+  return typeof value === 'string' ? value : undefined;
+}
+
+function stringList(input: Record<string, unknown>, key: string): string[] {
+  const value = input[key];
+  return Array.isArray(value) && value.every((item) => typeof item === 'string')
+    ? value
+    : [];
+}
+
+function buildParametricModelInput(
+  input: Record<string, unknown>,
+): BuildParametricModelInput {
+  return {
+    text: optionalString(input, 'text'),
+    imageIds: stringList(input, 'imageIds'),
+    baseCode: optionalString(input, 'baseCode'),
+    error: optionalString(input, 'error'),
+  };
+}
+
+function updateFileInput(input: Record<string, unknown>): UpdateFileInput {
+  const filename = optionalString(input, 'filename');
+  const content = optionalString(input, 'content');
+  if (!filename || !content) {
+    throw new Error('update_file missing filename or content');
+  }
+  return {
+    filename,
+    content,
+    rationale: optionalString(input, 'rationale'),
+  };
+}
+
+function applyParameterChangesInput(
+  input: Record<string, unknown>,
+): ApplyParameterChangesInput {
+  const rawUpdates = input.updates;
+  if (!Array.isArray(rawUpdates)) {
+    throw new Error('apply_parameter_changes missing updates');
+  }
+  const updates = rawUpdates.map((update) => {
+    if (!isRecord(update)) {
+      throw new Error('apply_parameter_changes update must be an object');
+    }
+    const name = optionalString(update, 'name');
+    const value = optionalString(update, 'value');
+    if (!name || value === undefined) {
+      throw new Error('apply_parameter_changes update missing name or value');
+    }
+    return { name, value };
+  });
+  return { updates };
+}
+
 const DEFAULT_BUILD_VERIFICATION_VIEWS: ViewRequest[] = [
   { view: 'iso', label: 'overall' },
   { view: 'front', label: 'front' },
@@ -837,15 +900,9 @@ export async function handleParametricChatRequest(req: Request) {
     });
   }
 
-  const body = (await req.json().catch(() => null)) as {
-    messageId?: string;
-    conversationId?: string;
-    model?: Model;
-    newMessageId?: string;
-    thinking?: boolean;
-  } | null;
+  const body = await req.json().catch(() => null);
   if (
-    !body ||
+    !isRecord(body) ||
     typeof body.messageId !== 'string' ||
     typeof body.conversationId !== 'string' ||
     typeof body.model !== 'string' ||
@@ -900,7 +957,11 @@ export async function handleParametricChatRequest(req: Request) {
     });
   }
 
-  const { messageId, conversationId, model, newMessageId, thinking } = body;
+  const messageId = body.messageId;
+  const conversationId = body.conversationId;
+  const model = body.model;
+  const newMessageId = body.newMessageId;
+  const thinking = body.thinking === true;
 
   // Authoritative server-side capability: don't trust the client to self-report.
   const supportsVision = !TEXT_ONLY_MODELS.has(model);
@@ -1110,11 +1171,16 @@ export async function handleParametricChatRequest(req: Request) {
       });
     };
 
-    const toolInput = <T>(toolCall: StreamingToolCall): T => {
+    const toolInput = (
+      toolCall: StreamingToolCall,
+    ): Record<string, unknown> => {
       if (!toolCall.input || typeof toolCall.input !== 'object') {
         throw new Error(`${toolCall.name} missing tool input`);
       }
-      return toolCall.input as T;
+      if (!isRecord(toolCall.input)) {
+        throw new Error(`${toolCall.name} invalid tool input`);
+      }
+      return toolCall.input;
     };
 
     interface TurnResult {
@@ -1463,8 +1529,7 @@ export async function handleParametricChatRequest(req: Request) {
       // any messages received between SUBSCRIBED and the first listener,
       // so registering early is safe and avoids racing the browser.
       channel.on('broadcast', { event: 'verify_response' }, (msg) => {
-        const raw = (msg as unknown as { payload: Record<string, unknown> })
-          .payload;
+        const raw = isRecord(msg) && isRecord(msg.payload) ? msg.payload : {};
 
         if (raw.requestId !== requestId) return;
 
@@ -1473,11 +1538,16 @@ export async function handleParametricChatRequest(req: Request) {
           return;
         }
 
-        if (!Array.isArray(raw.imageIds) || raw.imageIds.length === 0) {
+        const imageIds = raw.imageIds;
+        if (
+          !Array.isArray(imageIds) ||
+          imageIds.length === 0 ||
+          !imageIds.every((id) => typeof id === 'string')
+        ) {
           rejectResponse?.(new Error('browser returned no screenshots'));
           return;
         }
-        resolveResponse?.({ imageIds: raw.imageIds as string[] });
+        resolveResponse?.({ imageIds });
       });
 
       // Single try/finally wraps subscribe → send → await response so a
@@ -1696,7 +1766,7 @@ export async function handleParametricChatRequest(req: Request) {
                 throw new Error('Request cancelled by user');
               }
               if (tc.name === 'build_parametric_model') {
-                const input = toolInput<BuildParametricModelInput>(tc);
+                const input = buildParametricModelInput(toolInput(tc));
 
                 // Bill parametric tokens for this build.
                 let billingFailed = false;
@@ -2110,7 +2180,7 @@ export async function handleParametricChatRequest(req: Request) {
                 // named file in artifact.files is touched; the rest of
                 // the project — including the user's parameter values
                 // when the entry isn't being changed — stays put.
-                const input = toolInput<UpdateFileInput>(tc);
+                const input = updateFileInput(toolInput(tc));
 
                 const filename = input.filename.trim();
                 const newFileContent = input.content;
@@ -2213,7 +2283,7 @@ export async function handleParametricChatRequest(req: Request) {
                   `${action === 'replaced' ? 'Replaced' : 'Added'} \`${filename}\` (${newFileContent.length} chars).${rationale} The artifact in the user's viewport has been updated.`,
                 );
               } else if (tc.name === 'apply_parameter_changes') {
-                const input = toolInput<ApplyParameterChangesInput>(tc);
+                const input = applyParameterChangesInput(toolInput(tc));
 
                 // Capture the source artifact ONCE in a stable local so
                 // every downstream read sees the same object. `content`
