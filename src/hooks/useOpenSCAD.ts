@@ -2,6 +2,7 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import {
   OpenSCADWorkerResponseData,
   WorkerMessage,
+  WorkerResponseMessage,
   WorkerMessageType,
 } from '@/worker/types';
 import OpenSCADError from '@/lib/OpenSCADError';
@@ -9,7 +10,7 @@ import { normalizeOpenSCADDxf } from '@/utils/dxfUtils';
 
 // Type for pending request resolvers
 type PendingRequest = {
-  resolve: (value: unknown) => void;
+  resolve: (value: WorkerResponseMessage['data']) => void;
   reject: (error: Error) => void;
 };
 
@@ -20,11 +21,30 @@ type SerializedOpenSCADError = {
   stdErr: string[];
 };
 
+type PreviewScadResult = {
+  stl: Blob;
+  off?: Blob;
+};
+
 function toWorkerError(error: Error | SerializedOpenSCADError) {
   if ('code' in error && 'stdErr' in error) {
     return new OpenSCADError(error.message, error.code, error.stdErr);
   }
   return error;
+}
+
+function outputBlob(response: OpenSCADWorkerResponseData) {
+  return new Blob([new Uint8Array(response.output)], {
+    type: response.fileType === 'stl' ? 'model/stl' : 'image/svg+xml',
+  });
+}
+
+function assertOpenSCADWorkerResponseData(
+  value: WorkerResponseMessage['data'],
+): asserts value is OpenSCADWorkerResponseData {
+  if (!value || typeof value !== 'object' || !('output' in value)) {
+    throw new Error('OpenSCAD did not return output');
+  }
 }
 
 export function useOpenSCAD() {
@@ -50,60 +70,57 @@ export function useOpenSCAD() {
     return workerRef.current;
   }, []);
 
-  const eventHandler = useCallback((event: MessageEvent) => {
-    const { id, type, err } = event.data;
+  const eventHandler = useCallback(
+    (event: MessageEvent<WorkerResponseMessage>) => {
+      const { id, type, err } = event.data;
+      const requestId = id ? String(id) : '';
 
-    // Check if this is a response to a pending request (fs operations)
-    if (id && pendingRequestsRef.current.has(id)) {
-      const pending = pendingRequestsRef.current.get(id)!;
-      pendingRequestsRef.current.delete(id);
+      // Check if this is a response to a pending request (fs operations)
+      if (requestId && pendingRequestsRef.current.has(requestId)) {
+        const pending = pendingRequestsRef.current.get(requestId)!;
+        pendingRequestsRef.current.delete(requestId);
 
-      if (err) {
-        pending.reject(toWorkerError(err));
-      } else {
-        pending.resolve(event.data.data);
-      }
-      return;
-    }
-
-    // Handle preview/export responses (state-based)
-    if (
-      type === WorkerMessageType.PREVIEW ||
-      type === WorkerMessageType.EXPORT
-    ) {
-      if (
-        type === WorkerMessageType.PREVIEW &&
-        id &&
-        id !== latestPreviewRequestIdRef.current
-      ) {
+        if (err) {
+          pending.reject(toWorkerError(err));
+        } else {
+          pending.resolve(event.data.data);
+        }
         return;
       }
 
-      if (err) {
-        setError(toWorkerError(err));
-        setIsError(true);
-        setOutput(undefined);
-        setOffOutput(undefined);
-      } else if (event.data.data?.output) {
-        const blob = new Blob([event.data.data.output], {
-          type:
-            event.data.data.fileType === 'stl' ? 'model/stl' : 'image/svg+xml',
-        });
-        setOutput(blob);
+      // Handle preview/export responses (state-based)
+      if (
+        type === WorkerMessageType.PREVIEW ||
+        type === WorkerMessageType.EXPORT
+      ) {
+        if (
+          type === WorkerMessageType.PREVIEW &&
+          requestId &&
+          requestId !== latestPreviewRequestIdRef.current
+        ) {
+          return;
+        }
 
-        const offBytes = event.data.data.extraOutputs?.off;
-        setOffOutput(
-          offBytes ? new Blob([offBytes], { type: 'text/plain' }) : undefined,
-        );
-      } else {
-        setError(new Error('OpenSCAD did not return preview output'));
-        setIsError(true);
-        setOutput(undefined);
-        setOffOutput(undefined);
+        if (err) {
+          setError(toWorkerError(err));
+          setIsError(true);
+          setOutput(undefined);
+          setOffOutput(undefined);
+        } else {
+          assertOpenSCADWorkerResponseData(event.data.data);
+          const data = event.data.data;
+          setOutput(outputBlob(data));
+
+          const offBytes = data.extraOutputs?.off;
+          setOffOutput(
+            offBytes ? new Blob([offBytes], { type: 'text/plain' }) : undefined,
+          );
+        }
+        setIsCompiling(false);
       }
-      setIsCompiling(false);
-    }
-  }, []);
+    },
+    [],
+  );
 
   useEffect(() => {
     const worker = getWorker();
@@ -183,6 +200,47 @@ export function useOpenSCAD() {
     [getWorker],
   );
 
+  // Compile SCAD for hidden verification without mutating preview state.
+  const previewScad = useCallback(
+    async (code: string): Promise<PreviewScadResult> => {
+      const worker = getWorker();
+      const requestId = `hidden-preview-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+      const responsePromise = new Promise<OpenSCADWorkerResponseData>(
+        (resolve, reject) => {
+          pendingRequestsRef.current.set(requestId, {
+            resolve: (value) => {
+              assertOpenSCADWorkerResponseData(value);
+              resolve(value);
+            },
+            reject,
+          });
+        },
+      );
+
+      const message: WorkerMessage = {
+        id: requestId,
+        type: WorkerMessageType.PREVIEW,
+        data: {
+          code,
+          params: [],
+          fileType: 'stl',
+        },
+      };
+
+      worker.postMessage(message);
+      const response = await responsePromise;
+      const offBytes = response.extraOutputs?.off;
+      return {
+        stl: outputBlob(response),
+        off: offBytes
+          ? new Blob([new Uint8Array(offBytes)], { type: 'text/plain' })
+          : undefined,
+      };
+    },
+    [getWorker],
+  );
+
   // Export SCAD from the worker without changing preview state.
   // Used for on-demand downloads like projected DXF.
   const exportScad = useCallback(
@@ -193,7 +251,10 @@ export function useOpenSCAD() {
       const responsePromise = new Promise<OpenSCADWorkerResponseData>(
         (resolve, reject) => {
           pendingRequestsRef.current.set(requestId, {
-            resolve: (value) => resolve(value as OpenSCADWorkerResponseData),
+            resolve: (value) => {
+              assertOpenSCADWorkerResponseData(value);
+              resolve(value);
+            },
             reject,
           });
         },
@@ -211,10 +272,6 @@ export function useOpenSCAD() {
 
       worker.postMessage(message);
       const response = await responsePromise;
-
-      if (!response.output) {
-        throw new Error('OpenSCAD did not return an export output');
-      }
 
       // Copy worker bytes into a normal ArrayBuffer-backed view for Blob/TextDecoder.
       const outputBytes = new Uint8Array(response.output);
@@ -237,6 +294,7 @@ export function useOpenSCAD() {
 
   return {
     compileScad,
+    previewScad,
     exportScad,
     writeFile,
     isCompiling,

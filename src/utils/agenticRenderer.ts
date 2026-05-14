@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { STLLoader } from 'three/addons/loaders/STLLoader.js';
 import { ViewName, ViewRequest } from '@shared/types';
+import { parseColoredOff } from '@/utils/offParser';
 
 // Standard viewpoints, expressed as the camera's normalized direction in the
 // scene's world space. The OpenSCAD STL is rotated -90deg around X before it
@@ -28,6 +29,11 @@ const DEFAULT_CUSTOM_ELEVATION_DEG = 25;
 type ScreenshotRenderer = {
   canvas: HTMLCanvasElement;
   renderer: THREE.WebGLRenderer;
+};
+
+type RenderPreview = {
+  geometry: THREE.BufferGeometry;
+  material: THREE.Material | THREE.Material[];
 };
 
 let screenshotRenderer: ScreenshotRenderer | null = null;
@@ -88,17 +94,17 @@ export function viewLabel(req: ViewRequest): string {
   return req.view;
 }
 
-// Render the STL `output` from each requested view. We re-parse the STL into
-// a fresh BufferGeometry rather than reusing the live preview's geometry so
-// this can run independently of the on-screen viewer (and won't be disturbed
-// by the user pivoting the gizmo cube mid-capture).
+// Render the candidate output from each requested view without touching the
+// on-screen viewer. Prefer the colored OFF preview when the worker provides it,
+// and fall back to STL for older worker responses.
 export async function renderArtifactFromViews(
   output: Blob,
   views: ViewRequest[],
+  coloredOutput?: Blob,
 ): Promise<Blob[]> {
   const render = renderQueue.then(
-    () => renderArtifactFromViewsNow(output, views),
-    () => renderArtifactFromViewsNow(output, views),
+    () => renderArtifactFromViewsNow(output, views, coloredOutput),
+    () => renderArtifactFromViewsNow(output, views, coloredOutput),
   );
   renderQueue = render.then(
     () => undefined,
@@ -107,20 +113,119 @@ export async function renderArtifactFromViews(
   return render;
 }
 
-async function renderArtifactFromViewsNow(
-  output: Blob,
-  views: ViewRequest[],
-): Promise<Blob[]> {
-  const size = 512;
+function normalizeColor(color: [number, number, number, number] | null) {
+  if (!color) return null;
 
-  const buffer = await output.arrayBuffer();
-  const loader = new STLLoader();
-  const geometry = loader.parse(buffer);
+  const r = Math.round(color[0] * 255);
+  const g = Math.round(color[1] * 255);
+  const b = Math.round(color[2] * 255);
+  if (r === 249 && g === 215 && b === 44) return null;
+  if (r === 157 && g === 203 && b === 81) return null;
+  return color;
+}
+
+function createMaterial(color: [number, number, number, number] | null) {
+  const faceColor = normalizeColor(color);
+  const fallbackColor = 0x00a6ff;
+  return new THREE.MeshStandardMaterial({
+    color: faceColor
+      ? (Math.round(faceColor[0] * 255) << 16) |
+        (Math.round(faceColor[1] * 255) << 8) |
+        Math.round(faceColor[2] * 255)
+      : fallbackColor,
+    metalness: faceColor ? 0.05 : 0.4,
+    roughness: faceColor ? 0.7 : 0.5,
+    transparent: faceColor ? faceColor[3] < 1 : false,
+    opacity: faceColor ? faceColor[3] : 1,
+  });
+}
+
+async function createColoredPreview(
+  coloredOutput: Blob,
+): Promise<RenderPreview | null> {
+  const parsed = parseColoredOff(await coloredOutput.text());
+  const buckets = new Map<
+    string,
+    {
+      color: [number, number, number, number] | null;
+      positions: number[];
+    }
+  >();
+
+  for (const face of parsed.faces) {
+    const key = face.color ? face.color.join(',') : '__default';
+    let bucket = buckets.get(key);
+    if (!bucket) {
+      bucket = { color: face.color, positions: [] };
+      buckets.set(key, bucket);
+    }
+
+    for (const index of face.vertices) {
+      const vertex = parsed.vertices[index];
+      bucket.positions.push(vertex[0], vertex[1], vertex[2]);
+    }
+  }
+
+  if (buckets.size === 0) return null;
+
+  const positions = new Float32Array(
+    Array.from(buckets.values()).reduce(
+      (sum, bucket) => sum + bucket.positions.length,
+      0,
+    ),
+  );
+  const geometry = new THREE.BufferGeometry();
+  const materials: THREE.MeshStandardMaterial[] = [];
+
+  let offset = 0;
+  for (const bucket of buckets.values()) {
+    positions.set(bucket.positions, offset);
+    geometry.addGroup(
+      offset / 3,
+      bucket.positions.length / 3,
+      materials.length,
+    );
+    materials.push(createMaterial(bucket.color));
+    offset += bucket.positions.length;
+  }
+
+  geometry.setAttribute(
+    'position',
+    new THREE.Float32BufferAttribute(positions, 3),
+  );
   geometry.center();
   geometry.computeVertexNormals();
   geometry.computeBoundingBox();
+  return { geometry, material: materials };
+}
 
-  const box = geometry.boundingBox!;
+async function createStlPreview(output: Blob): Promise<RenderPreview> {
+  const buffer = await output.arrayBuffer();
+  const geometry = new STLLoader().parse(buffer);
+  geometry.center();
+  geometry.computeVertexNormals();
+  geometry.computeBoundingBox();
+  return { geometry, material: createMaterial(null) };
+}
+
+async function renderArtifactFromViewsNow(
+  output: Blob,
+  views: ViewRequest[],
+  coloredOutput?: Blob,
+): Promise<Blob[]> {
+  const size = 512;
+
+  let preview: RenderPreview | null = null;
+  if (coloredOutput) {
+    try {
+      preview = await createColoredPreview(coloredOutput);
+    } catch (err) {
+      console.error('[agentic-renderer] Failed to parse colored OFF:', err);
+    }
+  }
+  preview ??= await createStlPreview(output);
+
+  const box = preview.geometry.boundingBox!;
   const dim = new THREE.Vector3();
   box.getSize(dim);
   const maxDim = Math.max(dim.x, dim.y, dim.z) || 1;
@@ -130,12 +235,7 @@ async function renderArtifactFromViewsNow(
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0x3b3b3b);
 
-  const material = new THREE.MeshStandardMaterial({
-    color: 0x00a6ff,
-    metalness: 0.4,
-    roughness: 0.5,
-  });
-  const mesh = new THREE.Mesh(geometry, material);
+  const mesh = new THREE.Mesh(preview.geometry, preview.material);
   // Mirror the live viewer's STL orientation so screenshots match what the
   // user sees in the on-screen preview.
   mesh.rotation.set(-Math.PI / 2, 0, 0);
@@ -196,8 +296,11 @@ async function renderArtifactFromViewsNow(
       blobs.push(blob);
     }
   } finally {
-    geometry.dispose();
-    material.dispose();
+    preview.geometry.dispose();
+    const materials = Array.isArray(preview.material)
+      ? preview.material
+      : [preview.material];
+    materials.forEach((material) => material.dispose());
   }
 
   return blobs;

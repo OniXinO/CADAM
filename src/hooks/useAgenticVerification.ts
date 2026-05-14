@@ -22,7 +22,7 @@ export type AgenticCompileResult =
   | { type: 'compile_error'; sourceCode: string; errorText: string };
 
 type FreshCompileResult =
-  | { type: 'stl'; stl: Blob }
+  | { type: 'stl'; stl: Blob; off?: Blob }
   | { type: 'compile_error'; errorText: string };
 
 const logVerificationEvent = (
@@ -54,7 +54,7 @@ function extractImportFilenames(code: string): string[] {
 export function useAgenticVerification() {
   const { conversation } = useConversation();
   const { session } = useAuth();
-  const { exportScad, writeFile } = useOpenSCAD();
+  const { previewScad, writeFile } = useOpenSCAD();
   const meshFilesCtx = useContext(MeshFilesContext);
 
   const sessionRef = useRef(session);
@@ -96,7 +96,8 @@ export function useAgenticVerification() {
       }
 
       try {
-        return { type: 'stl', stl: await exportScad(code, 'stl') };
+        const result = await previewScad(code);
+        return { type: 'stl', stl: result.stl, off: result.off };
       } catch (err) {
         return { type: 'compile_error', errorText: compileErrorText(err) };
       }
@@ -137,7 +138,11 @@ export function useAgenticVerification() {
       });
 
       try {
-        const blobs = await renderArtifactFromViews(compileResult.stl, views);
+        const blobs = await renderArtifactFromViews(
+          compileResult.stl,
+          views,
+          compileResult.off,
+        );
         logVerificationEvent('screenshots.rendered', {
           requestId,
           conversationId: conversation.id,
@@ -220,5 +225,11 @@ export function useAgenticVerification() {
       lifecycleAbort.abort();
       supabase.removeChannel(channel);
     };
-  }, [conversation.id, conversation.type, exportScad, meshFilesCtx, writeFile]);
+  }, [
+    conversation.id,
+    conversation.type,
+    meshFilesCtx,
+    previewScad,
+    writeFile,
+  ]);
 }
