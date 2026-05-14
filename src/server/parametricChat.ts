@@ -1530,10 +1530,12 @@ export async function handleParametricChatRequest(req: Request) {
                       toolCallId: tc.id,
                     },
                   });
-                  updateContent({
-                    ...markToolAsError(content, tc.id),
-                    error: 'code_generation_failed',
-                  });
+                  const nextContent = markToolAsError(content, tc.id);
+                  updateContent(
+                    content.artifact
+                      ? nextContent
+                      : { ...nextContent, error: 'code_generation_failed' },
+                  );
                   pushToolResult(
                     tc,
                     `Error: failed to generate OpenSCAD code: ${errorMessage}`,
@@ -1705,7 +1707,7 @@ export async function handleParametricChatRequest(req: Request) {
                       },
                       ...verificationImages.map((image) => ({
                         type: 'image' as const,
-                        image: image.data,
+                        image: image.data.split(',')[1] ?? image.data,
                         mediaType: image.mediaType,
                       })),
                     ],
