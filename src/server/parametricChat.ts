@@ -15,11 +15,6 @@ import { env } from './env';
 import { corsHeaders, isRecord } from './api';
 import { logError } from './serverLog';
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
-import Anthropic from '@anthropic-ai/sdk';
-import type {
-  ContentBlockParam,
-  MessageParam,
-} from '@anthropic-ai/sdk/resources/messages';
 import {
   jsonSchema,
   streamText,
@@ -31,7 +26,6 @@ import {
 
 const CHAT_TOKEN_COST = 1;
 const PARAMETRIC_TOKEN_COST = 5;
-const CAD_WRITER_MODEL = 'claude-sonnet-4-5-20250929';
 const ENVIRONMENT = env('ENVIRONMENT').toLowerCase();
 const IS_LOCAL_ENV = !['production', 'prod'].includes(ENVIRONMENT);
 
@@ -1120,7 +1114,7 @@ export async function handleParametricChatRequest(req: Request) {
       return { text, toolCalls: orderedToolCalls, finishReason };
     };
 
-    // Generate OpenSCAD code via a separate, tools-free Claude stream.
+    // Generate OpenSCAD code via a separate, tools-free selected-model stream.
     // The outer agent picks WHAT to build; this inner call writes the actual
     // code under STRICT_CODE_PROMPT, and the streamed output is mirrored to
     // the live message via `onCodeDelta` so the user watches it appear.
@@ -1135,28 +1129,6 @@ export async function handleParametricChatRequest(req: Request) {
         return out;
       };
 
-      const toAnthropicCodeMessage = (message: OpenAIMessage): MessageParam => {
-        if (message.role === 'system' || message.role === 'tool') {
-          throw new Error(`invalid CAD writer message role: ${message.role}`);
-        }
-        if (typeof message.content === 'string') {
-          return { role: message.role, content: message.content };
-        }
-
-        const content: ContentBlockParam[] = [];
-        for (const part of message.content) {
-          if (part.type === 'text') {
-            content.push({ type: 'text', text: part.text ?? '' });
-          } else if (part.image_url?.url) {
-            content.push({
-              type: 'image',
-              source: { type: 'url', url: part.image_url.url },
-            });
-          }
-        }
-        return { role: message.role, content };
-      };
-
       const codeGenAbort = new AbortController();
       const codeGenTimeout = setTimeout(
         () => codeGenAbort.abort(new Error('code-gen upstream timeout')),
@@ -1165,31 +1137,26 @@ export async function handleParametricChatRequest(req: Request) {
       const onParentAbort = () => codeGenAbort.abort(abortSignal.reason);
       abortSignal.addEventListener('abort', onParentAbort);
 
-      const anthropic = new Anthropic({ apiKey: env('ANTHROPIC_API_KEY') });
       let rawCode = '';
       let lastFlushTime = 0;
       let lastFlushedLen = 0;
       const FLUSH_INTERVAL_MS = 120;
 
       try {
-        const stream = await anthropic.messages.create(
-          {
-            model: CAD_WRITER_MODEL,
-            system: STRICT_CODE_PROMPT,
-            max_tokens: 16000,
-            messages: codeMessages.map(toAnthropicCodeMessage),
-            stream: true,
-          },
-          { signal: codeGenAbort.signal },
-        );
+        const result = streamText({
+          model: openrouter.chat(model, {
+            reasoning: { max_tokens: thinking ? 4000 : 1200 },
+          }),
+          system: STRICT_CODE_PROMPT,
+          messages: codeMessages.map(toAiSdkMessage),
+          maxOutputTokens: thinking ? 20000 : 16000,
+          maxRetries: 0,
+          abortSignal: codeGenAbort.signal,
+        });
 
-        for await (const chunk of stream) {
-          if (
-            chunk.type === 'content_block_delta' &&
-            chunk.delta.type === 'text_delta' &&
-            chunk.delta.text
-          ) {
-            rawCode += chunk.delta.text;
+        for await (const part of result.fullStream) {
+          if (part.type === 'text-delta' && part.text) {
+            rawCode += part.text;
             const now = Date.now();
             if (
               now - lastFlushTime >= FLUSH_INTERVAL_MS &&
@@ -1199,6 +1166,10 @@ export async function handleParametricChatRequest(req: Request) {
               lastFlushTime = now;
               lastFlushedLen = rawCode.length;
             }
+          } else if (part.type === 'error') {
+            throw part.error instanceof Error
+              ? part.error
+              : new Error(String(part.error));
           }
         }
       } catch (e) {
@@ -1209,7 +1180,7 @@ export async function handleParametricChatRequest(req: Request) {
             : error.message;
         console.error('[parametric-chat] CAD writer failed:', {
           message,
-          model: CAD_WRITER_MODEL,
+          model,
           streamedChars: rawCode.length,
         });
         clearTimeout(codeGenTimeout);
