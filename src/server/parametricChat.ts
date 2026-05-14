@@ -340,6 +340,7 @@ async function generateTitleFromMessages(
 // single request, regardless of which tool is being called. Belt-and-braces
 // cap so a misbehaving model can't run away with the request budget.
 const MAX_AGENT_ITERATIONS = 8;
+const MAX_BUILD_ATTEMPTS = 2;
 
 // How long the server waits for the browser to fulfill a screenshot
 // broadcast before giving up on that tool call. The browser side renders
@@ -533,6 +534,24 @@ function buildParametricModelInput(
     imageIds,
     baseCode: optionalString(input, 'baseCode'),
     error: optionalString(input, 'error'),
+  };
+}
+
+function buildCompileRepairInput(
+  input: BuildParametricModelInput,
+  code: string,
+  error: string,
+): BuildParametricModelInput {
+  return {
+    type: 'request',
+    title: input.title,
+    text:
+      input.type === 'request'
+        ? input.text
+        : 'Fix the OpenSCAD compile error in this model.',
+    imageIds: input.type === 'request' ? input.imageIds : [],
+    baseCode: code,
+    error,
   };
 }
 
@@ -1511,38 +1530,6 @@ export async function handleParametricChatRequest(req: Request) {
                   continue;
                 }
 
-                let code = '';
-                try {
-                  code = await generateOpenSCADCode(input);
-                  latestGeneratedCode = code;
-                } catch (err) {
-                  const errorMessage =
-                    err instanceof Error
-                      ? err.message
-                      : 'code generation failed';
-                  logError(err, {
-                    functionName: 'parametric-chat',
-                    statusCode: 502,
-                    userId: userData.user?.id,
-                    conversationId,
-                    additionalContext: {
-                      operation: 'parametric_code_generation',
-                      toolCallId: tc.id,
-                    },
-                  });
-                  const nextContent = markToolAsError(content, tc.id);
-                  updateContent(
-                    content.artifact
-                      ? nextContent
-                      : { ...nextContent, error: 'code_generation_failed' },
-                  );
-                  pushToolResult(
-                    tc,
-                    `Error: failed to generate OpenSCAD code: ${errorMessage}`,
-                  );
-                  continue;
-                }
-
                 const verificationViews = DEFAULT_BUILD_VERIFICATION_VIEWS;
                 const verificationSummary = verificationViews
                   .map((v) => v.label || v.view)
@@ -1551,173 +1538,242 @@ export async function handleParametricChatRequest(req: Request) {
                   DEFAULT_BUILD_VERIFICATION_REASONING;
                 const titlePromise = generateTitleFromMessages(messagesToSend);
                 const temporalTrace: string[] = [];
-                let title =
-                  input.title ||
-                  (await titlePromise.catch(() => 'Adam Object'));
-                const lower = title.toLowerCase();
-                if (lower.includes('sorry') || lower.includes('apologize')) {
-                  title = 'Adam Object';
-                }
+                let buildInput = input;
+                let buildHandled = false;
 
-                const artifact: ParametricArtifact = {
-                  title,
-                  version: 'v1',
-                  code,
-                  parameters: parseParameters(code),
-                };
-                const fileCountSummary = `${code.length} chars`;
-
-                updateContent({
-                  ...content,
-                  toolCalls: (content.toolCalls || []).map((c) =>
-                    c.id === tc.id
-                      ? {
-                          ...c,
-                          status: 'pending_verification',
-                          views: verificationViews,
-                          screenshots: [],
-                        }
-                      : c,
-                  ),
-                  artifact,
-                });
-
-                const requestId = crypto.randomUUID();
-                let imageIds: string[] = [];
-                let verificationImages: Array<{
-                  data: string;
-                  mediaType: string;
-                }> = [];
-                let viewError: string | null = null;
-                try {
-                  logVerificationEvent(
-                    'build_parametric_model.verification.started',
-                    {
-                      requestId,
+                for (
+                  let buildAttempt = 1;
+                  buildAttempt <= MAX_BUILD_ATTEMPTS;
+                  buildAttempt++
+                ) {
+                  let code = '';
+                  try {
+                    code = await generateOpenSCADCode(buildInput);
+                    latestGeneratedCode = code;
+                  } catch (err) {
+                    const errorMessage =
+                      err instanceof Error
+                        ? err.message
+                        : 'code generation failed';
+                    logError(err, {
+                      functionName: 'parametric-chat',
+                      statusCode: 502,
+                      userId: userData.user?.id,
                       conversationId,
-                      newMessageId,
-                      toolCallId: tc.id,
-                      title,
-                      views: verificationViews.map((v) => v.label ?? v.view),
-                    },
-                  );
-                  const result = await requestBrowserScreenshots(
-                    requestId,
-                    verificationViews,
-                    verificationReasoning,
-                  );
-                  imageIds = result.imageIds;
-                  verificationImages = result.images;
-                  logVerificationEvent(
-                    'build_parametric_model.verification.fulfilled',
-                    {
-                      requestId,
-                      conversationId,
-                      toolCallId: tc.id,
-                      imageCount: imageIds.length,
-                      attachedImageCount: verificationImages.length,
-                    },
-                  );
-                } catch (err) {
-                  viewError =
-                    err instanceof Error ? err.message : 'unknown error';
-                  logVerificationEvent(
-                    'build_parametric_model.verification.failed',
-                    {
-                      requestId,
-                      conversationId,
-                      toolCallId: tc.id,
-                      error: viewError,
-                    },
-                  );
-                  console.error(
-                    'build_parametric_model verification failed:',
-                    err,
-                  );
-                }
-
-                if (viewError) {
-                  const compileErrorMatch = viewError.match(
-                    /(?:browser error:\s*)?compile_error:\s*([\s\S]*)/i,
-                  );
-                  if (!compileErrorMatch) {
-                    temporalTrace.push(
-                      `wrote ${fileCountSummary}, displayed the artifact, screenshot verification did not complete (${viewError})`,
-                    );
-                    updateContent({
-                      ...content,
-                      toolCalls: (content.toolCalls || []).map((c) =>
-                        c.id === tc.id ? { ...c, status: 'verified' } : c,
-                      ),
-                      artifact,
+                      additionalContext: {
+                        operation: 'parametric_code_generation',
+                        toolCallId: tc.id,
+                        buildAttempt,
+                      },
                     });
+                    const nextContent = markToolAsError(content, tc.id);
+                    updateContent(
+                      content.artifact
+                        ? nextContent
+                        : { ...nextContent, error: 'code_generation_failed' },
+                    );
                     pushToolResult(
                       tc,
-                      `OpenSCAD model "${title}" displayed successfully (${artifact.parameters.length} parameter${artifact.parameters.length === 1 ? '' : 's'}, ${fileCountSummary}). Screenshot verification did not complete: ${viewError}.`,
+                      `Error: failed to generate OpenSCAD code: ${errorMessage}`,
                     );
-                    continue;
+                    buildHandled = true;
+                    break;
                   }
+
+                  let title =
+                    buildInput.title ||
+                    input.title ||
+                    (await titlePromise.catch(() => 'Adam Object'));
+                  const lower = title.toLowerCase();
+                  if (lower.includes('sorry') || lower.includes('apologize')) {
+                    title = 'Adam Object';
+                  }
+
+                  const artifact: ParametricArtifact = {
+                    title,
+                    version: 'v1',
+                    code,
+                    parameters: parseParameters(code),
+                  };
+                  const fileCountSummary = `${code.length} chars`;
 
                   updateContent({
                     ...content,
                     toolCalls: (content.toolCalls || []).map((c) =>
                       c.id === tc.id
-                        ? { ...c, status: 'error', error: viewError }
+                        ? {
+                            ...c,
+                            status: 'pending_verification',
+                            views: verificationViews,
+                            screenshots: [],
+                          }
                         : c,
                     ),
                     artifact,
                   });
+
+                  const requestId = crypto.randomUUID();
+                  let imageIds: string[] = [];
+                  let verificationImages: Array<{
+                    data: string;
+                    mediaType: string;
+                  }> = [];
+                  let viewError: string | null = null;
+                  try {
+                    logVerificationEvent(
+                      'build_parametric_model.verification.started',
+                      {
+                        requestId,
+                        conversationId,
+                        newMessageId,
+                        toolCallId: tc.id,
+                        title,
+                        buildAttempt,
+                        views: verificationViews.map((v) => v.label ?? v.view),
+                      },
+                    );
+                    const result = await requestBrowserScreenshots(
+                      requestId,
+                      verificationViews,
+                      verificationReasoning,
+                    );
+                    imageIds = result.imageIds;
+                    verificationImages = result.images;
+                    logVerificationEvent(
+                      'build_parametric_model.verification.fulfilled',
+                      {
+                        requestId,
+                        conversationId,
+                        toolCallId: tc.id,
+                        buildAttempt,
+                        imageCount: imageIds.length,
+                        attachedImageCount: verificationImages.length,
+                      },
+                    );
+                  } catch (err) {
+                    viewError =
+                      err instanceof Error ? err.message : 'unknown error';
+                    logVerificationEvent(
+                      'build_parametric_model.verification.failed',
+                      {
+                        requestId,
+                        conversationId,
+                        toolCallId: tc.id,
+                        buildAttempt,
+                        error: viewError,
+                      },
+                    );
+                    console.error(
+                      'build_parametric_model verification failed:',
+                      err,
+                    );
+                  }
+
+                  if (viewError) {
+                    const compileErrorMatch = viewError.match(
+                      /(?:browser error:\s*)?compile_error:\s*([\s\S]*)/i,
+                    );
+                    if (
+                      compileErrorMatch &&
+                      buildAttempt < MAX_BUILD_ATTEMPTS
+                    ) {
+                      const compileError = compileErrorMatch[1].trim();
+                      temporalTrace.push(
+                        `attempt ${buildAttempt}: wrote ${fileCountSummary}, compile failed, started repair`,
+                      );
+                      buildInput = buildCompileRepairInput(
+                        buildInput,
+                        code,
+                        compileError,
+                      );
+                      continue;
+                    }
+
+                    if (!compileErrorMatch) {
+                      temporalTrace.push(
+                        `attempt ${buildAttempt}: wrote ${fileCountSummary}, displayed the artifact, screenshot verification did not complete (${viewError})`,
+                      );
+                      updateContent({
+                        ...content,
+                        toolCalls: (content.toolCalls || []).map((c) =>
+                          c.id === tc.id ? { ...c, status: 'verified' } : c,
+                        ),
+                        artifact,
+                      });
+                      pushToolResult(
+                        tc,
+                        `OpenSCAD model "${title}" displayed successfully (${artifact.parameters.length} parameter${artifact.parameters.length === 1 ? '' : 's'}, ${fileCountSummary}). Screenshot verification did not complete: ${viewError}.`,
+                      );
+                      buildHandled = true;
+                      break;
+                    }
+
+                    updateContent({
+                      ...content,
+                      toolCalls: (content.toolCalls || []).map((c) =>
+                        c.id === tc.id
+                          ? { ...c, status: 'error', error: viewError }
+                          : c,
+                      ),
+                      artifact,
+                    });
+                    pushToolResult(
+                      tc,
+                      `OpenSCAD model "${title}" was displayed but verification failed after ${buildAttempt} attempt${buildAttempt === 1 ? '' : 's'}: ${viewError}.`,
+                    );
+                    buildHandled = true;
+                    break;
+                  }
+
+                  temporalTrace.push(
+                    `attempt ${buildAttempt}: wrote ${fileCountSummary}, displayed the artifact, captured ${verificationImages.length} screenshot${verificationImages.length === 1 ? '' : 's'} from ${verificationSummary}`,
+                  );
+
+                  updateContent({
+                    ...content,
+                    toolCalls: (content.toolCalls || []).map((c) =>
+                      c.id === tc.id
+                        ? {
+                            ...c,
+                            status: 'verified',
+                            screenshots: imageIds,
+                          }
+                        : c,
+                    ),
+                    artifact,
+                  });
+
                   pushToolResult(
                     tc,
-                    `OpenSCAD model "${title}" was displayed but verification failed: ${viewError}. If this is a compile error or visual problem, call build_cad_model again with the correction in text and the error field set.`,
+                    `OpenSCAD model "${title}" displayed successfully (${artifact.parameters.length} parameter${artifact.parameters.length === 1 ? '' : 's'}, ${fileCountSummary}). Tool-call trace:\n${temporalTrace.join('\n')}\nReview the attached screenshots critically. If the model is wrong, call build_cad_model again with the needed correction in text.`,
                   );
-                  continue;
+
+                  if (supportsVision) {
+                    agentMessages.push({
+                      role: 'user',
+                      content: [
+                        {
+                          type: 'text',
+                          text: `Verification screenshots captured inside the CAD build step (${verificationSummary}):`,
+                        },
+                        ...verificationImages.map((image) => ({
+                          type: 'image' as const,
+                          image: image.data.split(',')[1] ?? image.data,
+                          mediaType: image.mediaType,
+                        })),
+                      ],
+                    });
+                  } else {
+                    agentMessages.push({
+                      role: 'user',
+                      content: `Verification screenshots from ${verificationSummary} were captured inside the CAD build step, but the current model does not accept images. Treat the build as best-effort and confirm completion to the user.`,
+                    });
+                  }
+                  buildHandled = true;
+                  break;
                 }
 
-                temporalTrace.push(
-                  `wrote ${fileCountSummary}, displayed the artifact, captured ${verificationImages.length} screenshot${verificationImages.length === 1 ? '' : 's'} from ${verificationSummary}`,
-                );
-
-                updateContent({
-                  ...content,
-                  toolCalls: (content.toolCalls || []).map((c) =>
-                    c.id === tc.id
-                      ? {
-                          ...c,
-                          status: 'verified',
-                          screenshots: imageIds,
-                        }
-                      : c,
-                  ),
-                  artifact,
-                });
-
-                pushToolResult(
-                  tc,
-                  `OpenSCAD model "${title}" displayed successfully (${artifact.parameters.length} parameter${artifact.parameters.length === 1 ? '' : 's'}, ${fileCountSummary}). Tool-call trace:\n${temporalTrace.join('\n')}\nReview the attached screenshots critically. If the model is wrong, call build_cad_model again with the needed correction in text.`,
-                );
-
-                if (supportsVision) {
-                  agentMessages.push({
-                    role: 'user',
-                    content: [
-                      {
-                        type: 'text',
-                        text: `Verification screenshots captured inside the CAD build step (${verificationSummary}):`,
-                      },
-                      ...verificationImages.map((image) => ({
-                        type: 'image' as const,
-                        image: image.data.split(',')[1] ?? image.data,
-                        mediaType: image.mediaType,
-                      })),
-                    ],
-                  });
-                } else {
-                  agentMessages.push({
-                    role: 'user',
-                    content: `Verification screenshots from ${verificationSummary} were captured inside the CAD build step, but the current model does not accept images. Treat the build as best-effort and confirm completion to the user.`,
-                  });
-                }
+                if (buildHandled) continue;
               } else if (tc.name === 'apply_parameter_changes') {
                 const input = applyParameterChangesInput(toolInput(tc));
 
