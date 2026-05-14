@@ -342,7 +342,7 @@ async function generateTitleFromMessages(
 // single request, regardless of which tool is being called. Belt-and-braces
 // cap so a misbehaving model can't run away with the request budget.
 const MAX_AGENT_ITERATIONS = 8;
-const MAX_BUILD_ATTEMPTS = 2;
+const MAX_BUILD_ATTEMPTS = 3;
 
 // How long the server waits for the browser to fulfill a screenshot
 // broadcast before giving up on that tool call. The browser side renders
@@ -372,7 +372,7 @@ Guidelines:
 - When the user asks why something happened, how the model is structured, what is visible, or any other explanatory question about the current CAD model, answer in text only. Do not call a tool unless they explicitly ask you to change the model.
 - Keep text concise and helpful. Ask at most 1 follow-up question when truly needed.
 - Pass the user's request directly to the tool without modification (e.g., if user says "a mug", pass "a mug").
-- If screenshots or compiler output surface a problem, call build_cad_model again with a concise text description of the needed correction.
+- If screenshots or compiler output surface a problem, call build_cad_model again with a concise text description of the needed correction. Do not say you will fix a problem unless you call the tool in that same turn.
 
 AGENTIC VERIFICATION (CRITICAL):
 build_cad_model owns the render and screenshot step. Do NOT call a separate screenshot or verification tool after build_cad_model. When build_cad_model returns screenshots, critically evaluate them against the user's request before finalizing.
@@ -460,6 +460,10 @@ Return ONLY raw OpenSCAD code. Do not wrap it in markdown. Do not include explan
 Write complete, syntax-correct OpenSCAD for one printable model:
 - Keep all generated code in one file. Do not use use <...> or include <...>.
 - Make all parts connected as a 3D printable object unless the user explicitly asks for separate loose parts.
+- Treat "assembly" as one physically connected printable assembly, not an exploded diagram.
+- Every visible subpart must intersect or overlap its neighbor by at least 0.5mm. Do not rely on point contact, tangent contact, or tiny visual gaps.
+- For robots and articulated objects, embed shoulders into the torso, overlap the neck into both head and torso, overlap hips into the pelvis, overlap legs into hips and feet, and use connector rods, hubs, or brackets so posed limbs remain attached.
+- Never leave eyes, antennas, hands, tools, wheels, limbs, heads, panels, or decorative details floating away from the body.
 - Put user-tweakable parameters at the top.
 - Use full descriptive snake_case variable names. Parameter names render directly in the UI.
 - Prefer scalar dimension parameters like head_width, head_depth, and head_height. Do not expose number[] vector parameters for ordinary dimensions unless the user specifically asks for vector input.
@@ -550,7 +554,7 @@ function buildCompileRepairInput(
     text:
       input.type === 'request'
         ? input.text
-        : 'Fix the OpenSCAD compile error in this model.',
+        : 'Fix the OpenSCAD generation issue in this model.',
     imageIds: input.type === 'request' ? input.imageIds : [],
     baseCode: code,
     error,
@@ -584,7 +588,7 @@ const DEFAULT_BUILD_VERIFICATION_VIEWS: ViewRequest[] = [
   { view: 'right', label: 'profile' },
 ];
 const DEFAULT_BUILD_VERIFICATION_REASONING =
-  'Verify the generated model matches the request, is oriented correctly, and has no obvious missing or floating parts.';
+  'Verify the generated model matches the request, is oriented correctly, is one connected printable assembly, and has no missing or floating parts.';
 
 function toAiSdkToolSet(toolsForTurn: AgentToolDefinition[]): ToolSet {
   return Object.fromEntries(
@@ -1153,7 +1157,7 @@ export async function handleParametricChatRequest(req: Request) {
         codeMessages.push({
           role: 'user',
           content: input.error
-            ? `${input.text}\n\nFix this OpenSCAD error:\n${input.error}`
+            ? `${input.text}\n\nFix this OpenSCAD generation issue:\n${input.error}`
             : input.text,
         });
       }
@@ -1698,26 +1702,27 @@ export async function handleParametricChatRequest(req: Request) {
                   }
 
                   if (viewError) {
-                    const compileErrorMatch = viewError.match(
-                      /(?:browser error:\s*)?compile_error:\s*([\s\S]*)/i,
+                    const repairableErrorMatch = viewError.match(
+                      /(?:browser error:\s*)?(compile_error|disconnected_components):\s*([\s\S]*)/i,
                     );
                     if (
-                      compileErrorMatch &&
+                      repairableErrorMatch &&
                       buildAttempt < MAX_BUILD_ATTEMPTS
                     ) {
-                      const compileError = compileErrorMatch[1].trim();
+                      const repairReason = repairableErrorMatch[1];
+                      const repairDetail = repairableErrorMatch[2].trim();
                       temporalTrace.push(
-                        `attempt ${buildAttempt}: wrote ${fileCountSummary}, compile failed, started repair`,
+                        `attempt ${buildAttempt}: wrote ${fileCountSummary}, ${repairReason} detected, started repair`,
                       );
                       buildInput = buildCompileRepairInput(
                         buildInput,
                         code,
-                        compileError,
+                        `${repairReason}: ${repairDetail}`,
                       );
                       continue;
                     }
 
-                    if (!compileErrorMatch) {
+                    if (!repairableErrorMatch) {
                       temporalTrace.push(
                         `attempt ${buildAttempt}: wrote ${fileCountSummary}, displayed the artifact, screenshot verification did not complete (${viewError})`,
                       );
@@ -1737,7 +1742,7 @@ export async function handleParametricChatRequest(req: Request) {
                       break;
                     }
 
-                    await refundParametricToken('compile_error');
+                    await refundParametricToken(repairableErrorMatch[1]);
                     updateContent({
                       ...content,
                       toolCalls: (content.toolCalls || []).map((c) =>
