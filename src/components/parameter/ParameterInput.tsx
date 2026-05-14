@@ -191,6 +191,7 @@ export function ParameterInput({
   }
   if (paramState.type === 'number[]') {
     if (Array.isArray(paramState.value)) {
+      const itemLabels = numberArrayLabels(paramState);
       return (
         <div className="grid w-full grid-cols-[80px_1fr] items-start gap-3">
           <Label
@@ -211,6 +212,9 @@ export function ParameterInput({
 
               return (
                 <div key={index} className="flex w-full items-center gap-3">
+                  <span className="w-10 flex-shrink-0 text-xs text-adam-neutral-400">
+                    {itemLabels[index]}
+                  </span>
                   <ParameterSlider
                     param={itemParam}
                     onValueChange={(newValue) =>
@@ -308,4 +312,27 @@ export function ParameterInput({
       );
     }
   }
+}
+
+function numberArrayLabels(param: Parameter): string[] {
+  if (!Array.isArray(param.value)) return [];
+  if (param.value.length === 2) return ['X', 'Y'];
+  if (param.value.length !== 3) {
+    return param.value.map((_, index) => String(index + 1));
+  }
+
+  const name = param.name.toLowerCase();
+  if (
+    name.includes('size') ||
+    name.includes('dimension') ||
+    name.includes('body') ||
+    name.includes('torso') ||
+    name.includes('head') ||
+    name.includes('foot') ||
+    name.includes('base')
+  ) {
+    return ['Width', 'Depth', 'Height'];
+  }
+
+  return ['X', 'Y', 'Z'];
 }

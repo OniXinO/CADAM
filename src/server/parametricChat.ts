@@ -374,6 +374,7 @@ OPENSCAD WRITING RULES:
 - Return ONE complete OpenSCAD file through the tool input. Do not split generated code across files. Do not use use <...> or include <...> for generated modules.
 - Make the syntax correct and keep all parts connected as a 3D printable object.
 - Put all user-tweakable parameters at the top. Use full descriptive snake_case names; parameter names render directly in the UI.
+- Prefer scalar dimension parameters like head_width, head_depth, and head_height. Do not expose number[] vector parameters for ordinary dimensions unless the user specifically asks for vector input.
 - For distinct parts, use color() with named *_color parameters so the preview reads clearly.
 - Do not produce toy, low-poly, blocky, or merely symbolic approximations unless the user explicitly asks for that style.
 - For named products, vehicles, landmarks, characters, or recognizable subjects, include the identity details that make the object recognizable, not just the generic category shape.
