@@ -32,7 +32,6 @@ export function useOpenSCAD() {
   const [error, setError] = useState<OpenSCADError | Error | undefined>();
   const [isError, setIsError] = useState(false);
   const [output, setOutput] = useState<Blob | undefined>();
-  const [offOutput, setOffOutput] = useState<Blob | undefined>();
   const workerRef = useRef<Worker | null>(null);
   const latestPreviewRequestIdRef = useRef<string | null>(null);
   // Track files written to the worker filesystem
@@ -83,18 +82,12 @@ export function useOpenSCAD() {
         setError(toWorkerError(err));
         setIsError(true);
         setOutput(undefined);
-        setOffOutput(undefined);
       } else if (event.data.data?.output) {
         const blob = new Blob([event.data.data.output], {
           type:
             event.data.data.fileType === 'stl' ? 'model/stl' : 'image/svg+xml',
         });
         setOutput(blob);
-
-        const offBytes = event.data.data.extraOutputs?.off;
-        setOffOutput(
-          offBytes ? new Blob([offBytes], { type: 'text/plain' }) : undefined,
-        );
       }
       setIsCompiling(false);
     }
@@ -234,7 +227,6 @@ export function useOpenSCAD() {
     writeFile,
     isCompiling,
     output,
-    offOutput,
     error,
     isError,
   };

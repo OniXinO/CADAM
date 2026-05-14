@@ -9,7 +9,7 @@ import {
   PerspectiveCamera,
 } from '@react-three/drei';
 import * as THREE from 'three';
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { OrthographicPerspectiveToggle } from '@/components/viewer/OrthographicPerspectiveToggle';
 import { cn } from '@/lib/utils';
 
@@ -18,7 +18,6 @@ interface ThreeSceneProps {
   color: string;
   isMobile?: boolean;
   backgroundColor?: string;
-  coloredGroup?: THREE.Group | null;
 }
 
 export function ThreeScene({
@@ -26,22 +25,11 @@ export function ThreeScene({
   color,
   isMobile = false,
   backgroundColor = '#3B3B3B',
-  coloredGroup,
 }: ThreeSceneProps) {
   const [isOrthographic, setIsOrthographic] = useState(true);
 
   // Store the initial isMobile value to prevent position changes during resize
   const [initialIsMobile] = useState(isMobile);
-
-  // The colored group's meshes sit at their raw OpenSCAD coordinates.
-  // Offset so the combined bounds are centered at origin, mirroring the
-  // STL path's geom.center() behavior.
-  const groupCenterOffset = useMemo(() => {
-    if (!coloredGroup) return null;
-    const box = new THREE.Box3().setFromObject(coloredGroup);
-    if (box.isEmpty()) return new THREE.Vector3();
-    return box.getCenter(new THREE.Vector3()).negate();
-  }, [coloredGroup]);
 
   return (
     <div className="relative h-full w-full overflow-hidden">
@@ -73,14 +61,7 @@ export function ThreeScene({
           <directionalLight position={[-5, 5, -5]} intensity={0.2} />
           <directionalLight position={[0, 5, 0]} intensity={0.2} />
           <directionalLight position={[-5, -5, -5]} intensity={0.6} />
-          {coloredGroup && groupCenterOffset ? (
-            <group rotation={[-Math.PI / 2, 0, 0]}>
-              <primitive
-                object={coloredGroup}
-                position={groupCenterOffset.toArray()}
-              />
-            </group>
-          ) : geometry ? (
+          {geometry ? (
             <mesh
               geometry={geometry}
               rotation={[-Math.PI / 2, 0, 0]}

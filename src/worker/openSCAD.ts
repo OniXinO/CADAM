@@ -169,24 +169,6 @@ class OpenSCADWrapper {
       })
       .filter((x) => !!x);
 
-    // In addition to the primary STL output (used for downloads), emit an
-    // OFF file — OpenSCAD's manifold backend preserves per-face colors in
-    // OFF (RGBA appended to each face line), which we parse client-side to
-    // render OpenSCAD color() calls. --backend=manifold is required to get
-    // the color-aware mesh; --enable=manifold was the old (now-default)
-    // experimental flag and does not alone enable color propagation.
-    // --export-format is global in OpenSCAD and overrides the per-output
-    // extension inference, so we cannot force binstl here without
-    // corrupting the /out.off companion output. Preview STL falls back to
-    // ASCII (larger, slower to parse) — the on-demand download path in
-    // exportFile() still forces binstl because it only emits one file.
-    //
-    // Multi-output via two -o flags (/out.stl + /out.off) is supported by
-    // the 2025.03.25 playground WASM build vendored under
-    // src/vendor/openscad-wasm: the help text notes "May be used multiple
-    // times for different exports" and we exercise both outputs on every
-    // parametric compile. If an older wasm is ever vendored, this will
-    // need re-verification.
     const exportParams = [
       '--backend=manifold',
       '--enable=lazy-union',
@@ -197,7 +179,6 @@ class OpenSCADWrapper {
       data.code,
       data.fileType,
       parameters.concat(exportParams),
-      [{ path: '/out.off', key: 'off' }],
     );
 
     // Check `render.log.stdErr` for "Current top level object is not a 3d object."
