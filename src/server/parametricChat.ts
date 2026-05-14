@@ -1717,13 +1717,13 @@ export async function handleParametricChatRequest(req: Request) {
                   }
                   finalTitle = title;
 
-                  const hasUsableCode =
-                    !!code && (success || scoreOpenSCADCode(code) >= 5);
+                  const hasUsableCode = success && !!code;
 
                   if (!hasUsableCode) {
                     if (!finalArtifact) {
                       updateContent({
                         ...content,
+                        artifact: undefined,
                         toolCalls: (content.toolCalls || []).map((c) =>
                           c.id === tc.id ? { ...c, status: 'error' } : c,
                         ),

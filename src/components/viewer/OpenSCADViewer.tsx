@@ -436,7 +436,7 @@ export function OpenSCADPreview({
           <>
             {isError && !suppressCompileErrors && (
               <div className="flex h-full items-center justify-center">
-                <CompileErrorState isRepairing={!!onCompileResult} />
+                <CompileErrorState />
               </div>
             )}
           </>
@@ -459,14 +459,11 @@ export function OpenSCADPreview({
 // Alias for backwards compatibility (ViewerSection imports OpenSCADViewer)
 export { OpenSCADPreview as OpenSCADViewer };
 
-function CompileErrorState({ isRepairing }: { isRepairing: boolean }) {
+function CompileErrorState() {
   return (
     <div className="flex h-full flex-col items-center justify-center gap-4 p-6">
       <div className="flex flex-col items-center gap-3">
         <div className="relative">
-          {isRepairing && (
-            <div className="absolute inset-0 animate-ping rounded-full bg-adam-blue/20" />
-          )}
           <CircleAlert className="h-8 w-8 text-adam-blue" />
         </div>
         <div className="text-center">
@@ -474,9 +471,7 @@ function CompileErrorState({ isRepairing }: { isRepairing: boolean }) {
             Error Compiling Model
           </p>
           <p className="mt-1 text-xs text-adam-text-primary/60">
-            {isRepairing
-              ? 'Sending compile error back to Adam'
-              : 'Adam encountered an error while compiling'}
+            Adam encountered an error while compiling
           </p>
         </div>
       </div>
