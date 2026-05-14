@@ -9,7 +9,7 @@ import {
 import { getAnonSupabaseClient } from './supabaseClient';
 import Tree from '@shared/Tree';
 import parseParameters from './parseParameter';
-import { formatUserMessage, getSignedUrls } from './messageUtils';
+import { formatUserMessage, getBase64Images } from './messageUtils';
 import { billing, BillingClientError } from './billingClient';
 import { env } from './env';
 import { corsHeaders, isRecord } from './api';
@@ -1184,7 +1184,10 @@ export async function handleParametricChatRequest(req: Request) {
       requestId: string,
       views: ViewRequest[],
       reasoning: string,
-    ): Promise<{ imageIds: string[]; signedUrls: string[] }> => {
+    ): Promise<{
+      imageIds: string[];
+      images: Array<{ data: string; mediaType: string }>;
+    }> => {
       // Conversation-scoped channel so the browser can be subscribed
       // unconditionally (when the editor is mounted) instead of racing to
       // wire up the listener after a chat fetch starts. Multiple in-flight
@@ -1333,32 +1336,28 @@ export async function handleParametricChatRequest(req: Request) {
           imageCount: imageIds.length,
         });
 
-        // Resolve the image IDs to URLs the inner LLM call can read. Use
-        // signed URLs (1h) so OpenRouter's vision-capable providers can
-        // pull them directly without needing base64 round-trips.
         const paths = imageIds.map(
           (id) => `${userData.user.id}/${conversationId}/${id}`,
         );
-        const signedUrls = await getSignedUrls(supabaseClient, 'images', paths);
+        const images = await getBase64Images(supabaseClient, 'images', paths);
 
-        // `getSignedUrls` swallows per-path failures (returns a shorter
-        // array). If we lost everything the agent would otherwise be told
+        // If we lost everything the agent would otherwise be told
         // "N screenshots attached" while seeing zero images — surface as
         // an error so the loop falls through to the failure path and the
         // user sees a clear "verification failed" chip.
-        if (signedUrls.length === 0) {
+        if (images.length === 0) {
           throw new Error(
-            'failed to sign any verification image URLs (storage may be misconfigured)',
+            'failed to load any verification screenshots from storage',
           );
         }
 
-        logVerificationEvent('browser_screenshots.signed_urls.ready', {
+        logVerificationEvent('browser_screenshots.images.ready', {
           requestId,
           conversationId,
-          signedUrlCount: signedUrls.length,
+          imageCount: images.length,
         });
 
-        return { imageIds, signedUrls };
+        return { imageIds, images };
       } finally {
         if (timeoutHandle) clearTimeout(timeoutHandle);
         abortSignal.removeEventListener('abort', onAbort);
@@ -1583,7 +1582,10 @@ export async function handleParametricChatRequest(req: Request) {
 
                 const requestId = crypto.randomUUID();
                 let imageIds: string[] = [];
-                let signedUrls: string[] = [];
+                let verificationImages: Array<{
+                  data: string;
+                  mediaType: string;
+                }> = [];
                 let viewError: string | null = null;
                 try {
                   logVerificationEvent(
@@ -1603,7 +1605,7 @@ export async function handleParametricChatRequest(req: Request) {
                     verificationReasoning,
                   );
                   imageIds = result.imageIds;
-                  signedUrls = result.signedUrls;
+                  verificationImages = result.images;
                   logVerificationEvent(
                     'build_parametric_model.verification.fulfilled',
                     {
@@ -1611,7 +1613,7 @@ export async function handleParametricChatRequest(req: Request) {
                       conversationId,
                       toolCallId: tc.id,
                       imageCount: imageIds.length,
-                      signedUrlCount: signedUrls.length,
+                      attachedImageCount: verificationImages.length,
                     },
                   );
                 } catch (err) {
@@ -1671,7 +1673,7 @@ export async function handleParametricChatRequest(req: Request) {
                 }
 
                 temporalTrace.push(
-                  `wrote ${fileCountSummary}, displayed the artifact, captured ${signedUrls.length} screenshot${signedUrls.length === 1 ? '' : 's'} from ${verificationSummary}`,
+                  `wrote ${fileCountSummary}, displayed the artifact, captured ${verificationImages.length} screenshot${verificationImages.length === 1 ? '' : 's'} from ${verificationSummary}`,
                 );
 
                 updateContent({
@@ -1701,9 +1703,10 @@ export async function handleParametricChatRequest(req: Request) {
                         type: 'text',
                         text: `Verification screenshots captured inside the CAD build step (${verificationSummary}):`,
                       },
-                      ...signedUrls.map((url) => ({
+                      ...verificationImages.map((image) => ({
                         type: 'image' as const,
-                        image: new URL(url),
+                        image: image.data,
+                        mediaType: image.mediaType,
                       })),
                     ],
                   });
