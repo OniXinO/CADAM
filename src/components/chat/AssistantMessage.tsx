@@ -1,12 +1,9 @@
-import { Message, Model, ToolCall } from '@shared/types';
+import { Message, Model } from '@shared/types';
 import {
   ArrowUpRight,
   Box,
-  Camera,
-  Check,
   ChevronLeft,
   ChevronRight,
-  CircleSlash,
   History,
   ThumbsDown,
   ThumbsUp,
@@ -260,15 +257,9 @@ export function AssistantMessage({
                       if (
                         toolCall.name === 'build_parametric_model' &&
                         (toolCall.status === 'pending_verification' ||
-                          toolCall.status === 'verified') &&
-                        toolCall.views
+                          toolCall.status === 'verified')
                       ) {
-                        return (
-                          <VerificationToolCallCard
-                            key={toolCall.id ?? `${toolCall.name}`}
-                            toolCall={toolCall}
-                          />
-                        );
+                        return null;
                       }
 
                       return (
@@ -526,37 +517,6 @@ export function AssistantMessage({
             </div>
           )}
         </div>
-      </div>
-    </div>
-  );
-}
-
-function VerificationToolCallCard({ toolCall }: { toolCall: ToolCall }) {
-  const isPending =
-    toolCall.status === 'pending' || toolCall.status === 'pending_verification';
-  const isVerified = toolCall.status === 'verified';
-  const isError = toolCall.status === 'error';
-
-  return (
-    <div className="flex w-full flex-col gap-2 rounded-md bg-adam-neutral-950 px-3 py-2">
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex min-w-0 items-center gap-2">
-          {isError ? (
-            <CircleSlash className="h-4 w-4 text-adam-neutral-300" />
-          ) : isVerified ? (
-            <Check className="h-4 w-4 text-adam-blue" />
-          ) : (
-            <Camera className="h-4 w-4 text-white" />
-          )}
-          <span className="truncate text-sm">
-            {isError
-              ? 'Verification failed'
-              : isVerified
-                ? 'Verified'
-                : 'Inspecting model...'}
-          </span>
-        </div>
-        {isPending && <Loader2 className="h-4 w-4 animate-spin text-white" />}
       </div>
     </div>
   );
