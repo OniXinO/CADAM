@@ -25,6 +25,41 @@ const VIEW_DIRECTIONS: Record<
 const DEFAULT_CUSTOM_AZIMUTH_DEG = 30;
 const DEFAULT_CUSTOM_ELEVATION_DEG = 25;
 
+type ScreenshotRenderer = {
+  canvas: HTMLCanvasElement;
+  renderer: THREE.WebGLRenderer;
+};
+
+let screenshotRenderer: ScreenshotRenderer | null = null;
+
+function getScreenshotRenderer(size: number): ScreenshotRenderer {
+  if (!screenshotRenderer) {
+    const canvas = document.createElement('canvas');
+    canvas.addEventListener(
+      'webglcontextlost',
+      (event) => {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+      },
+      false,
+    );
+    const renderer = new THREE.WebGLRenderer({
+      canvas,
+      antialias: true,
+      alpha: false,
+      preserveDrawingBuffer: true,
+      powerPreference: 'low-power',
+    });
+    renderer.setPixelRatio(1);
+    screenshotRenderer = { canvas, renderer };
+  }
+
+  screenshotRenderer.canvas.width = size;
+  screenshotRenderer.canvas.height = size;
+  screenshotRenderer.renderer.setSize(size, size, false);
+  return screenshotRenderer;
+}
+
 // Convert a ViewRequest into a normalized camera direction vector.
 function viewToDirection(req: ViewRequest): THREE.Vector3 {
   if (req.view === 'custom') {
@@ -73,19 +108,7 @@ export async function renderArtifactFromViews(
   box.getSize(dim);
   const maxDim = Math.max(dim.x, dim.y, dim.z) || 1;
 
-  const canvas = document.createElement('canvas');
-  canvas.width = size;
-  canvas.height = size;
-
-  const renderer = new THREE.WebGLRenderer({
-    canvas,
-    antialias: true,
-    alpha: false,
-    preserveDrawingBuffer: true,
-    powerPreference: 'low-power',
-  });
-  renderer.setSize(size, size);
-  renderer.setPixelRatio(1);
+  const { canvas, renderer } = getScreenshotRenderer(size);
 
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0x3b3b3b);
@@ -156,12 +179,8 @@ export async function renderArtifactFromViews(
       blobs.push(blob);
     }
   } finally {
-    renderer.dispose();
     geometry.dispose();
     material.dispose();
-    canvas.width = 0;
-    canvas.height = 0;
-    canvas.remove();
   }
 
   return blobs;
