@@ -256,7 +256,9 @@ export function AssistantMessage({
 
                       if (
                         toolCall.name === 'build_parametric_model' &&
-                        (toolCall.status === 'pending_verification' ||
+                        ((message.content.artifact &&
+                          toolCall.status === 'error') ||
+                          toolCall.status === 'pending_verification' ||
                           toolCall.status === 'verified')
                       ) {
                         return null;

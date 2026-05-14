@@ -2029,17 +2029,20 @@ export async function handleParametricChatRequest(req: Request) {
                       continue;
                     }
 
+                    finalArtifact = artifact;
+                    finalTitle = title;
+                    finalFileCountSummary = fileCountSummary;
+                    finalSignedUrls = signedUrls;
+                    temporalTrace.push(
+                      `attempt ${attempt}: wrote ${fileCountSummary}, displayed the artifact, screenshot verification did not complete (${viewError})`,
+                    );
                     updateContent({
                       ...content,
                       toolCalls: (content.toolCalls || []).map((c) =>
-                        c.id === tc.id ? { ...c, status: 'error' } : c,
+                        c.id === tc.id ? { ...c, status: 'verified' } : c,
                       ),
+                      artifact,
                     });
-                    pushToolResult(
-                      tc,
-                      `OpenSCAD model "${title}" was generated successfully (${artifact.parameters.length} parameter${artifact.parameters.length === 1 ? '' : 's'}, ${fileCountSummary}), but screenshot verification failed inside the same tool call (${viewError}). Continue from the generated artifact if it looks usable.`,
-                    );
-                    failed = true;
                     break;
                   }
 
