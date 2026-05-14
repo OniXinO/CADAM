@@ -31,6 +31,7 @@ type ScreenshotRenderer = {
 };
 
 let screenshotRenderer: ScreenshotRenderer | null = null;
+let renderQueue: Promise<void> = Promise.resolve();
 
 function getScreenshotRenderer(size: number): ScreenshotRenderer {
   if (!screenshotRenderer) {
@@ -39,7 +40,8 @@ function getScreenshotRenderer(size: number): ScreenshotRenderer {
       'webglcontextlost',
       (event) => {
         event.preventDefault();
-        event.stopImmediatePropagation();
+        screenshotRenderer?.renderer.dispose();
+        screenshotRenderer = null;
       },
       false,
     );
@@ -91,6 +93,21 @@ export function viewLabel(req: ViewRequest): string {
 // this can run independently of the on-screen viewer (and won't be disturbed
 // by the user pivoting the gizmo cube mid-capture).
 export async function renderArtifactFromViews(
+  output: Blob,
+  views: ViewRequest[],
+): Promise<Blob[]> {
+  const render = renderQueue.then(
+    () => renderArtifactFromViewsNow(output, views),
+    () => renderArtifactFromViewsNow(output, views),
+  );
+  renderQueue = render.then(
+    () => undefined,
+    () => undefined,
+  );
+  return render;
+}
+
+async function renderArtifactFromViewsNow(
   output: Blob,
   views: ViewRequest[],
 ): Promise<Blob[]> {

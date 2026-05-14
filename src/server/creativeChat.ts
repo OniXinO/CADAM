@@ -394,11 +394,27 @@ export async function handleCreativeChatRequest(req: Request) {
     });
   }
 
+  const chatBillingReferenceId = crypto.randomUUID();
+  const refundChatToken = () =>
+    billing
+      .refund(userData.user!.email!, {
+        tokens: CHAT_TOKEN_COST,
+        operation: 'chat',
+        referenceId: chatBillingReferenceId,
+      })
+      .catch((err) => {
+        logError(err, {
+          functionName: 'creative-chat',
+          statusCode: err instanceof BillingClientError ? err.status : 502,
+          userId: userData.user?.id,
+        });
+      });
+
   try {
     const result = await billing.consume(userData.user.email, {
       tokens: CHAT_TOKEN_COST,
       operation: 'chat',
-      referenceId: crypto.randomUUID(),
+      referenceId: chatBillingReferenceId,
     });
     if (!result.ok) {
       return new Response(
@@ -467,6 +483,7 @@ export async function handleCreativeChatRequest(req: Request) {
     .overrideTypes<Array<{ content: Content; role: 'user' | 'assistant' }>>();
 
   if (messagesError) {
+    await refundChatToken();
     return new Response(
       JSON.stringify({
         error:
@@ -485,6 +502,7 @@ export async function handleCreativeChatRequest(req: Request) {
   }
 
   if (!messages || messages.length === 0) {
+    await refundChatToken();
     return new Response(
       JSON.stringify({
         error: 'Messages not found',
@@ -520,6 +538,7 @@ export async function handleCreativeChatRequest(req: Request) {
     }>();
 
   if (!newMessageData) {
+    await refundChatToken();
     return new Response(
       JSON.stringify({
         error:

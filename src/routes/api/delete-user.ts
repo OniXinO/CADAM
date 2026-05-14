@@ -1,5 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router';
-import { billing } from '@/server/billingClient';
+import { billing, BillingClientError } from '@/server/billingClient';
 import { isRecord, json } from '@/server/api';
 import {
   getServiceRoleSupabaseClient,
@@ -49,7 +49,25 @@ export const Route = createFileRoute('/api/delete-user')({
         if (error || !data.user?.email)
           return json({ error: 'Unauthorized' }, 401);
 
-        await billing.cancelSubscription(data.user.email, { feedback: reason });
+        let subscriptionCancellationFailed = false;
+        try {
+          await billing.cancelSubscription(data.user.email, {
+            feedback: reason,
+          });
+        } catch (subscriptionError) {
+          subscriptionCancellationFailed = true;
+          if (subscriptionError instanceof BillingClientError) {
+            console.error('Failed to cancel user subscription:', {
+              status: subscriptionError.status,
+              body: subscriptionError.body,
+            });
+          } else {
+            console.error(
+              'Failed to cancel user subscription:',
+              subscriptionError,
+            );
+          }
+        }
         let storageCleanupFailed = false;
         try {
           await deleteUserStorageItems(supabase, data.user.id);
@@ -62,7 +80,11 @@ export const Route = createFileRoute('/api/delete-user')({
           data.user.id,
         );
         if (deleteError) return json({ error: 'Failed to delete user' }, 500);
-        return json({ success: true, storageCleanupFailed });
+        return json({
+          success: true,
+          storageCleanupFailed,
+          subscriptionCancellationFailed,
+        });
       },
     },
   },
