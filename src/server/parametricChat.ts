@@ -188,8 +188,12 @@ function markPendingToolsAsError(content: Content): Content {
 // Keep below the Supabase edge-runtime wall clock. If this exceeds the runtime
 // cap, the isolate is killed mid-stream and the browser reports
 // ERR_INCOMPLETE_CHUNKED_ENCODING despite the response starting as 200 OK.
-const REQUEST_BUDGET_MS = 110 * 1000;
+const REQUEST_BUDGET_MS = 180 * 1000;
 const MIN_ABORT_MS = 1000;
+const CAD_WRITE_REASONING_TOKENS = 5000;
+const CAD_WRITE_THINKING_TOKENS = 9000;
+const CAD_WRITE_OUTPUT_TOKENS = 24000;
+const CAD_WRITE_THINKING_OUTPUT_TOKENS = 32000;
 
 // Anthropic block types for type safety
 interface AnthropicTextBlock {
@@ -627,6 +631,14 @@ Just generate clean OpenSCAD code with appropriate technical comments.
 - Return ONLY raw OpenSCAD code. DO NOT wrap it in markdown code blocks (no \`\`\`openscad).
 - Return ONE complete OpenSCAD file. Do not split generated code across files. Do not use \`use <...>\` or \`include <...>\` for generated .scad modules.
 Just return the plain OpenSCAD code directly.
+
+# Quality Bar (CRITICAL)
+- Do not produce toy, low-poly, blocky, or merely symbolic approximations unless the user explicitly asks for that style.
+- For named products, vehicles, landmarks, characters, or other recognizable subjects, include the visual identity details that make the object recognizable, not just the generic category shape.
+- Prefer rich parametric assemblies made from many named modules and repeated details: silhouette, bevels, seams, cut lines, panels, holes, mounts, ribs, trims, fasteners, lights, handles, rims, supports, and other request-specific features.
+- Use hull(), minkowski(), polyhedron(), rotate_extrude(), linear_extrude(), boolean cuts, and rounded helper modules where they improve the shape. Avoid a design made mostly of plain cubes.
+- For vehicles, include proportional body sections, wheel arches, tires, rims, windows, windshield and rear glass, grille, headlights, taillights, bumpers, mirrors, door/hood/trunk seams, side trim, and any model-specific cues mentioned or implied by the request.
+- If the request is complex, spend code on visible geometry quality rather than explaining limitations.
 
 # STL Import (CRITICAL)
 When the user uploads a 3D model (STL file) and you are told to use import():
@@ -1145,11 +1157,17 @@ export async function handleParametricChatRequest(req: Request) {
       try {
         const result = streamText({
           model: openrouter.chat(model, {
-            reasoning: { max_tokens: thinking ? 4000 : 1200 },
+            reasoning: {
+              max_tokens: thinking
+                ? CAD_WRITE_THINKING_TOKENS
+                : CAD_WRITE_REASONING_TOKENS,
+            },
           }),
           system: STRICT_CODE_PROMPT,
           messages: codeMessages.map(toAiSdkMessage),
-          maxOutputTokens: thinking ? 20000 : 16000,
+          maxOutputTokens: thinking
+            ? CAD_WRITE_THINKING_OUTPUT_TOKENS
+            : CAD_WRITE_OUTPUT_TOKENS,
           maxRetries: 0,
           abortSignal: codeGenAbort.signal,
         });
@@ -1220,7 +1238,7 @@ export async function handleParametricChatRequest(req: Request) {
             {
               role: 'system',
               content:
-                'You are a strict visual CAD reviewer. Reply with JSON only: {"passed": boolean, "feedback": string}. Pass only if the screenshots visibly satisfy the user request. If not, feedback must name the concrete visual problem to repair.',
+                'You are a strict visual CAD reviewer. Reply with JSON only: {"passed": boolean, "feedback": string}. Pass only if the screenshots visibly satisfy the user request with enough geometric detail and recognizable visual identity. For named products, vehicles, landmarks, characters, or other recognizable subjects, fail generic category shapes, blocky/toy approximations, low-poly placeholders, missing signature details, wrong proportions, wrong orientation, missing major parts, floating parts, or obvious compile/render defects. If not passed, feedback must name the concrete visible repair needed.',
             },
             {
               role: 'user',
@@ -1884,7 +1902,7 @@ export async function handleParametricChatRequest(req: Request) {
                         content: [
                           {
                             type: 'text',
-                            text: `The previous generated OpenSCAD was rendered and visually reviewed. Repair this concrete issue and return the complete corrected OpenSCAD project only: ${feedback}`,
+                            text: `The previous generated OpenSCAD was rendered and visually reviewed. Repair this concrete issue and return the complete corrected single OpenSCAD file only: ${feedback}`,
                           },
                           ...signedUrls.map((url) => ({
                             type: 'image_url' as const,
