@@ -6,6 +6,7 @@ import {
   validateParameterValue,
   isMeasurementParameter,
   cssToHex,
+  numberArrayLabels,
 } from '@/utils/parameterUtils';
 import { ParameterSlider } from '@/components/parameter/ParameterSlider';
 import { Label } from '@/components/ui/label';
@@ -312,27 +313,4 @@ export function ParameterInput({
       );
     }
   }
-}
-
-function numberArrayLabels(param: Parameter): string[] {
-  if (!Array.isArray(param.value)) return [];
-  if (param.value.length === 2) return ['X', 'Y'];
-  if (param.value.length !== 3) {
-    return param.value.map((_, index) => String(index + 1));
-  }
-
-  const name = param.name.toLowerCase();
-  if (
-    name.includes('size') ||
-    name.includes('dimension') ||
-    name.includes('body') ||
-    name.includes('torso') ||
-    name.includes('head') ||
-    name.includes('foot') ||
-    name.includes('base')
-  ) {
-    return ['Width', 'Depth', 'Height'];
-  }
-
-  return ['X', 'Y', 'Z'];
 }

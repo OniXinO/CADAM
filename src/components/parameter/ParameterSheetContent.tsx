@@ -10,7 +10,10 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { ParameterInput } from '@/components/parameter/ParameterInput';
-import { validateParameterValue } from '@/utils/parameterUtils';
+import {
+  flattenNumberArrayParameters,
+  validateParameterValue,
+} from '@/utils/parameterUtils';
 import { useCurrentMessage } from '@/contexts/CurrentMessageContext';
 import {
   downloadSTLFile,
@@ -39,6 +42,7 @@ export function ParameterSheetContent({
   const { toast } = useToast();
   const [selectedFormat, setSelectedFormat] = useState<DownloadFormat>('stl');
   const [isExporting, setIsExporting] = useState(false);
+  const displayParameters = flattenNumberArrayParameters(parameters);
 
   // Debounce timer for compilation
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -81,7 +85,7 @@ export function ParameterSheetContent({
 
     // Update local state immediately for UI responsiveness
     const updatedParam = { ...param, value: validatedValue };
-    const updatedParameters = parameters.map((p) =>
+    const updatedParameters = displayParameters.map((p) =>
       p.name === param.name ? updatedParam : p,
     );
 
@@ -146,7 +150,7 @@ export function ParameterSheetContent({
     <>
       <ScrollArea className="h-full w-full px-4">
         <div className="flex flex-col gap-6 pb-4 pt-2">
-          {parameters.map((param) => (
+          {displayParameters.map((param) => (
             <ParameterInput
               key={param.name}
               param={param}

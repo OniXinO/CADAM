@@ -160,6 +160,27 @@ export default function parseParameters(script: string): Parameter[] {
         displayName = 'Resolution';
       }
 
+      if (
+        typeAndValue.type === 'number[]' &&
+        Array.isArray(typeAndValue.value)
+      ) {
+        const labels = numberArrayLabels(name, typeAndValue.value.length);
+        typeAndValue.value.forEach((itemValue, index) => {
+          parameters[`${name}[${index}]`] = {
+            description,
+            group: groupSection.group,
+            name: `${name}[${index}]`,
+            displayName: displayNameForArrayItem(displayName, labels[index]),
+            defaultValue: itemValue,
+            range,
+            options,
+            value: itemValue,
+            type: 'number',
+          };
+        });
+        continue;
+      }
+
       // Using names as keys to avoid duplicates
       parameters[name] = {
         description,
@@ -175,6 +196,33 @@ export default function parseParameters(script: string): Parameter[] {
   });
 
   return Object.values(parameters);
+}
+
+function numberArrayLabels(name: string, length: number) {
+  if (length === 2) return ['X', 'Y'];
+  if (length !== 3) return Array.from({ length }, (_, index) => `${index + 1}`);
+
+  const lowerName = name.toLowerCase();
+  if (
+    lowerName.includes('size') ||
+    lowerName.includes('dimension') ||
+    lowerName.includes('body') ||
+    lowerName.includes('torso') ||
+    lowerName.includes('head') ||
+    lowerName.includes('foot') ||
+    lowerName.includes('base')
+  ) {
+    return ['Width', 'Depth', 'Height'];
+  }
+
+  return ['X', 'Y', 'Z'];
+}
+
+function displayNameForArrayItem(displayName: string, label: string) {
+  if (['Width', 'Depth', 'Height'].includes(label)) {
+    return displayName.replace(/\s+Size$/i, '') + ` ${label}`;
+  }
+  return `${displayName} ${label}`;
 }
 
 function convertType(rawValue: string): {

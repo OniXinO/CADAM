@@ -30,6 +30,7 @@ import { ParameterInput } from '@/components/parameter/ParameterInput';
 import {
   validateParameterValue,
   isColorParameter,
+  flattenNumberArrayParameters,
 } from '@/utils/parameterUtils';
 import { useCurrentMessage } from '@/contexts/CurrentMessageContext';
 import {
@@ -63,15 +64,20 @@ export function ParameterSection({
   // Split params into the main list (non-color, shown by default) and a
   // collapsible Colors group below it. Keeps the dimensions the user
   // usually wants front-and-center while colors stay one click away.
+  const displayParameters = useMemo(
+    () => flattenNumberArrayParameters(parameters),
+    [parameters],
+  );
+
   const { mainParameters, colorParameters } = useMemo(() => {
     const main: Parameter[] = [];
     const color: Parameter[] = [];
-    for (const p of parameters) {
+    for (const p of displayParameters) {
       if (isColorParameter(p)) color.push(p);
       else main.push(p);
     }
     return { mainParameters: main, colorParameters: color };
-  }, [parameters]);
+  }, [displayParameters]);
   const [colorsOpen, setColorsOpen] = useState(true);
   const [dimensionsOpen, setDimensionsOpen] = useState(true);
 
@@ -114,7 +120,7 @@ export function ParameterSection({
     const validatedValue = validateParameterValue(param, value);
 
     const updatedParam = { ...param, value: validatedValue };
-    const updatedParameters = parameters.map((p) =>
+    const updatedParameters = displayParameters.map((p) =>
       p.name === param.name ? updatedParam : p,
     );
 
@@ -190,7 +196,7 @@ export function ParameterSection({
                 className="h-8 w-8 rounded-full p-0 text-adam-text-primary transition-colors [@media(hover:hover)]:hover:bg-adam-neutral-950 [@media(hover:hover)]:hover:text-adam-neutral-10"
                 disabled={parameters.length === 0}
                 onClick={() => {
-                  const newParameters = parameters.map((param) => ({
+                  const newParameters = displayParameters.map((param) => ({
                     ...param,
                     value: param.defaultValue,
                   }));
