@@ -47,8 +47,7 @@ import { useMeshData } from '@/hooks/useMeshData';
 import { MeshImagePreview } from '@/components/viewer/MeshImagePreview';
 import { TreeNode } from '@shared/Tree';
 
-const isCadBuildTool = (name: string) =>
-  name === 'build_cad_model' || name === 'build_parametric_model';
+const isCadBuildTool = (name: string) => name === 'build_cad_model';
 
 const sanitizeAssistantText = (text: string) =>
   text.replace(
@@ -260,8 +259,7 @@ export function AssistantMessage({
 
                       if (
                         isCadBuildTool(toolCall.name) &&
-                        ((message.content.artifact &&
-                          toolCall.status === 'error') ||
+                        (toolCall.status === 'error' ||
                           toolCall.status === 'pending_verification' ||
                           toolCall.status === 'verified')
                       ) {
@@ -280,8 +278,7 @@ export function AssistantMessage({
                             {toolCall.name === 'create_mesh' && (
                               <Box className="h-4 w-4 text-white" />
                             )}
-                            {(isCadBuildTool(toolCall.name) ||
-                              toolCall.name === 'apply_parameter_changes') && (
+                            {isCadBuildTool(toolCall.name) && (
                               <Box className="h-4 w-4 text-white" />
                             )}
                             {toolCall.status === 'pending' && (
@@ -290,9 +287,7 @@ export function AssistantMessage({
                                   ? 'Queuing image...'
                                   : toolCall.name === 'create_mesh'
                                     ? 'Queuing mesh...'
-                                    : isCadBuildTool(toolCall.name) ||
-                                        toolCall.name ===
-                                          'apply_parameter_changes'
+                                    : isCadBuildTool(toolCall.name)
                                       ? 'Building CAD...'
                                       : `${toolCall.name}...`}
                               </span>
@@ -303,9 +298,7 @@ export function AssistantMessage({
                                   ? 'Failed to start image generation'
                                   : toolCall.name === 'create_mesh'
                                     ? 'Failed to start mesh generation'
-                                    : isCadBuildTool(toolCall.name) ||
-                                        toolCall.name ===
-                                          'apply_parameter_changes'
+                                    : isCadBuildTool(toolCall.name)
                                       ? 'Failed to generate CAD'
                                       : `${toolCall.name}...`}
                               </span>

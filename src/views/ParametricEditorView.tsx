@@ -26,11 +26,7 @@ export function ParametricEditorView() {
   const queryClient = useQueryClient();
   const { setCurrentMessage } = useCurrentMessage();
   const [currentOutput, setCurrentOutput] = useState<Blob | undefined>();
-  const [compileResult, setCompileResult] = useState<AgenticCompileResult>({
-    type: 'pending',
-  });
   const handleCompileResult = useCallback((result: AgenticCompileResult) => {
-    setCompileResult(result);
     setCurrentOutput(result.type === 'stl' ? result.output : undefined);
   }, []);
   // Brand fallback color used when OFF parsing fails and we drop back to
@@ -183,10 +179,8 @@ export function ParametricEditorView() {
     [sendMessageMutation, conversation.id, conversation.settings?.model],
   );
 
-  // Browser side of build_parametric_model's write -> compile -> screenshot loop.
-  useAgenticVerification({
-    compileResult,
-  });
+  // Browser side of build_cad_model's write -> compile -> screenshot loop.
+  useAgenticVerification();
 
   return (
     <ParametricView

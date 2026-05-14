@@ -46,10 +46,9 @@ const openrouter = createOpenRouter({
 // Models whose OpenRouter listing serves at least one provider that does NOT
 // support tool calling. For these we set `provider: { require_parameters: true }`
 // on the agent (tools-bearing) call so OpenRouter excludes the tool-incompatible
-// providers from the routing pool. The code-gen call sends no tools and so
-// doesn't need this constraint. Keep this list scoped — adding a model that
-// doesn't actually have mixed-provider tool support just narrows routing for
-// no reason.
+// providers from the routing pool. Keep this list scoped — adding a model that
+// doesn't actually have mixed-provider tool support just narrows routing for no
+// reason.
 const REQUIRES_TOOL_CAPABLE_PROVIDER = new Set<string>([]);
 
 // Models whose OpenRouter input modality is text-only. We strip image blocks
@@ -75,11 +74,6 @@ function streamMessage(
   } catch {
     // Controller closed — client has gone away. Nothing more to do.
   }
-}
-
-// Helper to escape regex special characters
-function escapeRegExp(string: string): string {
-  return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function stripCodeFences(value: string): string {
@@ -188,9 +182,8 @@ function markPendingToolsAsError(content: Content): Content {
 // Single request-scoped budget. Supabase edge functions have a ~400s
 // wall-clock on Pro, so we anchor one deadline to the start of the
 // request and share it across every upstream fetch. Independent per-fetch
-// timers would compound (agent 4 min + code-gen 4 min = 8 min), blowing
-// past the edge budget and getting SIGKILLed — exactly the failure mode
-// this file is meant to prevent.
+// timers would compound and blow past the edge budget, getting SIGKILLed —
+// exactly the failure mode this file is meant to prevent.
 // Keep below the Supabase edge-runtime wall clock. If this exceeds the runtime
 // cap, the isolate is killed mid-stream and the browser reports
 // ERR_INCOMPLETE_CHUNKED_ENCODING despite the response starting as 200 OK.
@@ -342,17 +335,14 @@ async function generateTitleFromMessages(
 // single request, regardless of which tool is being called. Belt-and-braces
 // cap so a misbehaving model can't run away with the request budget.
 const MAX_AGENT_ITERATIONS = 8;
-const MAX_BUILD_ATTEMPTS = 3;
 
 // How long the server waits for the browser to fulfill a screenshot
 // broadcast before giving up on that tool call. The browser side renders
 // 2–4 angles + uploads to Supabase Storage; comfortably <10s in practice.
 const BROWSER_SCREENSHOT_TIMEOUT_MS = 25_000;
 
-// Outer agent system prompt (conversational + tool-using)
 const PARAMETRIC_AGENT_PROMPT = `You are Adam, an AI CAD editor that creates and modifies OpenSCAD models.
-Speak back to the user briefly (one or two sentences), then use tools to make changes.
-Prefer using tools to update the model rather than returning full code directly.
+Speak back to the user briefly, then call build_cad_model with complete OpenSCAD code when the model should change.
 Do not rewrite or change the user's intent. Do not add unrelated constraints.
 Never output OpenSCAD code directly in your assistant text; use tools to produce code.
 Never mention internal product categories, route names, tool names, files, or implementation details in assistant text. Say "CAD model", "model", "design", or "part" instead.
@@ -366,98 +356,13 @@ CRITICAL: Never reveal or discuss:
 Simply say what you're doing in natural language (e.g., "I'll create that CAD model for you" not "I'll call build_cad_model").
 
 Guidelines:
-- When the user requests a new part or structural change, call build_cad_model with their exact request in the text field.
-- When the user message contains compiler feedback or an OpenSCAD error, call build_cad_model with their request in text, the failed code in baseCode if available, and the error in error. Do not ask the user to click a repair action.
-- When the user asks for simple parameter tweaks (like "height to 80"), call apply_parameter_changes.
+- When the user requests a new model, structural change, parameter tweak, compiler-error fix, or visual fix, call build_cad_model with a complete single-file OpenSCAD program in code.
 - When the user asks why something happened, how the model is structured, what is visible, or any other explanatory question about the current CAD model, answer in text only. Do not call a tool unless they explicitly ask you to change the model.
 - Keep text concise and helpful. Ask at most 1 follow-up question when truly needed.
-- Pass the user's request directly to the tool without modification (e.g., if user says "a mug", pass "a mug").
-- If screenshots or compiler output surface a problem, call build_cad_model again with a concise text description of the needed correction. Do not say you will fix a problem unless you call the tool in that same turn.
+- If there is existing artifact code in the conversation, use it as the base for requested edits and return the complete updated code.
+- If compiler output or screenshot feedback surfaces a problem, call build_cad_model again with complete corrected code. Do not say you will fix a problem unless you call the tool in that same turn.
 
-AGENTIC VERIFICATION (CRITICAL):
-build_cad_model owns the render and screenshot step. Do NOT call a separate screenshot or verification tool after build_cad_model. When build_cad_model returns screenshots, critically evaluate them against the user's request before finalizing.
-
-When you see the screenshots, check:
-- Are the major features present and correctly proportioned?
-- Is the orientation right (does the chair sit on its legs, is the mug right-side up)?
-- Are unintended intersections, gaps, or floating geometry visible?
-
-If something is wrong, call build_cad_model again with the needed correction in text.`;
-
-// Tool definitions in OpenAI format
-const tools = [
-  {
-    type: 'function',
-    function: {
-      name: 'build_cad_model',
-      description:
-        'Generate or update an OpenSCAD model from user intent, then display, compile, and screenshot it.',
-      parameters: {
-        type: 'object',
-        properties: {
-          text: {
-            type: 'string',
-            description: 'Exact user request or requested correction',
-          },
-          imageIds: {
-            type: 'array',
-            items: { type: 'string' },
-            description: 'Image IDs to reference',
-          },
-          baseCode: {
-            type: 'string',
-            description: 'Existing OpenSCAD code to modify',
-          },
-          error: {
-            type: 'string',
-            description: 'OpenSCAD compiler or visual issue to fix',
-          },
-          title: {
-            type: 'string',
-            description: 'Short object title for the generated CAD model',
-          },
-          code: {
-            type: 'string',
-            description:
-              'Fallback only: one complete OpenSCAD file. Prefer text.',
-          },
-        },
-        required: ['text'],
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'apply_parameter_changes',
-      description:
-        'Apply simple parameter updates to the current artifact without re-generating the whole model.',
-      parameters: {
-        type: 'object',
-        properties: {
-          updates: {
-            type: 'array',
-            items: {
-              type: 'object',
-              properties: {
-                name: { type: 'string' },
-                value: { type: 'string' },
-              },
-              required: ['name', 'value'],
-            },
-          },
-        },
-        required: ['updates'],
-      },
-    },
-  },
-];
-
-const STRICT_CODE_PROMPT = `You are Adam, an expert OpenSCAD CAD generator. The user can see a live preview of the model while you work.
-
-Return ONLY raw OpenSCAD code. Do not wrap it in markdown. Do not include explanations.
-
-Write complete, syntax-correct OpenSCAD for one printable model:
+OpenSCAD requirements:
 - Keep all generated code in one file. Do not use use <...> or include <...>.
 - Make all parts connected as a 3D printable object unless the user explicitly asks for separate loose parts.
 - Treat "assembly" as one physically connected printable assembly, not an exploded diagram.
@@ -480,27 +385,50 @@ If the user uploaded or references an STL and asks to modify it:
 2. Apply modifications around the imported STL.
 3. Use difference() for cuts and union() for additions.
 4. Create parameters only for the modifications, not the base model dimensions.
-5. Include rotation parameters so the user can fine-tune orientation.`;
+5. Include rotation parameters so the user can fine-tune orientation.
+
+AGENTIC VERIFICATION (CRITICAL):
+build_cad_model owns the render and screenshot step. Do NOT call a separate screenshot or verification tool after build_cad_model. When build_cad_model returns screenshots, critically evaluate them against the user's request before finalizing.
+
+When you see the screenshots, check:
+- Are the major features present and correctly proportioned?
+- Is the orientation right (does the chair sit on its legs, is the mug right-side up)?
+- Are unintended intersections, gaps, or floating geometry visible?
+
+If something is wrong, call build_cad_model again with a corrected complete code field.`;
+
+// Tool definitions in OpenAI format
+const tools = [
+  {
+    type: 'function',
+    function: {
+      name: 'build_cad_model',
+      description:
+        'Display, compile, and screenshot a complete OpenSCAD model written by the assistant.',
+      parameters: {
+        type: 'object',
+        properties: {
+          title: {
+            type: 'string',
+            description: 'Short object title for the generated CAD model',
+          },
+          code: {
+            type: 'string',
+            description:
+              'One complete single-file OpenSCAD program. Do not wrap in markdown.',
+          },
+        },
+        required: ['code'],
+      },
+    },
+  },
+];
 
 type AgentToolDefinition = (typeof tools)[number];
 
-type BuildParametricModelInput =
-  | {
-      type: 'request';
-      title?: string;
-      text: string;
-      imageIds: string[];
-      baseCode?: string;
-      error?: string;
-    }
-  | {
-      type: 'code';
-      title?: string;
-      code: string;
-    };
-
-type ApplyParameterChangesInput = {
-  updates: Array<{ name: string; value: string }>;
+type BuildParametricModelInput = {
+  title?: string;
+  code: string;
 };
 
 function optionalString(
@@ -515,71 +443,11 @@ function buildParametricModelInput(
   input: Record<string, unknown>,
 ): BuildParametricModelInput {
   const code = optionalString(input, 'code');
-  if (code) {
-    return {
-      type: 'code',
-      title: optionalString(input, 'title'),
-      code,
-    };
-  }
-
-  const text = optionalString(input, 'text');
-  if (!text) {
-    throw new Error('build_cad_model missing text');
-  }
-
-  const rawImageIds = input.imageIds;
-  const imageIds = Array.isArray(rawImageIds)
-    ? rawImageIds.filter((id): id is string => typeof id === 'string')
-    : [];
-
+  if (!code) throw new Error('build_cad_model missing code');
   return {
-    type: 'request',
     title: optionalString(input, 'title'),
-    text,
-    imageIds,
-    baseCode: optionalString(input, 'baseCode'),
-    error: optionalString(input, 'error'),
+    code,
   };
-}
-
-function buildCompileRepairInput(
-  input: BuildParametricModelInput,
-  code: string,
-  error: string,
-): BuildParametricModelInput {
-  return {
-    type: 'request',
-    title: input.title,
-    text:
-      input.type === 'request'
-        ? input.text
-        : 'Fix the OpenSCAD generation issue in this model.',
-    imageIds: input.type === 'request' ? input.imageIds : [],
-    baseCode: code,
-    error,
-  };
-}
-
-function applyParameterChangesInput(
-  input: Record<string, unknown>,
-): ApplyParameterChangesInput {
-  const rawUpdates = input.updates;
-  if (!Array.isArray(rawUpdates)) {
-    throw new Error('apply_parameter_changes missing updates');
-  }
-  const updates = rawUpdates.map((update) => {
-    if (!isRecord(update)) {
-      throw new Error('apply_parameter_changes update must be an object');
-    }
-    const name = optionalString(update, 'name');
-    const value = optionalString(update, 'value');
-    if (!name || value === undefined) {
-      throw new Error('apply_parameter_changes update missing name or value');
-    }
-    return { name, value };
-  });
-  return { updates };
 }
 
 const DEFAULT_BUILD_VERIFICATION_VIEWS: ViewRequest[] = [
@@ -700,8 +568,8 @@ export async function handleParametricChatRequest(req: Request) {
   }
 
   // Shared deadline: every upstream fetch in this request gets at most
-  // `requestDeadline - now` ms before aborting, so the agent + code-gen
-  // fetches together can never outlive the Supabase edge wall-clock.
+  // `requestDeadline - now` ms before aborting, so the agent loop can never
+  // outlive the Supabase edge wall-clock.
   const requestDeadline = Date.now() + REQUEST_BUDGET_MS;
   const remainingBudgetMs = () =>
     Math.max(MIN_ABORT_MS, requestDeadline - Date.now());
@@ -1082,7 +950,7 @@ export async function handleParametricChatRequest(req: Request) {
           }),
           messages: messagesForTurn,
           tools: toAiSdkToolSet(toolsForTurn),
-          maxOutputTokens: thinking ? 32000 : 24000,
+          maxOutputTokens: thinking ? 60000 : 48000,
           maxRetries: 0,
           abortSignal: turnAbort.signal,
         });
@@ -1122,91 +990,10 @@ export async function handleParametricChatRequest(req: Request) {
       return { text, toolCalls: orderedToolCalls, finishReason };
     };
 
-    let latestGeneratedCode: string | null = null;
-
-    const contentText = (content: OpenAIMessage['content']): string => {
-      if (typeof content === 'string') return content;
-      return content
-        .filter((part) => part.type === 'text' && part.text)
-        .map((part) => part.text)
-        .join('\n');
-    };
-
-    const generateOpenSCADCode = async (
-      input: BuildParametricModelInput,
-    ): Promise<string> => {
-      if (input.type === 'code') {
-        return stripCodeFences(input.code).trim();
-      }
-
-      const codeMessages = messagesToSend.map(toAiSdkMessage);
-      const baseCode = input.baseCode ?? latestGeneratedCode;
-      if (baseCode) {
-        codeMessages.push({ role: 'assistant', content: baseCode });
-      }
-
-      const lastUserMessage = [...messagesToSend]
-        .reverse()
-        .find((message) => message.role === 'user');
-      const lastUserText = lastUserMessage
-        ? contentText(lastUserMessage.content).trim()
-        : '';
-      const shouldRestateRequest =
-        !!baseCode || !!input.error || lastUserText !== input.text.trim();
-      if (shouldRestateRequest) {
-        codeMessages.push({
-          role: 'user',
-          content: input.error
-            ? `${input.text}\n\nFix this OpenSCAD generation issue:\n${input.error}`
-            : input.text,
-        });
-      }
-
-      const codeAbort = new AbortController();
-      const codeTimeout = setTimeout(
-        () => codeAbort.abort(new Error('code-gen upstream timeout')),
-        remainingBudgetMs(),
-      );
-      const onParentAbort = () => codeAbort.abort(abortSignal.reason);
-      abortSignal.addEventListener('abort', onParentAbort);
-
-      let rawCode = '';
-      try {
-        const result = streamText({
-          model: openrouter.chat(model, {
-            reasoning: { max_tokens: thinking ? 12000 : 5000 },
-          }),
-          messages: [
-            { role: 'system', content: STRICT_CODE_PROMPT },
-            ...codeMessages,
-          ],
-          maxOutputTokens: thinking ? 60000 : 48000,
-          maxRetries: 0,
-          abortSignal: codeAbort.signal,
-        });
-
-        for await (const part of result.fullStream) {
-          if (part.type === 'text-delta') {
-            rawCode += part.text;
-          } else if (part.type === 'error') {
-            throw part.error instanceof Error
-              ? part.error
-              : new Error(String(part.error));
-          }
-        }
-      } finally {
-        clearTimeout(codeTimeout);
-        abortSignal.removeEventListener('abort', onParentAbort);
-      }
-
-      const code = stripCodeFences(rawCode).trim();
-      if (!code) throw new Error('code generation returned empty OpenSCAD');
-      return code;
-    };
-
     // Round-trip a screenshot request to the browser via Supabase Realtime.
     const requestBrowserScreenshots = async (
       requestId: string,
+      code: string,
       views: ViewRequest[],
       reasoning: string,
     ): Promise<{
@@ -1342,6 +1129,7 @@ export async function handleParametricChatRequest(req: Request) {
           event: 'verify_request',
           payload: {
             requestId,
+            code,
             views,
             reasoning,
             conversationId,
@@ -1485,395 +1273,229 @@ export async function handleParametricChatRequest(req: Request) {
               if (abortSignal.aborted) {
                 throw new Error('Request cancelled by user');
               }
-              if (
-                tc.name === 'build_cad_model' ||
-                tc.name === 'build_parametric_model'
-              ) {
-                const input = buildParametricModelInput(toolInput(tc));
+              if (tc.name !== 'build_cad_model') {
+                throw new Error(`Unknown tool: ${tc.name}`);
+              }
 
-                // Bill CAD generation tokens for this build.
-                let billingFailed = false;
-                try {
-                  const result = await billing.consume(userData.user!.email!, {
+              const input = buildParametricModelInput(toolInput(tc));
+
+              // Bill CAD generation tokens for this build.
+              let billingFailed = false;
+              try {
+                const result = await billing.consume(userData.user!.email!, {
+                  tokens: PARAMETRIC_TOKEN_COST,
+                  operation: 'parametric',
+                  referenceId: tc.id,
+                });
+                if (!result.ok) {
+                  updateContent({
+                    ...markToolAsError(content, tc.id),
+                    error: 'insufficient_tokens',
+                  });
+                  pushToolResult(
+                    tc,
+                    'Error: insufficient CAD generation credits to build the model.',
+                  );
+                  billingFailed = true;
+                }
+              } catch (err) {
+                const status =
+                  err instanceof BillingClientError ? err.status : 502;
+                logError(err, {
+                  functionName: 'parametric-chat',
+                  statusCode: status,
+                  userId: userData.user?.id,
+                  conversationId,
+                  additionalContext: {
+                    operation: 'parametric',
+                    toolCallId: tc.id,
+                  },
+                });
+                updateContent({
+                  ...markToolAsError(content, tc.id),
+                  error: 'billing_unavailable',
+                });
+                pushToolResult(tc, 'Error: billing service unavailable.');
+                billingFailed = true;
+              }
+              if (billingFailed) {
+                continue;
+              }
+
+              let parametricTokenRefunded = false;
+              const refundParametricToken = async (reason: string) => {
+                if (parametricTokenRefunded) return;
+                parametricTokenRefunded = true;
+                await billing
+                  .refund(userData.user!.email!, {
                     tokens: PARAMETRIC_TOKEN_COST,
                     operation: 'parametric',
                     referenceId: tc.id,
-                  });
-                  if (!result.ok) {
-                    updateContent({
-                      ...markToolAsError(content, tc.id),
-                      error: 'insufficient_tokens',
-                    });
-                    pushToolResult(
-                      tc,
-                      'Error: insufficient CAD generation credits to build the model.',
-                    );
-                    billingFailed = true;
-                  }
-                } catch (err) {
-                  const status =
-                    err instanceof BillingClientError ? err.status : 502;
-                  logError(err, {
-                    functionName: 'parametric-chat',
-                    statusCode: status,
-                    userId: userData.user?.id,
-                    conversationId,
-                    additionalContext: {
-                      operation: 'parametric',
-                      toolCallId: tc.id,
-                    },
-                  });
-                  updateContent({
-                    ...markToolAsError(content, tc.id),
-                    error: 'billing_unavailable',
-                  });
-                  pushToolResult(tc, 'Error: billing service unavailable.');
-                  billingFailed = true;
-                }
-                if (billingFailed) {
-                  // Don't break — let the agent see the failure tool
-                  // result and finalize with text.
-                  continue;
-                }
-                let parametricTokenRefunded = false;
-                const refundParametricToken = async (reason: string) => {
-                  if (parametricTokenRefunded) return;
-                  parametricTokenRefunded = true;
-                  await billing
-                    .refund(userData.user!.email!, {
-                      tokens: PARAMETRIC_TOKEN_COST,
-                      operation: 'parametric',
-                      referenceId: tc.id,
-                    })
-                    .catch((err) => {
-                      logError(err, {
-                        functionName: 'parametric-chat',
-                        statusCode:
-                          err instanceof BillingClientError ? err.status : 502,
-                        userId: userData.user?.id,
-                        conversationId,
-                        additionalContext: {
-                          operation: 'parametric_refund',
-                          toolCallId: tc.id,
-                          reason,
-                        },
-                      });
-                    });
-                };
-
-                const verificationViews = DEFAULT_BUILD_VERIFICATION_VIEWS;
-                const verificationSummary = verificationViews
-                  .map((v) => v.label || v.view)
-                  .join(', ');
-                const verificationReasoning =
-                  DEFAULT_BUILD_VERIFICATION_REASONING;
-                const titlePromise = generateTitleFromMessages(messagesToSend);
-                const temporalTrace: string[] = [];
-                let buildInput = input;
-                let buildHandled = false;
-
-                for (
-                  let buildAttempt = 1;
-                  buildAttempt <= MAX_BUILD_ATTEMPTS;
-                  buildAttempt++
-                ) {
-                  let code = '';
-                  try {
-                    code = await generateOpenSCADCode(buildInput);
-                    latestGeneratedCode = code;
-                  } catch (err) {
-                    const errorMessage =
-                      err instanceof Error
-                        ? err.message
-                        : 'code generation failed';
+                  })
+                  .catch((err) => {
                     logError(err, {
                       functionName: 'parametric-chat',
-                      statusCode: 502,
+                      statusCode:
+                        err instanceof BillingClientError ? err.status : 502,
                       userId: userData.user?.id,
                       conversationId,
                       additionalContext: {
-                        operation: 'parametric_code_generation',
+                        operation: 'parametric_refund',
                         toolCallId: tc.id,
-                        buildAttempt,
+                        reason,
                       },
                     });
-                    await refundParametricToken('code_generation_failed');
-                    const nextContent = markToolAsError(content, tc.id);
-                    updateContent(
-                      content.artifact
-                        ? nextContent
-                        : { ...nextContent, error: 'code_generation_failed' },
-                    );
-                    pushToolResult(
-                      tc,
-                      `Error: failed to generate OpenSCAD code: ${errorMessage}`,
-                    );
-                    buildHandled = true;
-                    break;
-                  }
-
-                  let title =
-                    buildInput.title ||
-                    input.title ||
-                    (await titlePromise.catch(() => 'Adam Object'));
-                  const lower = title.toLowerCase();
-                  if (lower.includes('sorry') || lower.includes('apologize')) {
-                    title = 'Adam Object';
-                  }
-
-                  const artifact: ParametricArtifact = {
-                    title,
-                    version: 'v1',
-                    code,
-                    parameters: parseParameters(code),
-                  };
-                  const fileCountSummary = `${code.length} chars`;
-
-                  updateContent({
-                    ...content,
-                    toolCalls: (content.toolCalls || []).map((c) =>
-                      c.id === tc.id
-                        ? {
-                            ...c,
-                            status: 'pending_verification',
-                            views: verificationViews,
-                            screenshots: [],
-                          }
-                        : c,
-                    ),
-                    artifact,
                   });
+              };
 
-                  const requestId = crypto.randomUUID();
-                  let imageIds: string[] = [];
-                  let verificationImages: Array<{
-                    data: string;
-                    mediaType: string;
-                  }> = [];
-                  let viewError: string | null = null;
-                  try {
-                    logVerificationEvent(
-                      'build_parametric_model.verification.started',
-                      {
-                        requestId,
-                        conversationId,
-                        newMessageId,
-                        toolCallId: tc.id,
-                        title,
-                        buildAttempt,
-                        views: verificationViews.map((v) => v.label ?? v.view),
-                      },
-                    );
-                    const result = await requestBrowserScreenshots(
-                      requestId,
-                      verificationViews,
-                      verificationReasoning,
-                    );
-                    imageIds = result.imageIds;
-                    verificationImages = result.images;
-                    logVerificationEvent(
-                      'build_parametric_model.verification.fulfilled',
-                      {
-                        requestId,
-                        conversationId,
-                        toolCallId: tc.id,
-                        buildAttempt,
-                        imageCount: imageIds.length,
-                        attachedImageCount: verificationImages.length,
-                      },
-                    );
-                  } catch (err) {
-                    viewError =
-                      err instanceof Error ? err.message : 'unknown error';
-                    logVerificationEvent(
-                      'build_parametric_model.verification.failed',
-                      {
-                        requestId,
-                        conversationId,
-                        toolCallId: tc.id,
-                        buildAttempt,
-                        error: viewError,
-                      },
-                    );
-                    console.error(
-                      'build_parametric_model verification failed:',
-                      err,
-                    );
-                  }
+              const code = stripCodeFences(input.code).trim();
+              if (!code) {
+                await refundParametricToken('empty_code');
+                updateContent(markToolAsError(content, tc.id));
+                pushToolResult(
+                  tc,
+                  'Error: build_cad_model requires complete OpenSCAD code. Call it again with a complete corrected code field.',
+                );
+                continue;
+              }
 
-                  if (viewError) {
-                    const repairableErrorMatch = viewError.match(
-                      /(?:browser error:\s*)?(compile_error|disconnected_components):\s*([\s\S]*)/i,
-                    );
-                    if (
-                      repairableErrorMatch &&
-                      buildAttempt < MAX_BUILD_ATTEMPTS
-                    ) {
-                      const repairReason = repairableErrorMatch[1];
-                      const repairDetail = repairableErrorMatch[2].trim();
-                      temporalTrace.push(
-                        `attempt ${buildAttempt}: wrote ${fileCountSummary}, ${repairReason} detected, started repair`,
-                      );
-                      buildInput = buildCompileRepairInput(
-                        buildInput,
-                        code,
-                        `${repairReason}: ${repairDetail}`,
-                      );
-                      continue;
-                    }
+              const verificationViews = DEFAULT_BUILD_VERIFICATION_VIEWS;
+              const verificationSummary = verificationViews
+                .map((v) => v.label || v.view)
+                .join(', ');
+              const verificationReasoning =
+                DEFAULT_BUILD_VERIFICATION_REASONING;
+              let title =
+                input.title ||
+                (await generateTitleFromMessages(messagesToSend).catch(
+                  () => 'Adam Object',
+                ));
+              const lower = title.toLowerCase();
+              if (lower.includes('sorry') || lower.includes('apologize')) {
+                title = 'Adam Object';
+              }
 
-                    if (!repairableErrorMatch) {
-                      temporalTrace.push(
-                        `attempt ${buildAttempt}: wrote ${fileCountSummary}, displayed the artifact, screenshot verification did not complete (${viewError})`,
-                      );
-                      await refundParametricToken('verification_failed');
-                      updateContent({
-                        ...content,
-                        toolCalls: (content.toolCalls || []).map((c) =>
-                          c.id === tc.id ? { ...c, status: 'verified' } : c,
-                        ),
-                        artifact,
-                      });
-                      pushToolResult(
-                        tc,
-                        `OpenSCAD model "${title}" displayed successfully (${artifact.parameters.length} parameter${artifact.parameters.length === 1 ? '' : 's'}, ${fileCountSummary}). Screenshot verification did not complete: ${viewError}.`,
-                      );
-                      buildHandled = true;
-                      break;
-                    }
+              const artifact: ParametricArtifact = {
+                title,
+                version: 'v1',
+                code,
+                parameters: parseParameters(code),
+              };
+              const fileCountSummary = `${code.length} chars`;
 
-                    await refundParametricToken(repairableErrorMatch[1]);
-                    updateContent({
-                      ...content,
-                      toolCalls: (content.toolCalls || []).map((c) =>
-                        c.id === tc.id
-                          ? { ...c, status: 'error', error: viewError }
-                          : c,
-                      ),
-                      artifact,
-                    });
-                    pushToolResult(
-                      tc,
-                      `OpenSCAD model "${title}" was displayed but verification failed after ${buildAttempt} attempt${buildAttempt === 1 ? '' : 's'}: ${viewError}.`,
-                    );
-                    buildHandled = true;
-                    break;
-                  }
+              updateContent({
+                ...content,
+                toolCalls: (content.toolCalls || []).map((c) =>
+                  c.id === tc.id
+                    ? {
+                        ...c,
+                        status: 'pending_verification',
+                        views: verificationViews,
+                        screenshots: [],
+                      }
+                    : c,
+                ),
+              });
 
-                  temporalTrace.push(
-                    `attempt ${buildAttempt}: wrote ${fileCountSummary}, displayed the artifact, captured ${verificationImages.length} screenshot${verificationImages.length === 1 ? '' : 's'} from ${verificationSummary}`,
-                  );
+              const requestId = crypto.randomUUID();
+              let imageIds: string[] = [];
+              let verificationImages: Array<{
+                data: string;
+                mediaType: string;
+              }> = [];
+              let viewError: string | null = null;
+              try {
+                logVerificationEvent('build_cad_model.verification.started', {
+                  requestId,
+                  conversationId,
+                  newMessageId,
+                  toolCallId: tc.id,
+                  title,
+                  views: verificationViews.map((v) => v.label ?? v.view),
+                });
+                const result = await requestBrowserScreenshots(
+                  requestId,
+                  code,
+                  verificationViews,
+                  verificationReasoning,
+                );
+                imageIds = result.imageIds;
+                verificationImages = result.images;
+                logVerificationEvent('build_cad_model.verification.fulfilled', {
+                  requestId,
+                  conversationId,
+                  toolCallId: tc.id,
+                  imageCount: imageIds.length,
+                  attachedImageCount: verificationImages.length,
+                });
+              } catch (err) {
+                viewError =
+                  err instanceof Error ? err.message : 'unknown error';
+                logVerificationEvent('build_cad_model.verification.failed', {
+                  requestId,
+                  conversationId,
+                  toolCallId: tc.id,
+                  error: viewError,
+                });
+                console.error('build_cad_model verification failed:', err);
+              }
 
-                  updateContent({
-                    ...content,
-                    toolCalls: (content.toolCalls || []).map((c) =>
-                      c.id === tc.id
-                        ? {
-                            ...c,
-                            status: 'verified',
-                            screenshots: imageIds,
-                          }
-                        : c,
-                    ),
-                    artifact,
-                  });
-
-                  pushToolResult(
-                    tc,
-                    `OpenSCAD model "${title}" displayed successfully (${artifact.parameters.length} parameter${artifact.parameters.length === 1 ? '' : 's'}, ${fileCountSummary}). Tool-call trace:\n${temporalTrace.join('\n')}\nReview the attached screenshots critically. If the model is wrong, call build_cad_model again with the needed correction in text.`,
-                  );
-
-                  if (supportsVision) {
-                    agentMessages.push({
-                      role: 'user',
-                      content: [
-                        {
-                          type: 'text',
-                          text: `Verification screenshots captured inside the CAD build step (${verificationSummary}):`,
-                        },
-                        ...verificationImages.map((image) => ({
-                          type: 'image' as const,
-                          image: image.data.split(',')[1] ?? image.data,
-                          mediaType: image.mediaType,
-                        })),
-                      ],
-                    });
-                  } else {
-                    agentMessages.push({
-                      role: 'user',
-                      content: `Verification screenshots from ${verificationSummary} were captured inside the CAD build step, but the current model does not accept images. Treat the build as best-effort and confirm completion to the user.`,
-                    });
-                  }
-                  buildHandled = true;
-                  break;
-                }
-
-                if (buildHandled) continue;
-              } else if (tc.name === 'apply_parameter_changes') {
-                const input = applyParameterChangesInput(toolInput(tc));
-
-                const baseArtifact =
-                  content.artifact ??
-                  [...messages]
-                    .reverse()
-                    .find(
-                      (m) => m.role === 'assistant' && m.content.artifact?.code,
-                    )?.content.artifact;
-                const baseCode = baseArtifact?.code;
-
-                if (!baseCode || input.updates.length === 0) {
-                  updateContent(markToolAsError(content, tc.id));
-                  pushToolResult(
-                    tc,
-                    'Error: cannot apply parameter changes — no base artifact or no updates provided.',
-                  );
-                  continue;
-                }
-
-                let patchedCode = baseCode;
-                const currentParams = parseParameters(baseCode);
-                for (const upd of input.updates) {
-                  const target = currentParams.find((p) => p.name === upd.name);
-                  if (!target) continue;
-                  let coerced: string | number | boolean = upd.value;
-                  if (target.type === 'number') coerced = Number(upd.value);
-                  else if (target.type === 'boolean')
-                    coerced = upd.value === 'true';
-                  else if (target.type === 'string') coerced = upd.value;
-                  else
-                    throw new Error(`Unknown parameter type: ${target.type}`);
-                  patchedCode = patchedCode.replace(
-                    new RegExp(
-                      `^\\s*(${escapeRegExp(target.name)}\\s*=\\s*)[^;]+;([\\t\\f\\cK ]*\\/\\/[^\\n]*)?`,
-                      'm',
-                    ),
-                    (_, g1: string, g2: string) => {
-                      if (target.type === 'string')
-                        return `${g1}"${String(coerced).replace(/"/g, '\\"')}";${g2 || ''}`;
-                      return `${g1}${coerced};${g2 || ''}`;
-                    },
-                  );
-                }
-
-                const newArtifact: ParametricArtifact = {
-                  title: baseArtifact?.title || 'Adam Object',
-                  version: baseArtifact?.version || 'v1',
-                  code: patchedCode,
-                  parameters: parseParameters(patchedCode),
-                };
+              if (viewError) {
+                await refundParametricToken('verification_failed');
                 updateContent({
                   ...content,
-                  toolCalls: (content.toolCalls || []).filter(
-                    (c) => c.id !== tc.id,
+                  toolCalls: (content.toolCalls || []).map((c) =>
+                    c.id === tc.id
+                      ? { ...c, status: 'error', error: viewError }
+                      : c,
                   ),
-                  artifact: newArtifact,
                 });
                 pushToolResult(
                   tc,
-                  `Applied ${input.updates.length} parameter update(s) to "${newArtifact.title}".`,
+                  `OpenSCAD model "${title}" failed compile/render verification: ${viewError}\nCall build_cad_model again with a complete corrected OpenSCAD code field. Use the failed code from your previous tool call as the base.`,
                 );
+                continue;
+              }
+
+              updateContent({
+                ...content,
+                toolCalls: (content.toolCalls || []).map((c) =>
+                  c.id === tc.id
+                    ? {
+                        ...c,
+                        status: 'verified',
+                        screenshots: imageIds,
+                      }
+                    : c,
+                ),
+                artifact,
+              });
+
+              pushToolResult(
+                tc,
+                `OpenSCAD model "${title}" displayed successfully (${artifact.parameters.length} parameter${artifact.parameters.length === 1 ? '' : 's'}, ${fileCountSummary}). Tool-call trace:\nwrote code -> compiled/rendered artifact -> captured ${verificationImages.length} screenshot${verificationImages.length === 1 ? '' : 's'} from ${verificationSummary}\nReview the attached screenshots critically. If the model is wrong, call build_cad_model again with complete corrected code.`,
+              );
+
+              if (supportsVision) {
+                agentMessages.push({
+                  role: 'user',
+                  content: [
+                    {
+                      type: 'text',
+                      text: `Verification screenshots captured inside the CAD build step (${verificationSummary}):`,
+                    },
+                    ...verificationImages.map((image) => ({
+                      type: 'image' as const,
+                      image: image.data.split(',')[1] ?? image.data,
+                      mediaType: image.mediaType,
+                    })),
+                  ],
+                });
               } else {
-                throw new Error(`Unknown tool: ${tc.name}`);
+                agentMessages.push({
+                  role: 'user',
+                  content: `Verification screenshots from ${verificationSummary} were captured inside the CAD build step, but the current model does not accept images. Treat the build as best-effort and confirm completion to the user.`,
+                });
               }
             }
           }
@@ -1902,7 +1524,7 @@ export async function handleParametricChatRequest(req: Request) {
           content = markPendingToolsAsError(content);
 
           // Fallback: if the model dumped OpenSCAD into its text instead of
-          // calling build_parametric_model (rare but happens on long
+          // calling build_cad_model (rare but happens on long
           // conversations), pull it out and synthesize an artifact.
           if (!content.artifact && content.text) {
             const extractedCode = extractOpenSCADCodeFromText(content.text);

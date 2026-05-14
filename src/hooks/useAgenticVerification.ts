@@ -1,9 +1,10 @@
-import { useEffect, useRef } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
-import { Message, ViewRequest } from '@shared/types';
+import { useContext, useEffect, useRef } from 'react';
+import { ViewRequest } from '@shared/types';
 import { supabase } from '@/lib/supabase';
 import { useConversation } from '@/contexts/ConversationContext';
 import { useAuth } from '@/contexts/AuthContext';
+import { useOpenSCAD } from '@/hooks/useOpenSCAD';
+import { MeshFilesContext } from '@/contexts/MeshFilesContext';
 import {
   countConnectedTriangleComponents,
   renderArtifactFromViews,
@@ -12,6 +13,7 @@ import {
 
 interface VerifyRequestPayload {
   requestId: string;
+  code: string;
   views: ViewRequest[];
   reasoning?: string;
   conversationId: string;
@@ -23,23 +25,9 @@ export type AgenticCompileResult =
   | { type: 'stl'; output: Blob; sourceCode: string }
   | { type: 'compile_error'; sourceCode: string; errorText: string };
 
-interface Args {
-  compileResult: AgenticCompileResult;
-}
-
-// How long the hook is willing to wait for the OpenSCAD compile to
-// produce an STL whose source matches the latest artifact before giving
-// up. Has to be shorter than the server's screenshot timeout so
-// the browser surfaces an actionable error instead of hitting the
-// server's silent timeout. ~25s comfortably covers slow compiles
-// (multi-megabyte parts) on cold WASM workers.
-const FRESH_STL_TIMEOUT_MS = 25_000;
-const FRESH_STL_POLL_INTERVAL_MS = 100;
-
 type FreshCompileResult =
   | { type: 'stl'; stl: Blob }
-  | { type: 'compile_error'; errorText: string }
-  | { type: 'timeout' };
+  | { type: 'compile_error'; errorText: string };
 
 const logVerificationEvent = (
   _event: string,
@@ -50,15 +38,29 @@ function assertNever(value: never): never {
   throw new Error(`Unhandled compile result: ${JSON.stringify(value)}`);
 }
 
-export function useAgenticVerification({ compileResult }: Args) {
-  const queryClient = useQueryClient();
+function compileErrorText(error: unknown) {
+  if (!(error instanceof Error)) return 'OpenSCAD failed to compile';
+  const stdErr = Reflect.get(error, 'stdErr');
+  if (Array.isArray(stdErr)) return stdErr.join('\n').trim();
+  return error.message || 'OpenSCAD failed to compile';
+}
+
+function extractImportFilenames(code: string): string[] {
+  const filenames: string[] = [];
+  const importRegex = /import\s*\(\s*"([^"]+)"\s*\)/g;
+  let match;
+  while ((match = importRegex.exec(code)) !== null) {
+    filenames.push(match[1]);
+  }
+  return filenames;
+}
+
+export function useAgenticVerification() {
   const { conversation } = useConversation();
   const { session } = useAuth();
+  const { exportScad, writeFile } = useOpenSCAD();
+  const meshFilesCtx = useContext(MeshFilesContext);
 
-  const compileResultRef = useRef<AgenticCompileResult>(compileResult);
-  useEffect(() => {
-    compileResultRef.current = compileResult;
-  }, [compileResult]);
   const sessionRef = useRef(session);
   useEffect(() => {
     sessionRef.current = session;
@@ -88,50 +90,24 @@ export function useAgenticVerification({ compileResult }: Args) {
       });
     };
 
-    const expectedArtifactCode = (): string | undefined => {
-      const messages = queryClient.getQueryData<Message[]>([
-        'messages',
-        conversation.id,
-      ]);
-      if (!messages || messages.length === 0) return undefined;
-      for (let i = messages.length - 1; i >= 0; i--) {
-        const msg = messages[i];
-        if (msg.role === 'assistant' && msg.content.artifact?.code) {
-          return msg.content.artifact.code;
-        }
+    const compileCandidate = async (
+      code: string,
+    ): Promise<FreshCompileResult> => {
+      const filenames = extractImportFilenames(code);
+      for (const filename of filenames) {
+        const content = meshFilesCtx?.getMeshFile(filename);
+        if (content) await writeFile(filename, content);
       }
-      return undefined;
-    };
 
-    const waitForFreshCompileResult = async (): Promise<FreshCompileResult> => {
-      const start = Date.now();
-      while (Date.now() - start < FRESH_STL_TIMEOUT_MS) {
-        if (lifecycleAbort.signal.aborted) return { type: 'timeout' };
-        const expected = expectedArtifactCode();
-        const result = compileResultRef.current;
-        switch (result.type) {
-          case 'pending':
-            break;
-          case 'compile_error':
-            if (expected && result.sourceCode === expected) {
-              return { type: 'compile_error', errorText: result.errorText };
-            }
-            break;
-          case 'stl':
-            if (expected && result.sourceCode === expected) {
-              return { type: 'stl', stl: result.output };
-            }
-            break;
-          default:
-            assertNever(result);
-        }
-        await new Promise((r) => setTimeout(r, FRESH_STL_POLL_INTERVAL_MS));
+      try {
+        return { type: 'stl', stl: await exportScad(code, 'stl') };
+      } catch (err) {
+        return { type: 'compile_error', errorText: compileErrorText(err) };
       }
-      return { type: 'timeout' };
     };
 
     const handleVerifyRequest = async (payload: VerifyRequestPayload) => {
-      const { requestId, views } = payload;
+      const { requestId, code, views } = payload;
       const sess = sessionRef.current;
       logVerificationEvent('verify_request.received', {
         requestId,
@@ -145,16 +121,13 @@ export function useAgenticVerification({ compileResult }: Args) {
         return;
       }
 
-      const compileResult = await waitForFreshCompileResult();
+      const compileResult = await compileCandidate(code);
       switch (compileResult.type) {
         case 'compile_error':
           await sendError(
             requestId,
             `compile_error: ${compileResult.errorText.slice(0, 4000)}`,
           );
-          return;
-        case 'timeout':
-          await sendError(requestId, 'no_compiled_stl');
           return;
         case 'stl':
           break;
@@ -223,10 +196,6 @@ export function useAgenticVerification({ compileResult }: Args) {
           conversationId,
           imageIds,
         });
-
-        queryClient.invalidateQueries({
-          queryKey: ['messages', conversation.id],
-        });
       } catch (err) {
         await sendError(
           requestId,
@@ -266,5 +235,5 @@ export function useAgenticVerification({ compileResult }: Args) {
       lifecycleAbort.abort();
       supabase.removeChannel(channel);
     };
-  }, [conversation.id, conversation.type, queryClient]);
+  }, [conversation.id, conversation.type, exportScad, meshFilesCtx, writeFile]);
 }
