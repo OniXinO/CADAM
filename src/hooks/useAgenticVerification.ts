@@ -5,11 +5,7 @@ import { useConversation } from '@/contexts/ConversationContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { useOpenSCAD } from '@/hooks/useOpenSCAD';
 import { MeshFilesContext } from '@/contexts/MeshFilesContext';
-import {
-  countConnectedTriangleComponents,
-  renderArtifactFromViews,
-  viewLabel,
-} from '@/utils/agenticRenderer';
+import { renderArtifactFromViews, viewLabel } from '@/utils/agenticRenderer';
 
 interface VerifyRequestPayload {
   requestId: string;
@@ -141,17 +137,6 @@ export function useAgenticVerification() {
       });
 
       try {
-        const componentCount = await countConnectedTriangleComponents(
-          compileResult.stl,
-        );
-        if (componentCount > 1) {
-          await sendError(
-            requestId,
-            `disconnected_components: ${componentCount} separate mesh shells detected. The model must be one physically connected printable assembly; add overlapping connectors, brackets, hubs, or structural bridges so every part is attached.`,
-          );
-          return;
-        }
-
         const blobs = await renderArtifactFromViews(compileResult.stl, views);
         logVerificationEvent('screenshots.rendered', {
           requestId,

@@ -32,7 +32,6 @@ type ScreenshotRenderer = {
 
 let screenshotRenderer: ScreenshotRenderer | null = null;
 let renderQueue: Promise<void> = Promise.resolve();
-const COMPONENT_VERTEX_EPSILON = 0.0001;
 
 function getScreenshotRenderer(size: number): ScreenshotRenderer {
   if (!screenshotRenderer) {
@@ -106,58 +105,6 @@ export async function renderArtifactFromViews(
     () => undefined,
   );
   return render;
-}
-
-export async function countConnectedTriangleComponents(
-  output: Blob,
-): Promise<number> {
-  const buffer = await output.arrayBuffer();
-  const geometry = new STLLoader().parse(buffer);
-  try {
-    const position = geometry.getAttribute('position');
-    const triangleCount = Math.floor(position.count / 3);
-    const parent = Array.from({ length: triangleCount }, (_, index) => index);
-    const vertexOwner = new Map<string, number>();
-
-    const find = (index: number): number => {
-      let current = index;
-      while (parent[current] !== current) {
-        parent[current] = parent[parent[current]];
-        current = parent[current];
-      }
-      return current;
-    };
-
-    const union = (left: number, right: number) => {
-      const leftRoot = find(left);
-      const rightRoot = find(right);
-      if (leftRoot !== rightRoot) parent[rightRoot] = leftRoot;
-    };
-
-    const vertexKey = (index: number) =>
-      [
-        Math.round(position.getX(index) / COMPONENT_VERTEX_EPSILON),
-        Math.round(position.getY(index) / COMPONENT_VERTEX_EPSILON),
-        Math.round(position.getZ(index) / COMPONENT_VERTEX_EPSILON),
-      ].join(':');
-
-    for (let triangle = 0; triangle < triangleCount; triangle++) {
-      for (let corner = 0; corner < 3; corner++) {
-        const key = vertexKey(triangle * 3 + corner);
-        const owner = vertexOwner.get(key);
-        if (owner === undefined) vertexOwner.set(key, triangle);
-        else union(triangle, owner);
-      }
-    }
-
-    const roots = new Set<number>();
-    for (let triangle = 0; triangle < triangleCount; triangle++) {
-      roots.add(find(triangle));
-    }
-    return roots.size;
-  } finally {
-    geometry.dispose();
-  }
 }
 
 async function renderArtifactFromViewsNow(
