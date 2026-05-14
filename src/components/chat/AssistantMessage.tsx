@@ -281,8 +281,7 @@ export function AssistantMessage({
                               <Box className="h-4 w-4 text-white" />
                             )}
                             {(isCadBuildTool(toolCall.name) ||
-                              toolCall.name === 'apply_parameter_changes' ||
-                              toolCall.name === 'update_file') && (
+                              toolCall.name === 'apply_parameter_changes') && (
                               <Box className="h-4 w-4 text-white" />
                             )}
                             {toolCall.status === 'pending' && (
@@ -291,13 +290,11 @@ export function AssistantMessage({
                                   ? 'Queuing image...'
                                   : toolCall.name === 'create_mesh'
                                     ? 'Queuing mesh...'
-                                    : toolCall.name === 'update_file'
-                                      ? 'Updating file...'
-                                      : isCadBuildTool(toolCall.name) ||
-                                          toolCall.name ===
-                                            'apply_parameter_changes'
-                                        ? 'Building CAD...'
-                                        : `${toolCall.name}...`}
+                                    : isCadBuildTool(toolCall.name) ||
+                                        toolCall.name ===
+                                          'apply_parameter_changes'
+                                      ? 'Building CAD...'
+                                      : `${toolCall.name}...`}
                               </span>
                             )}
                             {toolCall.status === 'error' && (
@@ -306,13 +303,11 @@ export function AssistantMessage({
                                   ? 'Failed to start image generation'
                                   : toolCall.name === 'create_mesh'
                                     ? 'Failed to start mesh generation'
-                                    : toolCall.name === 'update_file'
-                                      ? 'Failed to update file'
-                                      : isCadBuildTool(toolCall.name) ||
-                                          toolCall.name ===
-                                            'apply_parameter_changes'
-                                        ? 'Failed to generate CAD'
-                                        : `${toolCall.name}...`}
+                                    : isCadBuildTool(toolCall.name) ||
+                                        toolCall.name ===
+                                          'apply_parameter_changes'
+                                      ? 'Failed to generate CAD'
+                                      : `${toolCall.name}...`}
                               </span>
                             )}
                           </div>
@@ -540,10 +535,6 @@ function ObjectButton({
   if (message.content.artifact) {
     title = message.content.artifact.title;
   }
-  // Multi-file artifacts surface a small file count next to the title
-  // so the user knows the model is decomposed into several .scad files.
-  // Single-file artifacts hide it entirely.
-  const fileCount = message.content.artifact?.files?.length ?? 0;
 
   return (
     <Button
@@ -564,11 +555,6 @@ function ObjectButton({
           <span className="truncate font-medium text-adam-text-primary">
             {title}
           </span>
-          {fileCount > 1 && (
-            <span className="shrink-0 rounded border border-adam-neutral-700 bg-adam-neutral-900 px-1 text-[10px] text-adam-neutral-300">
-              {fileCount} files
-            </span>
-          )}
         </div>
         <span
           className={cn(

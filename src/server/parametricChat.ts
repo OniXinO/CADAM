@@ -179,54 +179,6 @@ function markPendingToolsAsError(content: Content): Content {
   };
 }
 
-// Split a strict-code-prompt response into per-file chunks delimited
-// by literal `// === FILE: <name>.scad ===` lines. Returns `null` when
-// no markers are present so the caller can fall back to the single-file
-// path. The first entry in the returned list is always the entry file
-// (markers preserve order). Bare names only — no directory components
-// — to keep `use <name.scad>` lookup inside the OpenSCAD WASM
-// filesystem trivial.
-type ParsedFile = { name: string; content: string };
-function parseMultiFileOpenSCAD(raw: string): ParsedFile[] | null {
-  // Local RegExp (not module-level) so concurrent invocations of this
-  // edge function — which can share an isolate — never see each
-  // other's `/g` lastIndex state. Allocating a regex per call is
-  // measurable but trivial vs. the upstream LLM call we're parsing.
-  const fileMarkerRegex =
-    /^\s*\/\/\s*===\s*FILE:\s*([A-Za-z0-9_.-]+\.scad)\s*===\s*$/gm;
-  const matches: Array<{ name: string; index: number; matchEnd: number }> = [];
-  let m: RegExpExecArray | null;
-  while ((m = fileMarkerRegex.exec(raw)) !== null) {
-    matches.push({
-      name: m[1],
-      index: m.index,
-      matchEnd: m.index + m[0].length,
-    });
-  }
-  if (matches.length === 0) return null;
-
-  const files: ParsedFile[] = [];
-  for (let i = 0; i < matches.length; i++) {
-    const start = matches[i].matchEnd;
-    const end = i + 1 < matches.length ? matches[i + 1].index : raw.length;
-    const content = raw.slice(start, end).replace(/^\n/, '').trimEnd();
-    if (!content) continue;
-    files.push({ name: matches[i].name, content });
-  }
-
-  // De-dupe filenames by keeping the first occurrence — repeated `// ===
-  // FILE: foo.scad ===` markers from a confused model would otherwise
-  // clobber each other on disk.
-  const seen = new Set<string>();
-  const deduped: ParsedFile[] = [];
-  for (const f of files) {
-    if (seen.has(f.name)) continue;
-    seen.add(f.name);
-    deduped.push(f);
-  }
-  return deduped.length > 0 ? deduped : null;
-}
-
 // Single request-scoped budget. Supabase edge functions have a ~400s
 // wall-clock on Pro, so we anchor one deadline to the start of the
 // request and share it across every upstream fetch. Independent per-fetch
@@ -432,15 +384,10 @@ Guidelines:
 - When the user requests a new part or structural change, call build_cad_model with their exact request in the text field.
 - When the user message contains compiler feedback or an OpenSCAD error, call build_cad_model and pass the compiler output in the error field. Do not ask the user to click a repair action.
 - When the user asks for simple parameter tweaks (like "height to 80"), call apply_parameter_changes.
-- For SURGICAL edits to one file in an existing multi-file artifact (a chamfer that needs adjusting, a primitive that needs swapping, a single module's logic that needs fixing) — call update_file with the bare filename and the complete new content. Don't burn a full build_cad_model call when only one file changes.
+- When the user asks why something happened, how the model is structured, what is visible, or any other explanatory question about the current CAD model, answer in text only. Do not call a tool unless they explicitly ask you to change the model.
 - Keep text concise and helpful. Ask at most 1 follow-up question when truly needed.
 - Pass the user's request directly to the tool without modification (e.g., if user says "a mug", pass "a mug" to build_cad_model).
-
-Picking between build_cad_model and update_file after verification:
-- If screenshots surface a problem in ONE part (e.g. "the wheel is too narrow"), use update_file with the full new wheel.scad. Faster, cheaper, leaves the rest of the project untouched.
-- If screenshots surface a problem in proportions across multiple parts, missing structural pieces, or "this isn't a car at all", use build_cad_model with a fix description. Lets the dedicated code generator restart from scratch.
-
-When the request is COMPLEX (a vehicle, a piece of furniture with separate parts, a multi-component assembly, anything that would otherwise be 200+ lines of monolithic code), pass the user's request to build_cad_model and add a concise internal decomposition hint in the tool input only. Do not mention decomposition, files, or parts generation in assistant text. Example tool input: "build a 4-wheeled toy car. Decompose into assembly.scad (entry, with all exposed parameters), chassis.scad, wheel.scad, body.scad. The entry uses the others." Don't repeat this hint when the user is asking for a small/simple object (a cup, a bracket).
+- If screenshots surface a visual problem, use build_cad_model with a fix description. The CAD writer returns one complete OpenSCAD file.
 
 AGENTIC VERIFICATION (CRITICAL):
 build_cad_model owns the full temporal generation trace inside ONE tool call: write code, display it, request browser screenshots, and return those screenshots in the same tool result. Do NOT call a separate screenshot or verification tool after build_cad_model. When build_cad_model returns screenshots, critically evaluate them against the user's request before finalizing.
@@ -500,35 +447,6 @@ const tools = [
       },
     },
   },
-  {
-    type: 'function',
-    function: {
-      name: 'update_file',
-      description:
-        'Surgically rewrite ONE .scad file in the current multi-file artifact with new content, or add a new .scad file alongside the existing ones. Use this for targeted edits visible in the verification screenshots — chamfering an edge, swapping a primitive, retuning a single module, splitting a module into its own file. Cheaper and faster than build_cad_model because no inner code-gen call runs; you write the full new file content directly. Do NOT use this for whole-project restructures or starting from scratch — call build_cad_model for those.',
-      parameters: {
-        type: 'object',
-        properties: {
-          filename: {
-            type: 'string',
-            description:
-              'Bare filename (snake_case, ends in .scad, no directories). If it matches an existing file in the artifact, that file is replaced. If not, a new file is appended to the project.',
-          },
-          content: {
-            type: 'string',
-            description:
-              "The COMPLETE new content for the file (not a diff). Plain OpenSCAD source — no markdown fences, no '// === FILE: ===' marker. If you're updating the entry file, keep all top-level user-exposed parameters in this content; they re-populate the parameter panel on save.",
-          },
-          rationale: {
-            type: 'string',
-            description:
-              'One short sentence on what changed and why (e.g. "tightened wheel chamfer from 1mm to 2mm to match the iso render").',
-          },
-        },
-        required: ['filename', 'content'],
-      },
-    },
-  },
 ];
 
 type AgentToolDefinition = (typeof tools)[number];
@@ -538,12 +456,6 @@ type BuildParametricModelInput = {
   imageIds?: string[];
   baseCode?: string;
   error?: string;
-};
-
-type UpdateFileInput = {
-  filename: string;
-  content: string;
-  rationale?: string;
 };
 
 type ApplyParameterChangesInput = {
@@ -573,19 +485,6 @@ function buildParametricModelInput(
     imageIds: stringList(input, 'imageIds'),
     baseCode: optionalString(input, 'baseCode'),
     error: optionalString(input, 'error'),
-  };
-}
-
-function updateFileInput(input: Record<string, unknown>): UpdateFileInput {
-  const filename = optionalString(input, 'filename');
-  const content = optionalString(input, 'content');
-  if (!filename || !content) {
-    throw new Error('update_file missing filename or content');
-  }
-  return {
-    filename,
-    content,
-    rationale: optionalString(input, 'rationale'),
   };
 }
 
@@ -726,63 +625,8 @@ CRITICAL: Never include in code comments or anywhere:
 - Any meta-information about how you work
 Just generate clean OpenSCAD code with appropriate technical comments.
 - Return ONLY raw OpenSCAD code. DO NOT wrap it in markdown code blocks (no \`\`\`openscad).
+- Return ONE complete OpenSCAD file. Do not split generated code across files. Do not use \`use <...>\` or \`include <...>\` for generated .scad modules.
 Just return the plain OpenSCAD code directly.
-
-# MULTI-FILE PROJECTS (when complexity warrants)
-For models with several distinct parts (vehicles, furniture with separate components, multi-part assemblies, anything where 200+ lines of monolithic code start to read like spaghetti), decompose the project into MULTIPLE .scad files. The format is strict:
-
-Start each file with a marker line, then raw OpenSCAD:
-// === FILE: assembly.scad ===
-[OpenSCAD for the entry file]
-// === FILE: next_part.scad ===
-[OpenSCAD for the next file]
-
-Rules:
-- Use the literal marker \`// === FILE: <name>.scad ===\` on its own line, with NO leading whitespace, to start each file. The marker is parsed by string match — do not paraphrase it.
-- These marker lines are required delimiters, not explanation. Do not wrap the multi-file project in markdown fences.
-- The FIRST file is the entry point and is what the viewer compiles. It should \`use <name.scad>\` (for module-only imports) or \`include <name.scad>\` (when you need top-level vars too) to bring in the others.
-- Top-level user-exposed parameters (the ones rendered in the parameter panel) MUST live in the entry file. Parameters defined in \`use\`d files are not visible at the top level.
-- Each part file should expose modules: \`module wheel(radius, width) { ... }\` so the entry file calls them with positions/rotations.
-- Filenames are bare names (no directories). Use snake_case (\`front_wheel.scad\`, \`assembly.scad\`).
-- Reuse the \`*_color\` parameter convention across files when a part should be tintable.
-
-When NOT to decompose:
-- The whole model fits comfortably in one file (the mug example below stays one file).
-- The user asked for a small primitive like "a cube" or "a phone stand".
-
-Example (multi-file, agent picks decomposition based on the request):
-
-// === FILE: assembly.scad ===
-// Top-level params live here
-chassis_length = 120;
-chassis_width = 60;
-wheel_radius = 18;
-wheel_width = 10;
-ride_height = 14;
-body_color = "SteelBlue";
-wheel_color = "DimGray";
-
-use <chassis.scad>
-use <wheel.scad>
-
-translate([0, 0, ride_height])
-  color(body_color) chassis(chassis_length, chassis_width);
-
-for (sx = [-1, 1])
-  for (sy = [-1, 1])
-    translate([sx * (chassis_length/2 - wheel_radius), sy * (chassis_width/2 + wheel_width/2), wheel_radius])
-      rotate([90, 0, 0])
-      color(wheel_color) wheel(wheel_radius, wheel_width);
-
-// === FILE: chassis.scad ===
-module chassis(length, width) {
-  cube([length, width, 6], center = true);
-}
-
-// === FILE: wheel.scad ===
-module wheel(radius, width) {
-  cylinder(h = width, r = radius, center = true, $fn = 64);
-}
 
 # STL Import (CRITICAL)
 When the user uploads a 3D model (STL file) and you are told to use import():
@@ -1854,33 +1698,15 @@ export async function handleParametricChatRequest(req: Request) {
                   const { code, success } = await generateOpenSCADCode(
                     codeMessages,
                     (rawCode) => {
-                      const parsedSoFar = parseMultiFileOpenSCAD(rawCode);
-                      if (parsedSoFar && parsedSoFar.length > 0) {
-                        updateContent({
-                          ...content,
-                          artifact: {
-                            title: finalTitle,
-                            version: 'v1',
-                            code: parsedSoFar[0].content,
-                            parameters: [],
-                            files: parsedSoFar.map((f) => ({
-                              name: f.name,
-                              content: f.content,
-                            })),
-                            entryFile: parsedSoFar[0].name,
-                          },
-                        });
-                      } else {
-                        updateContent({
-                          ...content,
-                          artifact: {
-                            title: finalTitle,
-                            version: 'v1',
-                            code: rawCode,
-                            parameters: [],
-                          },
-                        });
-                      }
+                      updateContent({
+                        ...content,
+                        artifact: {
+                          title: finalTitle,
+                          version: 'v1',
+                          code: rawCode,
+                          parameters: [],
+                        },
+                      });
                     },
                   );
 
@@ -1891,12 +1717,8 @@ export async function handleParametricChatRequest(req: Request) {
                   }
                   finalTitle = title;
 
-                  const parsedFiles = code
-                    ? parseMultiFileOpenSCAD(code)
-                    : null;
                   const hasUsableCode =
-                    !!code &&
-                    (success || !!parsedFiles || scoreOpenSCADCode(code) >= 5);
+                    !!code && (success || scoreOpenSCADCode(code) >= 5);
 
                   if (!hasUsableCode) {
                     if (!finalArtifact) {
@@ -1919,31 +1741,13 @@ export async function handleParametricChatRequest(req: Request) {
                     break;
                   }
 
-                  let entryCode = code;
-                  let files: ParsedFile[] | undefined;
-                  let entryFile: string | undefined;
-                  if (parsedFiles && parsedFiles.length > 0) {
-                    files = parsedFiles;
-                    entryFile = parsedFiles[0].name;
-                    entryCode = parsedFiles[0].content;
-                  }
-
                   const artifact: ParametricArtifact = {
                     title,
                     version: 'v1',
-                    code: entryCode,
-                    parameters: parseParameters(entryCode),
-                    ...(files && {
-                      files: files.map((f) => ({
-                        name: f.name,
-                        content: f.content,
-                      })),
-                    }),
-                    ...(entryFile && { entryFile }),
+                    code,
+                    parameters: parseParameters(code),
                   };
-                  const fileCountSummary = files
-                    ? `${files.length} file${files.length === 1 ? '' : 's'} (entry: ${entryFile})`
-                    : `${code.length} chars`;
+                  const fileCountSummary = `${code.length} chars`;
 
                   updateContent({
                     ...content,
@@ -2166,131 +1970,9 @@ export async function handleParametricChatRequest(req: Request) {
                     content: `Verification screenshots from ${verificationSummary} were captured inside the CAD build step, but the current model does not accept images. Treat the build as best-effort and confirm completion to the user.`,
                   });
                 }
-              } else if (tc.name === 'update_file') {
-                // Surgical per-file rewrite. The agent itself authored
-                // the new file content (no inner code-gen call), so this
-                // is fast and free of additional model spend. Only the
-                // named file in artifact.files is touched; the rest of
-                // the project — including the user's parameter values
-                // when the entry isn't being changed — stays put.
-                const input = updateFileInput(toolInput(tc));
-
-                const filename = input.filename.trim();
-                const newFileContent = input.content;
-                if (
-                  !filename ||
-                  !/^[A-Za-z0-9_.-]+\.scad$/.test(filename) ||
-                  !newFileContent
-                ) {
-                  updateContent(markToolAsError(content, tc.id));
-                  pushToolResult(
-                    tc,
-                    'Error: update_file needs `filename` (bare *.scad name) and `content` (full file body).',
-                  );
-                  continue;
-                }
-
-                const existingArtifact = content.artifact;
-                if (!existingArtifact) {
-                  updateContent(markToolAsError(content, tc.id));
-                  pushToolResult(
-                    tc,
-                    'Error: update_file called before any artifact exists. Use build_cad_model first.',
-                  );
-                  continue;
-                }
-
-                // Promote single-file artifacts to multi-file shape on
-                // first update_file call. The existing artifact.code
-                // becomes the entry file; we synthesize a name for it
-                // so update_file can address it later if the agent
-                // wants to. Using "main.scad" as the convention.
-                const existingFiles =
-                  existingArtifact.files && existingArtifact.files.length > 0
-                    ? existingArtifact.files.map((f) => ({
-                        name: f.name,
-                        content: f.content,
-                      }))
-                    : [
-                        {
-                          name: existingArtifact.entryFile || 'main.scad',
-                          content: existingArtifact.code,
-                        },
-                      ];
-                const existingEntry =
-                  existingArtifact.entryFile ||
-                  existingFiles[0]?.name ||
-                  'main.scad';
-
-                const idx = existingFiles.findIndex((f) => f.name === filename);
-                let action: 'replaced' | 'added';
-                if (idx >= 0) {
-                  existingFiles[idx] = {
-                    name: filename,
-                    content: newFileContent,
-                  };
-                  action = 'replaced';
-                } else {
-                  existingFiles.push({
-                    name: filename,
-                    content: newFileContent,
-                  });
-                  action = 'added';
-                }
-
-                // Recompute the entry's content + parameters when the
-                // entry was the file just edited. Otherwise keep the
-                // existing values — non-entry files don't surface
-                // top-level parameters.
-                const entryFileObj =
-                  existingFiles.find((f) => f.name === existingEntry) ??
-                  existingFiles[0];
-                const newEntryCode = entryFileObj
-                  ? entryFileObj.content
-                  : existingArtifact.code;
-                const newParameters =
-                  filename === existingEntry
-                    ? parseParameters(newEntryCode)
-                    : existingArtifact.parameters;
-
-                const updatedArtifact: ParametricArtifact = {
-                  ...existingArtifact,
-                  code: newEntryCode,
-                  parameters: newParameters,
-                  files: existingFiles,
-                  entryFile: existingEntry,
-                };
-                updateContent({
-                  ...content,
-                  toolCalls: (content.toolCalls || []).filter(
-                    (c) => c.id !== tc.id,
-                  ),
-                  artifact: updatedArtifact,
-                });
-
-                const rationale = input.rationale
-                  ? ` Rationale: ${input.rationale.slice(0, 240)}.`
-                  : '';
-                pushToolResult(
-                  tc,
-                  `${action === 'replaced' ? 'Replaced' : 'Added'} \`${filename}\` (${newFileContent.length} chars).${rationale} The artifact in the user's viewport has been updated.`,
-                );
               } else if (tc.name === 'apply_parameter_changes') {
                 const input = applyParameterChangesInput(toolInput(tc));
 
-                // Capture the source artifact ONCE in a stable local so
-                // every downstream read sees the same object. `content`
-                // is a closure variable that can be reassigned by other
-                // tool handlers earlier in this turn (or, hypothetically,
-                // by future code added between these reads), and the
-                // existing-artifact / messages-fallback chain has to
-                // agree on which artifact we're patching — both for
-                // `code` (the patched entry) and for `files`/`entryFile`
-                // (the multi-file decomposition we're forwarding).
-                // Reading them from different sources caused
-                // multi-file artifacts to silently lose `files` when
-                // `content.artifact` was unset and only the messages
-                // fallback fired.
                 const baseArtifact =
                   content.artifact ??
                   [...messages]
@@ -2334,27 +2016,11 @@ export async function handleParametricChatRequest(req: Request) {
                   );
                 }
 
-                // Forward `files` / `entryFile` so multi-file artifacts
-                // keep their decomposition through a parameter tweak.
-                // Mirror the patched entry content back into the
-                // corresponding files[] entry so `code` and `files`
-                // agree on what the entry looks like.
-                const existingFiles = baseArtifact?.files;
-                const existingEntry = baseArtifact?.entryFile;
-                const refreshedFiles = existingFiles
-                  ? existingFiles.map((f) =>
-                      existingEntry && f.name === existingEntry
-                        ? { name: f.name, content: patchedCode }
-                        : f,
-                    )
-                  : undefined;
                 const newArtifact: ParametricArtifact = {
                   title: baseArtifact?.title || 'Adam Object',
                   version: baseArtifact?.version || 'v1',
                   code: patchedCode,
                   parameters: parseParameters(patchedCode),
-                  ...(refreshedFiles && { files: refreshedFiles }),
-                  ...(existingEntry && { entryFile: existingEntry }),
                 };
                 updateContent({
                   ...content,
