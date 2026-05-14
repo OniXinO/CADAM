@@ -351,7 +351,7 @@ const PARAMETRIC_AGENT_PROMPT = `You are Adam, an AI CAD editor that creates and
 Speak back to the user briefly (one or two sentences), then use tools to make changes.
 Prefer using tools to update the model rather than returning full code directly.
 Do not rewrite or change the user's intent. Do not add unrelated constraints.
-Never output OpenSCAD code directly in your assistant text; write complete OpenSCAD in the build_cad_model tool input.
+Never output OpenSCAD code directly in your assistant text; use tools to produce code.
 Never mention internal product categories, route names, tool names, files, or implementation details in assistant text. Say "CAD model", "model", "design", or "part" instead.
 Do not pre-explain limitations like needing external files unless you are actually blocked from building anything.
 
@@ -363,25 +363,13 @@ CRITICAL: Never reveal or discuss:
 Simply say what you're doing in natural language (e.g., "I'll create that CAD model for you" not "I'll call build_cad_model").
 
 Guidelines:
-- When the user requests a new part or structural change, call build_cad_model with one complete OpenSCAD file in the code field.
-- When the user message contains compiler feedback or an OpenSCAD error, call build_cad_model with the complete corrected OpenSCAD file in the code field. Do not ask the user to click a repair action.
+- When the user requests a new part or structural change, call build_cad_model with their exact request in the text field.
+- When the user message contains compiler feedback or an OpenSCAD error, call build_cad_model with their request in text, the failed code in baseCode if available, and the error in error. Do not ask the user to click a repair action.
 - When the user asks for simple parameter tweaks (like "height to 80"), call apply_parameter_changes.
 - When the user asks why something happened, how the model is structured, what is visible, or any other explanatory question about the current CAD model, answer in text only. Do not call a tool unless they explicitly ask you to change the model.
 - Keep text concise and helpful. Ask at most 1 follow-up question when truly needed.
-- If screenshots or compiler output surface a problem, call build_cad_model again with the full corrected OpenSCAD file.
-
-OPENSCAD WRITING RULES:
-- Return ONE complete OpenSCAD file through the tool input. Do not split generated code across files. Do not use use <...> or include <...> for generated modules.
-- Make the syntax correct and keep all parts connected as a 3D printable object.
-- Put all user-tweakable parameters at the top. Use full descriptive snake_case names; parameter names render directly in the UI.
-- Prefer scalar dimension parameters like head_width, head_depth, and head_height. Do not expose number[] vector parameters for ordinary dimensions unless the user specifically asks for vector input.
-- For distinct parts, use color() with named *_color parameters so the preview reads clearly.
-- Do not produce toy, low-poly, blocky, or merely symbolic approximations unless the user explicitly asks for that style.
-- For named products, vehicles, landmarks, characters, or recognizable subjects, include the identity details that make the object recognizable, not just the generic category shape.
-- Prefer rich parametric assemblies made from named modules and repeated details: silhouette, bevels, seams, cut lines, panels, holes, mounts, ribs, trims, fasteners, lights, handles, rims, supports, and other request-specific features.
-- Use hull(), minkowski(), polyhedron(), rotate_extrude(), linear_extrude(), boolean cuts, and rounded helper modules where they improve the shape. Avoid designs made mostly of plain cubes.
-- For vehicles, include proportional body sections, wheel arches, tires, rims, windows, windshield and rear glass, grille, headlights, taillights, bumpers, mirrors, door/hood/trunk seams, side trim, and any model-specific cues mentioned or implied by the request.
-- If the user uploaded or references an STL and asks to modify it, use import("filename.stl"), build modifications around it, and expose parameters only for the modifications.
+- Pass the user's request directly to the tool without modification (e.g., if user says "a mug", pass "a mug").
+- If screenshots or compiler output surface a problem, call build_cad_model again with a concise text description of the needed correction.
 
 AGENTIC VERIFICATION (CRITICAL):
 build_cad_model owns the render and screenshot step. Do NOT call a separate screenshot or verification tool after build_cad_model. When build_cad_model returns screenshots, critically evaluate them against the user's request before finalizing.
@@ -391,7 +379,7 @@ When you see the screenshots, check:
 - Is the orientation right (does the chair sit on its legs, is the mug right-side up)?
 - Are unintended intersections, gaps, or floating geometry visible?
 
-If something is wrong, call build_cad_model again with the complete corrected OpenSCAD code.`;
+If something is wrong, call build_cad_model again with the needed correction in text.`;
 
 // Tool definitions in OpenAI format
 const tools = [
@@ -400,10 +388,27 @@ const tools = [
     function: {
       name: 'build_cad_model',
       description:
-        'Display, compile, and screenshot a complete OpenSCAD model generated by the selected model.',
+        'Generate or update an OpenSCAD model from user intent, then display, compile, and screenshot it.',
       parameters: {
         type: 'object',
         properties: {
+          text: {
+            type: 'string',
+            description: 'Exact user request or requested correction',
+          },
+          imageIds: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Image IDs to reference',
+          },
+          baseCode: {
+            type: 'string',
+            description: 'Existing OpenSCAD code to modify',
+          },
+          error: {
+            type: 'string',
+            description: 'OpenSCAD compiler or visual issue to fix',
+          },
           title: {
             type: 'string',
             description: 'Short object title for the generated CAD model',
@@ -411,10 +416,10 @@ const tools = [
           code: {
             type: 'string',
             description:
-              'One complete OpenSCAD file. Raw code only, no markdown fences.',
+              'Fallback only: one complete OpenSCAD file. Prefer text.',
           },
         },
-        required: ['code'],
+        required: ['text'],
       },
     },
   },
@@ -445,12 +450,47 @@ const tools = [
   },
 ];
 
+const STRICT_CODE_PROMPT = `You are Adam, an expert OpenSCAD CAD generator. The user can see a live preview of the model while you work.
+
+Return ONLY raw OpenSCAD code. Do not wrap it in markdown. Do not include explanations.
+
+Write complete, syntax-correct OpenSCAD for one printable model:
+- Keep all generated code in one file. Do not use use <...> or include <...>.
+- Make all parts connected as a 3D printable object unless the user explicitly asks for separate loose parts.
+- Put user-tweakable parameters at the top.
+- Use full descriptive snake_case variable names. Parameter names render directly in the UI.
+- Prefer scalar dimension parameters like head_width, head_depth, and head_height. Do not expose number[] vector parameters for ordinary dimensions unless the user specifically asks for vector input.
+- For distinct visible parts, wrap geometry in color() with named *_color parameters so the preview reads clearly.
+- Expose colors as string parameters with CSS color names or hex values.
+- Do not produce toy, low-poly, blocky, or merely symbolic approximations unless the user asks for that style.
+- For named products, vehicles, landmarks, characters, or recognizable subjects, include the identity details that make the object recognizable, not just the generic category shape.
+- Prefer rich parametric assemblies made from named modules and repeated details: silhouette, bevels, seams, cut lines, panels, holes, mounts, ribs, trims, fasteners, lights, handles, rims, supports, labels, and other request-specific features.
+- Use hull(), minkowski(), polyhedron(), rotate_extrude(), linear_extrude(), boolean cuts, and rounded helper modules where they improve the shape. Avoid designs made mostly of plain cubes.
+- For vehicles, include proportional body sections, wheel arches, tires, rims, windows, windshield and rear glass, grille, headlights, taillights, bumpers, mirrors, door, hood, trunk seams, side trim, and any model-specific cues mentioned or implied by the request.
+
+If the user uploaded or references an STL and asks to modify it:
+1. Use import("filename.stl") for the original model.
+2. Apply modifications around the imported STL.
+3. Use difference() for cuts and union() for additions.
+4. Create parameters only for the modifications, not the base model dimensions.
+5. Include rotation parameters so the user can fine-tune orientation.`;
+
 type AgentToolDefinition = (typeof tools)[number];
 
-type BuildParametricModelInput = {
-  title?: string;
-  code: string;
-};
+type BuildParametricModelInput =
+  | {
+      type: 'request';
+      title?: string;
+      text: string;
+      imageIds: string[];
+      baseCode?: string;
+      error?: string;
+    }
+  | {
+      type: 'code';
+      title?: string;
+      code: string;
+    };
 
 type ApplyParameterChangesInput = {
   updates: Array<{ name: string; value: string }>;
@@ -468,12 +508,31 @@ function buildParametricModelInput(
   input: Record<string, unknown>,
 ): BuildParametricModelInput {
   const code = optionalString(input, 'code');
-  if (!code) {
-    throw new Error('build_cad_model missing code');
+  if (code) {
+    return {
+      type: 'code',
+      title: optionalString(input, 'title'),
+      code,
+    };
   }
+
+  const text = optionalString(input, 'text');
+  if (!text) {
+    throw new Error('build_cad_model missing text');
+  }
+
+  const rawImageIds = input.imageIds;
+  const imageIds = Array.isArray(rawImageIds)
+    ? rawImageIds.filter((id): id is string => typeof id === 'string')
+    : [];
+
   return {
+    type: 'request',
     title: optionalString(input, 'title'),
-    code,
+    text,
+    imageIds,
+    baseCode: optionalString(input, 'baseCode'),
+    error: optionalString(input, 'error'),
   };
 }
 
@@ -1038,6 +1097,88 @@ export async function handleParametricChatRequest(req: Request) {
       return { text, toolCalls: orderedToolCalls, finishReason };
     };
 
+    let latestGeneratedCode: string | null = null;
+
+    const contentText = (content: OpenAIMessage['content']): string => {
+      if (typeof content === 'string') return content;
+      return content
+        .filter((part) => part.type === 'text' && part.text)
+        .map((part) => part.text)
+        .join('\n');
+    };
+
+    const generateOpenSCADCode = async (
+      input: BuildParametricModelInput,
+    ): Promise<string> => {
+      if (input.type === 'code') {
+        return stripCodeFences(input.code).trim();
+      }
+
+      const codeMessages = messagesToSend.map(toAiSdkMessage);
+      const baseCode = input.baseCode ?? latestGeneratedCode;
+      if (baseCode) {
+        codeMessages.push({ role: 'assistant', content: baseCode });
+      }
+
+      const lastUserMessage = [...messagesToSend]
+        .reverse()
+        .find((message) => message.role === 'user');
+      const lastUserText = lastUserMessage
+        ? contentText(lastUserMessage.content).trim()
+        : '';
+      const shouldRestateRequest =
+        !!baseCode || !!input.error || lastUserText !== input.text.trim();
+      if (shouldRestateRequest) {
+        codeMessages.push({
+          role: 'user',
+          content: input.error
+            ? `${input.text}\n\nFix this OpenSCAD error:\n${input.error}`
+            : input.text,
+        });
+      }
+
+      const codeAbort = new AbortController();
+      const codeTimeout = setTimeout(
+        () => codeAbort.abort(new Error('code-gen upstream timeout')),
+        remainingBudgetMs(),
+      );
+      const onParentAbort = () => codeAbort.abort(abortSignal.reason);
+      abortSignal.addEventListener('abort', onParentAbort);
+
+      let rawCode = '';
+      try {
+        const result = streamText({
+          model: openrouter.chat(model, {
+            reasoning: { max_tokens: thinking ? 12000 : 5000 },
+          }),
+          messages: [
+            { role: 'system', content: STRICT_CODE_PROMPT },
+            ...codeMessages,
+          ],
+          maxOutputTokens: thinking ? 60000 : 48000,
+          maxRetries: 0,
+          abortSignal: codeAbort.signal,
+        });
+
+        for await (const part of result.fullStream) {
+          if (part.type === 'text-delta') {
+            rawCode += part.text;
+          } else if (part.type === 'error') {
+            throw part.error instanceof Error
+              ? part.error
+              : new Error(String(part.error));
+          }
+        }
+      } finally {
+        clearTimeout(codeTimeout);
+        abortSignal.removeEventListener('abort', onParentAbort);
+      }
+
+      const code = stripCodeFences(rawCode).trim();
+      if (!code) throw new Error('code generation returned empty OpenSCAD');
+      return code;
+    };
+
     // Round-trip a screenshot request to the browser via Supabase Realtime.
     const requestBrowserScreenshots = async (
       requestId: string,
@@ -1371,6 +1512,36 @@ export async function handleParametricChatRequest(req: Request) {
                   continue;
                 }
 
+                let code = '';
+                try {
+                  code = await generateOpenSCADCode(input);
+                  latestGeneratedCode = code;
+                } catch (err) {
+                  const errorMessage =
+                    err instanceof Error
+                      ? err.message
+                      : 'code generation failed';
+                  logError(err, {
+                    functionName: 'parametric-chat',
+                    statusCode: 502,
+                    userId: userData.user?.id,
+                    conversationId,
+                    additionalContext: {
+                      operation: 'parametric_code_generation',
+                      toolCallId: tc.id,
+                    },
+                  });
+                  updateContent({
+                    ...markToolAsError(content, tc.id),
+                    error: 'code_generation_failed',
+                  });
+                  pushToolResult(
+                    tc,
+                    `Error: failed to generate OpenSCAD code: ${errorMessage}`,
+                  );
+                  continue;
+                }
+
                 const verificationViews = DEFAULT_BUILD_VERIFICATION_VIEWS;
                 const verificationSummary = verificationViews
                   .map((v) => v.label || v.view)
@@ -1387,7 +1558,6 @@ export async function handleParametricChatRequest(req: Request) {
                   title = 'Adam Object';
                 }
 
-                const code = stripCodeFences(input.code).trim();
                 const artifact: ParametricArtifact = {
                   title,
                   version: 'v1',
@@ -1495,7 +1665,7 @@ export async function handleParametricChatRequest(req: Request) {
                   });
                   pushToolResult(
                     tc,
-                    `OpenSCAD model "${title}" was displayed but verification failed: ${viewError}. If this is a compile error or visual problem, call build_cad_model again with the complete corrected OpenSCAD code.`,
+                    `OpenSCAD model "${title}" was displayed but verification failed: ${viewError}. If this is a compile error or visual problem, call build_cad_model again with the correction in text and the error field set.`,
                   );
                   continue;
                 }
@@ -1520,7 +1690,7 @@ export async function handleParametricChatRequest(req: Request) {
 
                 pushToolResult(
                   tc,
-                  `OpenSCAD model "${title}" displayed successfully (${artifact.parameters.length} parameter${artifact.parameters.length === 1 ? '' : 's'}, ${fileCountSummary}). Tool-call trace:\n${temporalTrace.join('\n')}\nReview the attached screenshots critically. If the model is wrong, call build_cad_model again with complete corrected OpenSCAD code.`,
+                  `OpenSCAD model "${title}" displayed successfully (${artifact.parameters.length} parameter${artifact.parameters.length === 1 ? '' : 's'}, ${fileCountSummary}). Tool-call trace:\n${temporalTrace.join('\n')}\nReview the attached screenshots critically. If the model is wrong, call build_cad_model again with the needed correction in text.`,
                 );
 
                 if (supportsVision) {
