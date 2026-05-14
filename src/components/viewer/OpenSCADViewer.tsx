@@ -19,11 +19,16 @@ import {
 } from 'three';
 import { Loader2, CircleAlert } from 'lucide-react';
 import { parseColoredOff } from '@/utils/offParser';
-import OpenSCADError from '@/lib/OpenSCADError';
 import { MeshFilesContext } from '@/contexts/MeshFilesContext';
 import { createDXFProjectionCode } from '@/utils/dxfUtils';
 import { DxfExporter } from '@/utils/downloadUtils';
 import type { AgenticCompileResult } from '@/hooks/useAgenticVerification';
+
+function compileErrorText(error: Error) {
+  const stdErr = Reflect.get(error, 'stdErr');
+  if (Array.isArray(stdErr)) return stdErr.join('\n').trim();
+  return error.message || 'OpenSCAD failed to compile';
+}
 
 // Extract import() filenames from OpenSCAD code
 function extractImportFilenames(code: string): string[] {
@@ -211,15 +216,11 @@ export function OpenSCADPreview({
 
   useEffect(() => {
     if (!onCompileResult || !scadCode || !isError || !error) return;
-    if (!(error instanceof OpenSCADError)) {
-      console.error('[OpenSCAD] Unexpected compile error:', error);
-      return;
-    }
 
     onCompileResult({
       type: 'compile_error',
       sourceCode: scadCode,
-      errorText: error.stdErr.join('\n').trim(),
+      errorText: compileErrorText(error),
     });
   }, [error, isError, onCompileResult, scadCode]);
 

@@ -38,12 +38,9 @@ type FreshCompileResult =
   | { type: 'timeout' };
 
 const logVerificationEvent = (
-  event: string,
-  details: Record<string, unknown>,
-) => {
-  if (localStorage.getItem('debug:agentic-verification') !== '1') return;
-  console.info(`[agentic-verification] ${event}`, details);
-};
+  _event: string,
+  _details: Record<string, unknown>,
+) => {};
 
 function assertNever(value: never): never {
   throw new Error(`Unhandled compile result: ${JSON.stringify(value)}`);
