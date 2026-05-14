@@ -15,6 +15,11 @@ import { env } from './env';
 import { corsHeaders, isRecord } from './api';
 import { logError } from './serverLog';
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
+import Anthropic from '@anthropic-ai/sdk';
+import type {
+  ContentBlockParam,
+  MessageParam,
+} from '@anthropic-ai/sdk/resources/messages';
 import {
   jsonSchema,
   streamText,
@@ -26,6 +31,7 @@ import {
 
 const CHAT_TOKEN_COST = 1;
 const PARAMETRIC_TOKEN_COST = 5;
+const CAD_WRITER_MODEL = 'claude-sonnet-4-5-20250929';
 const ENVIRONMENT = env('ENVIRONMENT').toLowerCase();
 const IS_LOCAL_ENV = !['production', 'prod'].includes(ENVIRONMENT);
 
@@ -1114,33 +1120,41 @@ export async function handleParametricChatRequest(req: Request) {
       return { text, toolCalls: orderedToolCalls, finishReason };
     };
 
-    // Generate OpenSCAD code via a separate, tools-free OpenRouter stream.
+    // Generate OpenSCAD code via a separate, tools-free Claude stream.
     // The outer agent picks WHAT to build; this inner call writes the actual
     // code under STRICT_CODE_PROMPT, and the streamed output is mirrored to
     // the live message via `onCodeDelta` so the user watches it appear.
     const generateOpenSCADCode = async (
       codeMessages: OpenAIMessage[],
       onCodeDelta: (rawCode: string) => void,
-    ): Promise<{ code: string; success: boolean }> => {
-      const codeRequestBody: OpenRouterRequest = {
-        model,
-        messages: [
-          { role: 'system', content: STRICT_CODE_PROMPT },
-          ...codeMessages,
-        ],
-        max_tokens: 48000,
-        stream: true,
-      };
-      if (thinking) {
-        codeRequestBody.reasoning = { max_tokens: 12000 };
-        codeRequestBody.max_tokens = 60000;
-      }
-
+    ): Promise<{ code: string; success: boolean; error?: string }> => {
       const stripCodeFences = (s: string): string => {
         let out = s;
         out = out.replace(/^```(?:openscad)?\s*\n?/, '');
         out = out.replace(/\n?```\s*$/, '');
         return out;
+      };
+
+      const toAnthropicCodeMessage = (message: OpenAIMessage): MessageParam => {
+        if (message.role === 'system' || message.role === 'tool') {
+          throw new Error(`invalid CAD writer message role: ${message.role}`);
+        }
+        if (typeof message.content === 'string') {
+          return { role: message.role, content: message.content };
+        }
+
+        const content: ContentBlockParam[] = [];
+        for (const part of message.content) {
+          if (part.type === 'text') {
+            content.push({ type: 'text', text: part.text ?? '' });
+          } else if (part.image_url?.url) {
+            content.push({
+              type: 'image',
+              source: { type: 'url', url: part.image_url.url },
+            });
+          }
+        }
+        return { role: message.role, content };
       };
 
       const codeGenAbort = new AbortController();
@@ -1151,82 +1165,60 @@ export async function handleParametricChatRequest(req: Request) {
       const onParentAbort = () => codeGenAbort.abort(abortSignal.reason);
       abortSignal.addEventListener('abort', onParentAbort);
 
+      const anthropic = new Anthropic({ apiKey: env('ANTHROPIC_API_KEY') });
       let rawCode = '';
+      let lastFlushTime = 0;
+      let lastFlushedLen = 0;
+      const FLUSH_INTERVAL_MS = 120;
+
       try {
-        const codeResponse = await fetch(OPENROUTER_API_URL, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${OPENROUTER_API_KEY}`,
-            'HTTP-Referer': 'https://adam-cad.com',
-            'X-Title': 'Adam CAD',
+        const stream = await anthropic.messages.create(
+          {
+            model: CAD_WRITER_MODEL,
+            system: STRICT_CODE_PROMPT,
+            max_tokens: 16000,
+            messages: codeMessages.map(toAnthropicCodeMessage),
+            stream: true,
           },
-          body: JSON.stringify(codeRequestBody),
-          signal: codeGenAbort.signal,
-        });
+          { signal: codeGenAbort.signal },
+        );
 
-        if (!codeResponse.ok) {
-          const t = await codeResponse.text();
-          throw new Error(`Code gen error: ${codeResponse.status} - ${t}`);
-        }
-
-        const codeReader = codeResponse.body?.getReader();
-        if (!codeReader) throw new Error('No code response body');
-
-        const codeDecoder = new TextDecoder();
-        let codeBuffer = '';
-        let lastFlushTime = 0;
-        let lastFlushedLen = 0;
-        const FLUSH_INTERVAL_MS = 120;
-
-        while (true) {
-          const { done, value } = await codeReader.read();
-          if (done) break;
-          codeBuffer += codeDecoder.decode(value, { stream: true });
-          const codeLines = codeBuffer.split('\n');
-          codeBuffer = codeLines.pop() || '';
-
-          for (const line of codeLines) {
-            if (!line.startsWith('data: ')) continue;
-            const data = line.slice(6);
-            if (data === '[DONE]') continue;
-
-            let chunk: {
-              error?: { message?: string };
-              choices?: Array<{ delta?: { content?: string } }>;
-            };
-            try {
-              chunk = JSON.parse(data);
-            } catch (e) {
-              console.error('Error parsing code SSE chunk:', e);
-              continue;
-            }
-            if (chunk.error) {
-              throw new Error(
-                chunk.error.message ||
-                  `OpenRouter error: ${JSON.stringify(chunk.error)}`,
-              );
-            }
-            const deltaContent = chunk.choices?.[0]?.delta?.content;
-            if (typeof deltaContent === 'string' && deltaContent) {
-              rawCode += deltaContent;
-              const now = Date.now();
-              if (
-                now - lastFlushTime >= FLUSH_INTERVAL_MS &&
-                rawCode.length > lastFlushedLen
-              ) {
-                onCodeDelta(stripCodeFences(rawCode));
-                lastFlushTime = now;
-                lastFlushedLen = rawCode.length;
-              }
+        for await (const chunk of stream) {
+          if (
+            chunk.type === 'content_block_delta' &&
+            chunk.delta.type === 'text_delta' &&
+            chunk.delta.text
+          ) {
+            rawCode += chunk.delta.text;
+            const now = Date.now();
+            if (
+              now - lastFlushTime >= FLUSH_INTERVAL_MS &&
+              rawCode.length > lastFlushedLen
+            ) {
+              onCodeDelta(stripCodeFences(rawCode));
+              lastFlushTime = now;
+              lastFlushedLen = rawCode.length;
             }
           }
         }
       } catch (e) {
-        console.error('Code generation failed:', e);
+        const error = e instanceof Error ? e : new Error(String(e));
+        const message =
+          codeGenAbort.signal.reason instanceof Error
+            ? codeGenAbort.signal.reason.message
+            : error.message;
+        console.error('[parametric-chat] CAD writer failed:', {
+          message,
+          model: CAD_WRITER_MODEL,
+          streamedChars: rawCode.length,
+        });
         clearTimeout(codeGenTimeout);
         abortSignal.removeEventListener('abort', onParentAbort);
-        return { code: stripCodeFences(rawCode.trim()).trim(), success: false };
+        return {
+          code: stripCodeFences(rawCode.trim()).trim(),
+          success: false,
+          error: message,
+        };
       }
 
       clearTimeout(codeGenTimeout);
@@ -1695,7 +1687,7 @@ export async function handleParametricChatRequest(req: Request) {
                     ),
                   });
 
-                  const { code, success } = await generateOpenSCADCode(
+                  const { code, success, error } = await generateOpenSCADCode(
                     codeMessages,
                     (rawCode) => {
                       updateContent({
@@ -1725,12 +1717,18 @@ export async function handleParametricChatRequest(req: Request) {
                         ...content,
                         artifact: undefined,
                         toolCalls: (content.toolCalls || []).map((c) =>
-                          c.id === tc.id ? { ...c, status: 'error' } : c,
+                          c.id === tc.id
+                            ? {
+                                ...c,
+                                status: 'error',
+                                error: error ?? 'code_generation_failed',
+                              }
+                            : c,
                         ),
                       });
                       pushToolResult(
                         tc,
-                        'Error: code generation failed. The artifact was not updated.',
+                        `Error: CAD writer failed (${error ?? 'code_generation_failed'}). The artifact was not updated.`,
                       );
                       failed = true;
                     } else {

@@ -98,9 +98,25 @@ async function readChatResponse(
   let leftover = '';
   let initialized = false;
   let finalMessage: Message | null = null;
+  const loggedToolErrors = new Set<string>();
 
   const acceptLine = async (line: string) => {
     const message: Message = JSON.parse(line);
+    const failedCadTool = message.content.toolCalls?.find(
+      (toolCall) =>
+        toolCall.status === 'error' &&
+        !!toolCall.error &&
+        (toolCall.name === 'build_cad_model' ||
+          toolCall.name === 'build_parametric_model'),
+    );
+    if (failedCadTool?.id && !loggedToolErrors.has(failedCadTool.id)) {
+      loggedToolErrors.add(failedCadTool.id);
+      console.error('[parametric-chat] CAD generation failed:', {
+        messageId: message.id,
+        toolCallId: failedCadTool.id,
+        error: failedCadTool.error,
+      });
+    }
     finalMessage = message;
     updateStreamingMessage(queryClient, conversationId, message);
     if (!initialized) {

@@ -59,6 +59,7 @@ export type ToolCall = {
   name: string;
   status: 'pending' | 'error' | 'pending_verification' | 'verified';
   id?: string;
+  error?: string;
   result?: { id: string; fileType?: MeshFileType };
   // For agentic verification: which angles the client should render.
   views?: ViewRequest[];
