@@ -179,6 +179,7 @@ class OpenSCADWrapper {
       data.code,
       data.fileType,
       parameters.concat(exportParams),
+      [{ path: '/out.off', key: 'off' }],
     );
 
     // Check `render.log.stdErr` for "Current top level object is not a 3d object."

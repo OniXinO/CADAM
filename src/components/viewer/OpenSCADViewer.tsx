@@ -9,8 +9,13 @@ import {
 } from 'react';
 import { ThreeScene } from '@/components/viewer/ThreeScene';
 import { STLLoader } from 'three/addons/loaders/STLLoader.js';
-import { BufferGeometry } from 'three';
+import {
+  BufferGeometry,
+  Float32BufferAttribute,
+  MeshStandardMaterial,
+} from 'three';
 import { Loader2, CircleAlert } from 'lucide-react';
+import { parseColoredOff } from '@/utils/offParser';
 import { MeshFilesContext } from '@/contexts/MeshFilesContext';
 import { createDXFProjectionCode } from '@/utils/dxfUtils';
 import { DxfExporter } from '@/utils/downloadUtils';
@@ -31,6 +36,47 @@ function extractImportFilenames(code: string): string[] {
     filenames.push(match[1]);
   }
   return filenames;
+}
+
+type ColoredPreview = {
+  geometry: BufferGeometry;
+  materials: MeshStandardMaterial[];
+};
+
+function disposeColoredPreview(preview: ColoredPreview | null) {
+  if (!preview) return;
+  preview.geometry.dispose();
+  preview.materials.forEach((material) => material.dispose());
+}
+
+function createMaterial(
+  color: [number, number, number, number] | null,
+  fallbackColor: string,
+) {
+  const faceColor = normalizeColor(color);
+  return new MeshStandardMaterial({
+    color: faceColor
+      ? (Math.round(faceColor[0] * 255) << 16) |
+        (Math.round(faceColor[1] * 255) << 8) |
+        Math.round(faceColor[2] * 255)
+      : fallbackColor,
+    metalness: faceColor ? 0.05 : 0.6,
+    roughness: faceColor ? 0.7 : 0.3,
+    envMapIntensity: faceColor ? 0.15 : 0.3,
+    transparent: faceColor ? faceColor[3] < 1 : false,
+    opacity: faceColor ? faceColor[3] : 1,
+  });
+}
+
+function normalizeColor(color: [number, number, number, number] | null) {
+  if (!color) return null;
+
+  const r = Math.round(color[0] * 255);
+  const g = Math.round(color[1] * 255);
+  const b = Math.round(color[2] * 255);
+  if (r === 249 && g === 215 && b === 44) return null;
+  if (r === 157 && g === 203 && b === 81) return null;
+  return color;
 }
 
 interface OpenSCADPreviewProps {
@@ -72,10 +118,14 @@ export function OpenSCADPreview({
     writeFile,
     isCompiling,
     output,
+    offOutput,
     isError,
     error,
   } = useOpenSCAD();
   const [geometry, setGeometry] = useState<BufferGeometry | null>(null);
+  const [coloredPreview, setColoredPreview] = useState<ColoredPreview | null>(
+    null,
+  );
   // Use context directly to avoid throwing if provider is not mounted (e.g. VisualCard)
   const meshFilesCtx = useContext(MeshFilesContext);
   // Track which files we've written to avoid re-writing unchanged blobs
@@ -83,6 +133,11 @@ export function OpenSCADPreview({
   // Every compile produces a fresh geometry, so the previous geometry's VRAM
   // must be released on replacement.
   const mountedGeometryRef = useRef<BufferGeometry | null>(null);
+  const mountedColoredPreviewRef = useRef<ColoredPreview | null>(null);
+  const fallbackColorRef = useRef(color);
+  useEffect(() => {
+    fallbackColorRef.current = color;
+  }, [color]);
 
   const showCompiling = isCompiling || (suppressCompileErrors && isError);
   const pendingPreviewCodeRef = useRef<string | null>(null);
@@ -248,9 +303,103 @@ export function OpenSCADPreview({
     }
   }, [output, onCompileResult]);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    const clearColoredPreview = () => {
+      disposeColoredPreview(mountedColoredPreviewRef.current);
+      mountedColoredPreviewRef.current = null;
+      setColoredPreview(null);
+    };
+
+    if (!(offOutput instanceof Blob)) {
+      clearColoredPreview();
+      return;
+    }
+
+    offOutput
+      .text()
+      .then((text) => {
+        if (cancelled) return;
+
+        const parsed = parseColoredOff(text);
+        const buckets = new Map<
+          string,
+          {
+            color: [number, number, number, number] | null;
+            positions: number[];
+          }
+        >();
+
+        for (const face of parsed.faces) {
+          const key = face.color ? face.color.join(',') : '__default';
+          let bucket = buckets.get(key);
+          if (!bucket) {
+            bucket = { color: face.color, positions: [] };
+            buckets.set(key, bucket);
+          }
+
+          for (const index of face.vertices) {
+            const vertex = parsed.vertices[index];
+            bucket.positions.push(vertex[0], vertex[1], vertex[2]);
+          }
+        }
+
+        if (buckets.size === 0) {
+          clearColoredPreview();
+          return;
+        }
+
+        const positions = new Float32Array(
+          Array.from(buckets.values()).reduce(
+            (sum, bucket) => sum + bucket.positions.length,
+            0,
+          ),
+        );
+        const geometry = new BufferGeometry();
+        const materials: MeshStandardMaterial[] = [];
+
+        let offset = 0;
+        for (const bucket of buckets.values()) {
+          positions.set(bucket.positions, offset);
+          geometry.addGroup(
+            offset / 3,
+            bucket.positions.length / 3,
+            materials.length,
+          );
+          materials.push(
+            createMaterial(bucket.color, fallbackColorRef.current),
+          );
+          offset += bucket.positions.length;
+        }
+
+        geometry.setAttribute(
+          'position',
+          new Float32BufferAttribute(positions, 3),
+        );
+        geometry.center();
+        geometry.computeVertexNormals();
+
+        const nextPreview = { geometry, materials };
+        disposeColoredPreview(mountedColoredPreviewRef.current);
+        mountedColoredPreviewRef.current = nextPreview;
+        setColoredPreview(nextPreview);
+      })
+      .catch((err) => {
+        console.error('[OpenSCAD] Failed to parse colored OFF preview:', err);
+        if (!cancelled) clearColoredPreview();
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [offOutput]);
+
   // Release the last mounted geometry's GPU resources on unmount.
   useEffect(() => {
     return () => {
+      disposeColoredPreview(mountedColoredPreviewRef.current);
+      mountedColoredPreviewRef.current = null;
       if (mountedGeometryRef.current) {
         mountedGeometryRef.current.dispose();
         mountedGeometryRef.current = null;
@@ -265,6 +414,8 @@ export function OpenSCADPreview({
           <div className="h-full w-full">
             <ThreeScene
               geometry={geometry}
+              coloredGeometry={coloredPreview?.geometry}
+              coloredMaterials={coloredPreview?.materials}
               color={color}
               isMobile={isMobile}
               backgroundColor={backgroundColor}

@@ -18,6 +18,8 @@ interface ThreeSceneProps {
   color: string;
   isMobile?: boolean;
   backgroundColor?: string;
+  coloredGeometry?: THREE.BufferGeometry | null;
+  coloredMaterials?: THREE.Material[] | null;
 }
 
 export function ThreeScene({
@@ -25,6 +27,8 @@ export function ThreeScene({
   color,
   isMobile = false,
   backgroundColor = '#3B3B3B',
+  coloredGeometry,
+  coloredMaterials,
 }: ThreeSceneProps) {
   const [isOrthographic, setIsOrthographic] = useState(true);
 
@@ -61,7 +65,14 @@ export function ThreeScene({
           <directionalLight position={[-5, 5, -5]} intensity={0.2} />
           <directionalLight position={[0, 5, 0]} intensity={0.2} />
           <directionalLight position={[-5, -5, -5]} intensity={0.6} />
-          {geometry ? (
+          {coloredGeometry && coloredMaterials ? (
+            <mesh
+              geometry={coloredGeometry}
+              material={coloredMaterials}
+              rotation={[-Math.PI / 2, 0, 0]}
+              position={[0, 0, 0]}
+            />
+          ) : geometry ? (
             <mesh
               geometry={geometry}
               rotation={[-Math.PI / 2, 0, 0]}
