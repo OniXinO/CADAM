@@ -1807,7 +1807,9 @@ export async function handleParametricChatRequest(req: Request) {
                   continue;
                 }
 
-                const baseContext: OpenAIMessage[] = input.baseCode
+                const userText = newMessage.content.text || input.text || '';
+                const buildText = input.text || userText;
+                let codeMessages: OpenAIMessage[] = input.baseCode
                   ? [
                       {
                         role: 'assistant' as const,
@@ -1815,23 +1817,14 @@ export async function handleParametricChatRequest(req: Request) {
                       },
                     ]
                   : [];
-                const userText = newMessage.content.text || input.text || '';
-                const needsUserMessage =
-                  baseContext.length > 0 || !!input.error;
-                const finalUserMessage: OpenAIMessage[] = needsUserMessage
-                  ? [
-                      {
-                        role: 'user' as const,
-                        content: input.error
-                          ? `${userText}\n\nFix this OpenSCAD error: ${input.error}`
-                          : userText,
-                      },
-                    ]
-                  : [];
-                let codeMessages: OpenAIMessage[] = [
-                  ...messagesToSend,
-                  ...baseContext,
-                  ...finalUserMessage,
+                codeMessages = [
+                  ...codeMessages,
+                  {
+                    role: 'user' as const,
+                    content: input.error
+                      ? `${buildText}\n\nFix this OpenSCAD error: ${input.error}`
+                      : buildText,
+                  },
                 ];
 
                 const verificationViews = DEFAULT_BUILD_VERIFICATION_VIEWS;
@@ -2030,7 +2023,6 @@ export async function handleParametricChatRequest(req: Request) {
                         `attempt ${attempt}: wrote ${fileCountSummary}, displayed the artifact, browser compile failed; regenerating inside the same tool call`,
                       );
                       codeMessages = [
-                        ...messagesToSend,
                         { role: 'assistant' as const, content: code },
                         {
                           role: 'user' as const,
@@ -2113,7 +2105,6 @@ export async function handleParametricChatRequest(req: Request) {
                       `attempt ${attempt}: visual review requested a revision: ${feedback}`,
                     );
                     codeMessages = [
-                      ...messagesToSend,
                       { role: 'assistant' as const, content: code },
                       {
                         role: 'user' as const,
