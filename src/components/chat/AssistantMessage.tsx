@@ -47,10 +47,13 @@ import { useMeshData } from '@/hooks/useMeshData';
 import { MeshImagePreview } from '@/components/viewer/MeshImagePreview';
 import { TreeNode } from '@shared/Tree';
 
-const linkParametricMode = (text: string) =>
+const isCadBuildTool = (name: string) =>
+  name === 'build_cad_model' || name === 'build_parametric_model';
+
+const sanitizeAssistantText = (text: string) =>
   text.replace(
-    /(```[\s\S]*?```|`[^`\n]*`)|parametric mode/gi,
-    (match, codeSpan) => codeSpan ?? `[${match}](https://adam.new/cadam)`,
+    /(```[\s\S]*?```|`[^`\n]*`)|parametric mode|parametric/gi,
+    (_match, codeSpan) => codeSpan ?? 'CAD',
   );
 
 interface AssistantMessageProps {
@@ -162,7 +165,7 @@ export function AssistantMessage({
 
   const markdownText = useMemo(
     () =>
-      message.content.text ? linkParametricMode(message.content.text) : '',
+      message.content.text ? sanitizeAssistantText(message.content.text) : '',
     [message.content.text],
   );
 
@@ -241,7 +244,7 @@ export function AssistantMessage({
                       const streamingCode =
                         message.content.artifact?.code ?? '';
                       if (
-                        toolCall.name === 'build_parametric_model' &&
+                        isCadBuildTool(toolCall.name) &&
                         toolCall.status === 'pending' &&
                         streamingCode.length > 0
                       ) {
@@ -255,7 +258,7 @@ export function AssistantMessage({
                       }
 
                       if (
-                        toolCall.name === 'build_parametric_model' &&
+                        isCadBuildTool(toolCall.name) &&
                         ((message.content.artifact &&
                           toolCall.status === 'error') ||
                           toolCall.status === 'pending_verification' ||
@@ -276,7 +279,7 @@ export function AssistantMessage({
                             {toolCall.name === 'create_mesh' && (
                               <Box className="h-4 w-4 text-white" />
                             )}
-                            {(toolCall.name === 'build_parametric_model' ||
+                            {(isCadBuildTool(toolCall.name) ||
                               toolCall.name === 'apply_parameter_changes' ||
                               toolCall.name === 'update_file') && (
                               <Box className="h-4 w-4 text-white" />
@@ -289,8 +292,7 @@ export function AssistantMessage({
                                     ? 'Queuing mesh...'
                                     : toolCall.name === 'update_file'
                                       ? 'Updating file...'
-                                      : toolCall.name ===
-                                            'build_parametric_model' ||
+                                      : isCadBuildTool(toolCall.name) ||
                                           toolCall.name ===
                                             'apply_parameter_changes'
                                         ? 'Building CAD...'
@@ -305,8 +307,7 @@ export function AssistantMessage({
                                     ? 'Failed to start mesh generation'
                                     : toolCall.name === 'update_file'
                                       ? 'Failed to update file'
-                                      : toolCall.name ===
-                                            'build_parametric_model' ||
+                                      : isCadBuildTool(toolCall.name) ||
                                           toolCall.name ===
                                             'apply_parameter_changes'
                                         ? 'Failed to generate CAD'
@@ -343,9 +344,7 @@ export function AssistantMessage({
               )}
               {message.content.artifact &&
                 !message.content.toolCalls?.some(
-                  (c) =>
-                    c.name === 'build_parametric_model' &&
-                    c.status === 'pending',
+                  (c) => isCadBuildTool(c.name) && c.status === 'pending',
                 ) && (
                   <ObjectButton
                     message={message}
@@ -620,11 +619,11 @@ function TrialUserMessage() {
 function LimitReachedMessage() {
   return (
     <span>
-      You have reached the limit of parametric generations in your current plan.{' '}
+      You have reached the CAD generation limit in your current plan.{' '}
       <Link to="/subscription" className="text-adam-blue hover:underline">
         Upgrade
       </Link>{' '}
-      for more parametric generations :)
+      for more CAD generations :)
     </span>
   );
 }
