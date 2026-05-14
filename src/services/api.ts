@@ -24,7 +24,7 @@ export async function apiJson<T>(
     const preview = (await response.text()).slice(0, 160);
     throw new Error(`Unexpected API response from ${url}: ${preview}`);
   }
-  const data: T = await response.json();
+  const data: unknown = await response.json();
   if (!response.ok) {
     const errorValue =
       typeof data === 'object' && data !== null
@@ -34,5 +34,5 @@ export async function apiJson<T>(
       typeof errorValue === 'string' ? errorValue : response.statusText,
     );
   }
-  return data;
+  return data as T;
 }

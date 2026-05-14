@@ -163,26 +163,26 @@ export function PromptView() {
           conversationId: data.conversationId,
         }),
       })
-        .then((titleData) => {
+        .then(async (titleData) => {
           if (titleData.title) {
             // Update conversation title once generated
-            supabase
+            const { error } = await supabase
               .from('conversations')
               .update({ title: titleData.title })
-              .eq('id', data.conversationId)
-              .then(() => {
-                queryClient.invalidateQueries({
-                  queryKey: ['conversations'],
-                });
+              .eq('id', data.conversationId);
+            if (error) throw error;
 
-                queryClient.setQueryData(
-                  ['conversation', data.conversationId],
-                  (oldConversation: Conversation) => ({
-                    ...oldConversation,
-                    title: titleData.title,
-                  }),
-                );
-              });
+            queryClient.invalidateQueries({
+              queryKey: ['conversations'],
+            });
+
+            queryClient.setQueryData(
+              ['conversation', data.conversationId],
+              (oldConversation: Conversation) => ({
+                ...oldConversation,
+                title: titleData.title,
+              }),
+            );
           }
         })
         .catch((error) => {

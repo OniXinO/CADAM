@@ -11,7 +11,7 @@ import Tree from '@shared/Tree';
 import parseParameters from './parseParameter';
 import { formatUserMessage, getBase64Images } from './messageUtils';
 import { billing, BillingClientError } from './billingClient';
-import { env } from './env';
+import { env, requiredEnv } from './env';
 import { corsHeaders, isRecord } from './api';
 import { logError } from './serverLog';
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
@@ -36,7 +36,7 @@ function logVerificationEvent(event: string, details: Record<string, unknown>) {
 
 // OpenRouter API configuration
 const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
-const OPENROUTER_API_KEY = env('OPENROUTER_API_KEY');
+const OPENROUTER_API_KEY = requiredEnv('OPENROUTER_API_KEY');
 const openrouter = createOpenRouter({
   apiKey: OPENROUTER_API_KEY,
   appName: 'Adam CAD',
@@ -221,10 +221,12 @@ type AnthropicBlock = AnthropicTextBlock | AnthropicImageBlock;
 
 function isAnthropicBlock(block: unknown): block is AnthropicBlock {
   if (typeof block !== 'object' || block === null) return false;
-  const b = block as Record<string, unknown>;
+  if (!isRecord(block)) return false;
   return (
-    (b.type === 'text' && typeof b.text === 'string') ||
-    (b.type === 'image' && typeof b.source === 'object' && b.source !== null)
+    (block.type === 'text' && typeof block.text === 'string') ||
+    (block.type === 'image' &&
+      typeof block.source === 'object' &&
+      block.source !== null)
   );
 }
 
@@ -286,9 +288,13 @@ async function generateTitleFromMessages(
       throw new Error(`OpenRouter API error: ${response.statusText}`);
     }
 
-    const data = await response.json();
-    if (data.choices && data.choices[0]?.message?.content) {
-      let title = data.choices[0].message.content.trim();
+    const data: unknown = await response.json();
+    const choices = isRecord(data) ? data.choices : undefined;
+    const firstChoice = Array.isArray(choices) ? choices[0] : undefined;
+    const message = isRecord(firstChoice) ? firstChoice.message : undefined;
+    const content = isRecord(message) ? message.content : undefined;
+    if (typeof content === 'string') {
+      let title = content.trim();
 
       // Clean up common LLM artifacts
       // Remove quotes
@@ -326,11 +332,7 @@ async function generateTitleFromMessages(
     }
   }
   if (lastUserMessage && typeof lastUserMessage.content === 'string') {
-    return (lastUserMessage.content as string)
-      .split(/\s+/)
-      .slice(0, 4)
-      .join(' ')
-      .trim();
+    return lastUserMessage.content.split(/\s+/).slice(0, 4).join(' ').trim();
   }
 
   return 'Adam Object';
@@ -1529,6 +1531,31 @@ export async function handleParametricChatRequest(req: Request) {
                   // result and finalize with text.
                   continue;
                 }
+                let parametricTokenRefunded = false;
+                const refundParametricToken = async (reason: string) => {
+                  if (parametricTokenRefunded) return;
+                  parametricTokenRefunded = true;
+                  await billing
+                    .refund(userData.user!.email!, {
+                      tokens: PARAMETRIC_TOKEN_COST,
+                      operation: 'parametric',
+                      referenceId: tc.id,
+                    })
+                    .catch((err) => {
+                      logError(err, {
+                        functionName: 'parametric-chat',
+                        statusCode:
+                          err instanceof BillingClientError ? err.status : 502,
+                        userId: userData.user?.id,
+                        conversationId,
+                        additionalContext: {
+                          operation: 'parametric_refund',
+                          toolCallId: tc.id,
+                          reason,
+                        },
+                      });
+                    });
+                };
 
                 const verificationViews = DEFAULT_BUILD_VERIFICATION_VIEWS;
                 const verificationSummary = verificationViews
@@ -1566,6 +1593,7 @@ export async function handleParametricChatRequest(req: Request) {
                         buildAttempt,
                       },
                     });
+                    await refundParametricToken('code_generation_failed');
                     const nextContent = markToolAsError(content, tc.id);
                     updateContent(
                       content.artifact
@@ -1693,6 +1721,7 @@ export async function handleParametricChatRequest(req: Request) {
                       temporalTrace.push(
                         `attempt ${buildAttempt}: wrote ${fileCountSummary}, displayed the artifact, screenshot verification did not complete (${viewError})`,
                       );
+                      await refundParametricToken('verification_failed');
                       updateContent({
                         ...content,
                         toolCalls: (content.toolCalls || []).map((c) =>
@@ -1708,6 +1737,7 @@ export async function handleParametricChatRequest(req: Request) {
                       break;
                     }
 
+                    await refundParametricToken('compile_error');
                     updateContent({
                       ...content,
                       toolCalls: (content.toolCalls || []).map((c) =>

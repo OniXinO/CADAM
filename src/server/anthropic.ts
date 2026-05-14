@@ -20,6 +20,29 @@ type AnthropicContent =
         }
     >;
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function readAnthropicText(data: unknown): string {
+  const content = isRecord(data) ? data.content : undefined;
+  if (!Array.isArray(content)) {
+    throw new Error('anthropic response missing content array');
+  }
+
+  for (const part of content) {
+    if (
+      isRecord(part) &&
+      part.type === 'text' &&
+      typeof part.text === 'string'
+    ) {
+      return part.text.trim();
+    }
+  }
+
+  throw new Error('anthropic response missing text content');
+}
+
 export async function createAnthropicText({
   model,
   system,
@@ -48,8 +71,5 @@ export async function createAnthropicText({
   if (!response.ok) {
     throw new Error(`anthropic ${response.status}: ${await response.text()}`);
   }
-  const data = (await response.json()) as {
-    content: Array<{ type: 'text'; text: string }>;
-  };
-  return data.content.find((part) => part.type === 'text')?.text.trim() ?? '';
+  return readAnthropicText(await response.json());
 }
