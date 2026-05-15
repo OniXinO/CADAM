@@ -395,8 +395,11 @@ export async function handleCreativeChatRequest(req: Request) {
   }
 
   const chatBillingReferenceId = crypto.randomUUID();
-  const refundChatToken = () =>
-    billing
+  let chatTokenRefunded = false;
+  const refundChatToken = async () => {
+    if (chatTokenRefunded) return;
+    chatTokenRefunded = true;
+    await billing
       .refund(userData.user!.email!, {
         tokens: CHAT_TOKEN_COST,
         operation: 'chat',
@@ -409,6 +412,7 @@ export async function handleCreativeChatRequest(req: Request) {
           userId: userData.user?.id,
         });
       });
+  };
 
   try {
     const result = await billing.consume(userData.user.email, {
@@ -444,8 +448,6 @@ export async function handleCreativeChatRequest(req: Request) {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   }
-
-  const appBaseUrl = webhookBaseUrl();
 
   const { messageId, conversationId, model, newMessageId } = body;
 
@@ -721,6 +723,35 @@ export async function handleCreativeChatRequest(req: Request) {
                     ...(meshTopology && { meshTopology }),
                     ...(polygonCount && { polygonCount }),
                   };
+
+                  let appBaseUrl: string;
+                  try {
+                    appBaseUrl = webhookBaseUrl();
+                  } catch (error) {
+                    await refundChatToken();
+                    logError(error, {
+                      functionName: 'creative-chat',
+                      statusCode: 500,
+                      userId: userData.user?.id,
+                      conversationId,
+                      additionalContext: {
+                        step: 'resolve_mesh_webhook_base_url',
+                      },
+                    });
+                    content = {
+                      ...content,
+                      toolCalls: content.toolCalls?.map((toolCall) =>
+                        toolCall.id === currentToolUse?.id
+                          ? { ...toolCall, status: 'error' }
+                          : toolCall,
+                      ),
+                    };
+                    streamMessage(controller, {
+                      ...newMessageData,
+                      content,
+                    });
+                    continue;
+                  }
 
                   debugLog('=== CREATIVE-CHAT: CALLING MESH ENDPOINT ===');
                   debugLog('Creative-chat: Calling mesh endpoint', {

@@ -36,12 +36,6 @@ function logVerificationEvent(event: string, details: Record<string, unknown>) {
 
 // OpenRouter API configuration
 const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
-const OPENROUTER_API_KEY = requiredEnv('OPENROUTER_API_KEY');
-const openrouter = createOpenRouter({
-  apiKey: OPENROUTER_API_KEY,
-  appName: 'Adam CAD',
-  appUrl: 'https://adam-cad.com',
-});
 
 // Models whose OpenRouter listing serves at least one provider that does NOT
 // support tool calling. For these we set `provider: { require_parameters: true }`
@@ -246,6 +240,7 @@ interface OpenAIMessage {
 
 async function generateTitleFromMessages(
   messagesToSend: OpenAIMessage[],
+  openrouterApiKey: string,
 ): Promise<string> {
   try {
     const titleSystemPrompt = `Generate a short title for a 3D object. Rules:
@@ -259,7 +254,7 @@ async function generateTitleFromMessages(
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${OPENROUTER_API_KEY}`,
+        Authorization: `Bearer ${openrouterApiKey}`,
         'HTTP-Referer': 'https://adam-cad.com',
         'X-Title': 'Adam CAD',
       },
@@ -620,30 +615,7 @@ export async function handleParametricChatRequest(req: Request) {
   const abortController = new AbortController();
   const { signal: abortSignal } = abortController;
 
-  const cancelChannelName = `cancel-request-${messageId}`;
-  const cancelChannel = supabaseClient
-    .channel(cancelChannelName)
-    .on('broadcast', { event: 'cancel' }, () => {
-      abortController.abort('Request cancelled by user');
-    })
-    .subscribe((status, err) => {
-      // Without this callback, CHANNEL_ERROR / TIMED_OUT outcomes are
-      // silently swallowed and the user's Stop button stops working
-      // — the broadcast handler above would never fire because the
-      // socket isn't actually subscribed. Log it so we have a Sentry
-      // breadcrumb when a request can't be cancelled remotely; the
-      // request still proceeds normally, just without remote-cancel.
-      if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-        console.error(`[parametric-chat] cancel channel ${status}`, err ?? '');
-      }
-    });
-  const cleanupCancel = () => {
-    try {
-      supabaseClient.removeChannel(cancelChannel);
-    } catch (_) {
-      // ignore — channel may already be gone
-    }
-  };
+  let cleanupCancel = () => {};
   req.signal.addEventListener('abort', () => {
     abortController.abort('Client disconnected');
     cleanupCancel();
@@ -685,6 +657,12 @@ export async function handleParametricChatRequest(req: Request) {
     });
   }
   const currentMessageBranch = messageTree.getPath(newMessage.id);
+  const openrouterApiKey = requiredEnv('OPENROUTER_API_KEY');
+  const openrouter = createOpenRouter({
+    apiKey: openrouterApiKey,
+    appName: 'Adam CAD',
+    appUrl: 'https://adam-cad.com',
+  });
 
   const chatBillingReferenceId = crypto.randomUUID();
   try {
@@ -763,6 +741,28 @@ export async function handleParametricChatRequest(req: Request) {
       },
     );
   }
+
+  const cancelChannelName = `cancel-request-${messageId}`;
+  const cancelChannel = supabaseClient
+    .channel(cancelChannelName)
+    .on('broadcast', { event: 'cancel' }, () => {
+      abortController.abort('Request cancelled by user');
+    })
+    .subscribe((status, err) => {
+      // Without this callback, CHANNEL_ERROR / TIMED_OUT outcomes are
+      // silently swallowed and the user's Stop button stops working
+      // because the broadcast handler above would never fire.
+      if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+        console.error(`[parametric-chat] cancel channel ${status}`, err ?? '');
+      }
+    });
+  cleanupCancel = () => {
+    try {
+      supabaseClient.removeChannel(cancelChannel);
+    } catch (_) {
+      // ignore — channel may already be gone
+    }
+  };
 
   try {
     const messagesToSend: OpenAIMessage[] = await Promise.all(
@@ -933,7 +933,7 @@ export async function handleParametricChatRequest(req: Request) {
             ...(REQUIRES_TOOL_CAPABLE_PROVIDER.has(model)
               ? { provider: { require_parameters: true } }
               : {}),
-            reasoning: { max_tokens: thinking ? 9000 : 5000 },
+            ...(thinking ? { reasoning: { max_tokens: 9000 } } : {}),
           }),
           messages: messagesForTurn,
           tools: toAiSdkToolSet(toolsForTurn),
@@ -1256,6 +1256,7 @@ export async function handleParametricChatRequest(req: Request) {
 
             // Execute each tool call serially. They share the request
             // budget so a slow tool drains time from later iterations.
+            const screenshotMessages: ModelMessage[] = [];
             for (const tc of turn.toolCalls) {
               if (abortSignal.aborted) {
                 throw new Error('Request cancelled by user');
@@ -1354,9 +1355,10 @@ export async function handleParametricChatRequest(req: Request) {
                 DEFAULT_BUILD_VERIFICATION_REASONING;
               let title =
                 input.title ||
-                (await generateTitleFromMessages(messagesToSend).catch(
-                  () => 'Adam Object',
-                ));
+                (await generateTitleFromMessages(
+                  messagesToSend,
+                  openrouterApiKey,
+                ).catch(() => 'Adam Object'));
               const lower = title.toLowerCase();
               if (lower.includes('sorry') || lower.includes('apologize')) {
                 title = 'Adam Object';
@@ -1464,7 +1466,7 @@ export async function handleParametricChatRequest(req: Request) {
               );
 
               if (supportsVision) {
-                agentMessages.push({
+                screenshotMessages.push({
                   role: 'user',
                   content: [
                     {
@@ -1479,12 +1481,13 @@ export async function handleParametricChatRequest(req: Request) {
                   ],
                 });
               } else {
-                agentMessages.push({
+                screenshotMessages.push({
                   role: 'user',
                   content: `Verification screenshots from ${verificationSummary} were captured inside the CAD build step, but the current model does not accept images. Treat the build as best-effort and confirm completion to the user.`,
                 });
               }
             }
+            agentMessages.push(...screenshotMessages);
           }
         } catch (error) {
           if (!abortSignal.aborted) {
@@ -1516,7 +1519,10 @@ export async function handleParametricChatRequest(req: Request) {
           if (!content.artifact && content.text) {
             const extractedCode = extractOpenSCADCodeFromText(content.text);
             if (extractedCode) {
-              const title = await generateTitleFromMessages(messagesToSend);
+              const title = await generateTitleFromMessages(
+                messagesToSend,
+                openrouterApiKey,
+              );
               let cleanedText = content.text
                 .replace(/```(?:openscad)?\s*\n?[\s\S]*?\n?```/g, '')
                 .trim();
@@ -1537,11 +1543,12 @@ export async function handleParametricChatRequest(req: Request) {
           // Last-line safety: never persist a totally empty assistant
           // message — the client treats `isLoading=false` + empty content
           // as nothing happened, which would render as a blank bubble.
-          const hasToolCalls =
-            !!content.toolCalls && content.toolCalls.length > 0;
-          if (!content.artifact && !content.text && !hasToolCalls) {
+          const hasVisibleToolCalls = (content.toolCalls || []).some(
+            (toolCall) => toolCall.name !== 'build_cad_model',
+          );
+          if (!content.artifact && !content.text && !hasVisibleToolCalls) {
             console.error(
-              '[parametric-chat] empty response from agent loop — no text, tool call, or artifact',
+              '[parametric-chat] empty response from agent loop — no visible text, tool call, or artifact',
             );
             content = {
               ...content,

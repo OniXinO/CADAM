@@ -1,4 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router';
+import { preflight } from '@/server/api';
 
 const POSTHOG_API_HOST = 'us.i.posthog.com';
 const POSTHOG_ASSET_HOST = 'us-assets.i.posthog.com';
@@ -8,6 +9,7 @@ export const Route = createFileRoute('/api/jackson-pollock/$')({
     handlers: {
       GET: proxyPostHog,
       POST: proxyPostHog,
+      OPTIONS: preflight,
     },
   },
 });
@@ -34,14 +36,20 @@ async function proxyPostHog({ request }: { request: Request }) {
     const value = request.headers.get(name);
     if (value) headers.set(name, value);
   }
+  const body =
+    request.method === 'GET' ? undefined : await request.arrayBuffer();
   const response = await fetch(nextUrl, {
     method: request.method,
     headers,
-    body: request.method === 'GET' ? undefined : request.body,
+    body,
   });
+  const responseHeaders = new Headers(response.headers);
+  responseHeaders.delete('content-encoding');
+  responseHeaders.delete('content-length');
+  responseHeaders.delete('transfer-encoding');
   return new Response(response.body, {
     status: response.status,
     statusText: response.statusText,
-    headers: response.headers,
+    headers: responseHeaders,
   });
 }

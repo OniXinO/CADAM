@@ -66,6 +66,7 @@ export default function ParametricShareView() {
     message: Message | null,
     updatedParameters: Parameter[],
   ) => {
+    const artifact = message?.content.artifact;
     let newCode = message?.content.artifact?.code ?? '';
     updatedParameters.forEach((param) => {
       if (param.name.length > 0) {
@@ -80,6 +81,8 @@ export default function ParametricShareView() {
         code: newCode,
         parameters: updatedParameters,
         suggestions: message?.content.artifact?.suggestions ?? [],
+        ...(artifact?.files ? { files: artifact.files } : {}),
+        ...(artifact?.entryFile ? { entryFile: artifact.entryFile } : {}),
       },
     };
 

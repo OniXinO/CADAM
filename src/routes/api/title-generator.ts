@@ -1,7 +1,14 @@
 import { createFileRoute } from '@tanstack/react-router';
 import type { Content, CoreMessage } from '@shared/types';
 import { createAnthropicText } from '@/server/anthropic';
-import { isRecord, isUnauthorizedError, json, requireUser } from '@/server/api';
+import {
+  isRecord,
+  isUnauthorizedError,
+  json,
+  methodNotAllowed,
+  preflight,
+  requireUser,
+} from '@/server/api';
 import { getAnonSupabaseClient } from '@/server/supabaseClient';
 import { formatUserMessage } from '@/server/messageUtils';
 
@@ -15,6 +22,8 @@ function isContent(value: unknown): value is Content {
 export const Route = createFileRoute('/api/title-generator')({
   server: {
     handlers: {
+      GET: methodNotAllowed,
+      OPTIONS: preflight,
       POST: async ({ request }) => {
         let user;
         try {

@@ -1,4 +1,4 @@
-import { corsHeaders } from './api';
+import { corsHeaders, isRecord } from './api';
 import { fal } from '@fal-ai/client';
 import { GoogleGenAI } from '@google/genai';
 import Anthropic from '@anthropic-ai/sdk';
@@ -33,6 +33,24 @@ const DEBUG_LOGS =
 const debugLog = (...args: unknown[]) => {
   if (DEBUG_LOGS) console.log(...args);
 };
+
+function runBackgroundTask(task: Promise<unknown>) {
+  const loggedTask = task.catch((error) => {
+    console.error('Background task failed:', error);
+  });
+  const requestContext = Reflect.get(
+    globalThis,
+    Symbol.for('@vercel/request-context'),
+  );
+  if (isRecord(requestContext) && typeof requestContext.get === 'function') {
+    const context = requestContext.get();
+    if (isRecord(context) && typeof context.waitUntil === 'function') {
+      context.waitUntil(loggedTask);
+      return;
+    }
+  }
+  void loggedTask;
+}
 
 // Returns the image_generation_call_id to thread into the next gpt-image-2
 // call, or null when the prior image was produced by a fallback (Gemini/Flux)
@@ -430,6 +448,7 @@ export async function handleMeshRequest(req: Request) {
       );
     }
 
+    const appBaseUrl = webhookBaseUrl();
     const meshReferenceId = crypto.randomUUID();
     try {
       const result = await billing.consume(userData.user.email, {
@@ -693,8 +712,6 @@ export async function handleMeshRequest(req: Request) {
               .eq('id', conversationId);
 
             // Submit to Hunyuan3D V3 for upscaling (after message is created)
-            const appBaseUrl = webhookBaseUrl();
-
             const hunyuanInput = {
               input_image_url: imageUrl,
               enable_pbr: true,
@@ -857,14 +874,17 @@ export async function handleMeshRequest(req: Request) {
 
     // Skip Flux-based preview for quality model - use Gemini image instead (via createHunyuanPreview)
     if (model !== 'quality') {
-      void submitPreviewJob(
-        supabaseClient,
-        text,
-        images,
-        mesh,
-        userData.user.id,
-        conversationId,
-        meshData.id,
+      runBackgroundTask(
+        submitPreviewJob(
+          supabaseClient,
+          text,
+          images,
+          mesh,
+          userData.user.id,
+          conversationId,
+          meshData.id,
+          appBaseUrl,
+        ),
       );
     }
 
@@ -874,17 +894,20 @@ export async function handleMeshRequest(req: Request) {
       model ?? 'quality',
     );
 
-    void submitMeshJob(
-      supabaseClient,
-      text,
-      images,
-      mesh,
-      userData.user.id,
-      conversationId,
-      meshData.id,
-      model ?? 'quality',
-      meshTopology,
-      polygonCount,
+    runBackgroundTask(
+      submitMeshJob(
+        supabaseClient,
+        text,
+        images,
+        mesh,
+        userData.user.id,
+        conversationId,
+        meshData.id,
+        model ?? 'quality',
+        meshTopology,
+        polygonCount,
+        appBaseUrl,
+      ),
     );
 
     return new Response(JSON.stringify({ id: meshData.id, fileType }), {
@@ -929,13 +952,12 @@ async function submitMeshJob(
   model: Model,
   meshTopology: 'quads' | 'polys' | undefined,
   polygonCount: number | undefined,
+  appBaseUrl: string,
 ) {
   ensureFalConfig();
   debugLog('=== SUBMIT MESH JOB FUNCTION CALLED ===');
   debugLog('submitMeshJob received model:', model);
   // debugLog('submitMeshJob model === ultra:', model === 'ultra');
-
-  const appBaseUrl = webhookBaseUrl();
 
   debugLog('Environment variables:', {
     ENVIRONMENT: env('ENVIRONMENT'),
@@ -1672,9 +1694,9 @@ async function submitPreviewJob(
   userId: string,
   conversationId: string,
   meshId: string,
+  appBaseUrl: string,
 ) {
   ensureFalConfig();
-  const appBaseUrl = webhookBaseUrl();
 
   let imageInputs: string[] = [];
 

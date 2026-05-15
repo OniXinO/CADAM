@@ -1,6 +1,13 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { createAnthropicText } from '@/server/anthropic';
-import { isRecord, isUnauthorizedError, json, requireUser } from '@/server/api';
+import {
+  isRecord,
+  isUnauthorizedError,
+  json,
+  methodNotAllowed,
+  preflight,
+  requireUser,
+} from '@/server/api';
 
 const CREATIVE_PROMPT =
   'Generate a short creative prompt for an organic 3D form, character, figurine, sculpture, or artistic object. Return only the prompt text.';
@@ -11,6 +18,8 @@ const MAX_EXISTING_TEXT_LENGTH = 2000;
 export const Route = createFileRoute('/api/prompt-generator')({
   server: {
     handlers: {
+      GET: methodNotAllowed,
+      OPTIONS: preflight,
       POST: async ({ request }) => {
         try {
           await requireUser(request);

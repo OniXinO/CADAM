@@ -15,6 +15,14 @@ export function json(data: unknown, status = 200) {
   });
 }
 
+export function preflight() {
+  return new Response('ok', { headers: corsHeaders });
+}
+
+export function methodNotAllowed() {
+  return json({ error: 'method_not_allowed' }, 405);
+}
+
 export function isUnauthorizedError(error: unknown) {
   return error instanceof Error && error.message === 'Unauthorized';
 }

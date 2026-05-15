@@ -1,5 +1,6 @@
 import { sentryVitePlugin } from '@sentry/vite-plugin';
 import { tanstackStart } from '@tanstack/react-start/plugin/vite';
+import { nitro } from 'nitro/vite';
 import path from 'path';
 import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vite';
@@ -15,6 +16,10 @@ export default defineConfig({
         enabled: true,
         maskPath: '/cadam',
       },
+    }),
+    nitro({
+      baseURL: '/cadam',
+      inlineDynamicImports: true,
     }),
     react(),
     sentryVitePlugin({
@@ -34,33 +39,32 @@ export default defineConfig({
     outDir: 'dist/cadam',
     emptyOutDir: true,
 
-    rollupOptions: {
-      output: {
-        manualChunks(id) {
-          if (
-            id.includes('/node_modules/react/') ||
-            id.includes('/node_modules/react-dom/') ||
-            id.includes('/node_modules/@tanstack/react-router/') ||
-            id.includes('/node_modules/@tanstack/react-start/') ||
-            id.includes('/node_modules/lucide-react/')
-          ) {
-            return 'vendor';
-          }
-        },
-      },
-    },
-
     sourcemap: true,
   },
   environments: {
     client: {
       build: {
         outDir: 'dist/cadam',
+        rollupOptions: {
+          output: {
+            manualChunks(id) {
+              if (
+                id.includes('/node_modules/react/') ||
+                id.includes('/node_modules/react-dom/') ||
+                id.includes('/node_modules/@tanstack/react-router/') ||
+                id.includes('/node_modules/@tanstack/react-start/') ||
+                id.includes('/node_modules/lucide-react/')
+              ) {
+                return 'vendor';
+              }
+            },
+          },
+        },
       },
     },
     server: {
       build: {
-        outDir: 'dist/cadam/server',
+        outDir: 'dist/server',
       },
     },
   },

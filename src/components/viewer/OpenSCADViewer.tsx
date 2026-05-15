@@ -21,12 +21,6 @@ import { createDXFProjectionCode } from '@/utils/dxfUtils';
 import { DxfExporter } from '@/utils/downloadUtils';
 import type { AgenticCompileResult } from '@/hooks/useAgenticVerification';
 
-function compileErrorText(error: Error) {
-  const stdErr = Reflect.get(error, 'stdErr');
-  if (Array.isArray(stdErr)) return stdErr.join('\n').trim();
-  return error.message || 'OpenSCAD failed to compile';
-}
-
 // Extract import() filenames from OpenSCAD code
 function extractImportFilenames(code: string): string[] {
   const importRegex = /import\s*\(\s*"([^"]+)"\s*\)/g;
@@ -120,7 +114,6 @@ export function OpenSCADPreview({
     output,
     offOutput,
     isError,
-    error,
   } = useOpenSCAD();
   const [geometry, setGeometry] = useState<BufferGeometry | null>(null);
   const [coloredPreview, setColoredPreview] = useState<ColoredPreview | null>(
@@ -233,16 +226,6 @@ export function OpenSCADPreview({
 
     compileWithMeshFiles();
   }, [scadCode, compileScad, onCompileResult, prepareMeshFiles]);
-
-  useEffect(() => {
-    if (!onCompileResult || !scadCode || !isError || !error) return;
-
-    onCompileResult({
-      type: 'compile_error',
-      sourceCode: scadCode,
-      errorText: compileErrorText(error),
-    });
-  }, [error, isError, onCompileResult, scadCode]);
 
   // Register a parent-owned DXF exporter for the current SCAD code. The export
   // runs only when the user chooses DXF from the download menu.

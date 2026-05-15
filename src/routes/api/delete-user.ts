@@ -1,6 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { billing, BillingClientError } from '@/server/billingClient';
-import { isRecord, json } from '@/server/api';
+import { isRecord, json, methodNotAllowed, preflight } from '@/server/api';
 import {
   getServiceRoleSupabaseClient,
   type SupabaseClient,
@@ -35,6 +35,8 @@ function isCancellationFeedback(value: unknown): value is CancellationFeedback {
 export const Route = createFileRoute('/api/delete-user')({
   server: {
     handlers: {
+      GET: methodNotAllowed,
+      OPTIONS: preflight,
       POST: async ({ request }) => {
         const supabase = getServiceRoleSupabaseClient();
         const token = request.headers
@@ -49,13 +51,11 @@ export const Route = createFileRoute('/api/delete-user')({
         if (error || !data.user?.email)
           return json({ error: 'Unauthorized' }, 401);
 
-        let subscriptionCancellationFailed = false;
         try {
           await billing.cancelSubscription(data.user.email, {
             feedback: reason,
           });
         } catch (subscriptionError) {
-          subscriptionCancellationFailed = true;
           if (subscriptionError instanceof BillingClientError) {
             console.error('Failed to cancel user subscription:', {
               status: subscriptionError.status,
@@ -67,37 +67,53 @@ export const Route = createFileRoute('/api/delete-user')({
               subscriptionError,
             );
           }
+          return json({ error: 'Failed to cancel subscription' }, 500);
         }
-        let storageCleanupFailed = false;
-        try {
-          await deleteUserStorageItems(supabase, data.user.id);
-        } catch (storageError) {
-          storageCleanupFailed = true;
-          console.error('Failed to delete user storage items:', storageError);
-        }
-
         const { error: deleteError } = await supabase.auth.admin.deleteUser(
           data.user.id,
         );
         if (deleteError) return json({ error: 'Failed to delete user' }, 500);
-        return json({
-          success: true,
-          storageCleanupFailed,
-          subscriptionCancellationFailed,
-        });
+
+        runBackgroundTask(deleteUserStorageItems(supabase, data.user.id));
+        return json({ success: true });
       },
     },
   },
 });
 
+function runBackgroundTask(task: Promise<unknown>) {
+  const loggedTask = task.catch((error) => {
+    console.error('Failed to delete user storage items:', error);
+  });
+  const requestContext = Reflect.get(
+    globalThis,
+    Symbol.for('@vercel/request-context'),
+  );
+  if (isRecord(requestContext) && typeof requestContext.get === 'function') {
+    const context = requestContext.get();
+    if (isRecord(context) && typeof context.waitUntil === 'function') {
+      context.waitUntil(loggedTask);
+      return;
+    }
+  }
+  void loggedTask;
+}
+
 async function deleteUserStorageItems(
   supabase: SupabaseClient,
   userId: string,
-) {
+): Promise<void> {
   for (const bucket of ['images', 'meshes', 'previews']) {
-    const paths = await listAllPaths(supabase, bucket, userId);
-    for (let i = 0; i < paths.length; i += 1000) {
-      await supabase.storage.from(bucket).remove(paths.slice(i, i + 1000));
+    try {
+      const paths = await listAllPaths(supabase, bucket, userId);
+      for (let i = 0; i < paths.length; i += 1000) {
+        const { error } = await supabase.storage
+          .from(bucket)
+          .remove(paths.slice(i, i + 1000));
+        if (error) throw error;
+      }
+    } catch (error) {
+      console.error(`Failed to delete ${bucket} storage items:`, error);
     }
   }
 }
@@ -107,16 +123,22 @@ async function listAllPaths(
   bucket: string,
   folder: string,
 ): Promise<string[]> {
-  const { data, error } = await supabase.storage.from(bucket).list(folder, {
-    limit: 1000,
-    sortBy: { column: 'name', order: 'asc' },
-  });
-  if (error) throw error;
   const paths: string[] = [];
-  for (const item of data ?? []) {
-    const path = `${folder}/${item.name}`;
-    if ('id' in item && item.id) paths.push(path);
-    else paths.push(...(await listAllPaths(supabase, bucket, path)));
+  const limit = 1000;
+  for (let offset = 0; ; offset += limit) {
+    const { data, error } = await supabase.storage.from(bucket).list(folder, {
+      limit,
+      offset,
+      sortBy: { column: 'name', order: 'asc' },
+    });
+    if (error) throw error;
+    if (!data.length) break;
+    for (const item of data) {
+      const path = `${folder}/${item.name}`;
+      if ('id' in item && item.id) paths.push(path);
+      else paths.push(...(await listAllPaths(supabase, bucket, path)));
+    }
+    if (data.length < limit) break;
   }
   return paths;
 }

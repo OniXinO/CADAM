@@ -121,6 +121,7 @@ export function ParametricEditorView() {
     (message: Message | null, updatedParameters: Parameter[]) => {
       if (!message) return;
 
+      const artifact = message.content.artifact;
       let newCode = message.content.artifact?.code ?? '';
       updatedParameters.forEach((param) => {
         if (param.name.length > 0) {
@@ -137,6 +138,8 @@ export function ParametricEditorView() {
           code: newCode,
           parameters: updatedParameters,
           suggestions: message.content.artifact?.suggestions ?? [],
+          ...(artifact?.files ? { files: artifact.files } : {}),
+          ...(artifact?.entryFile ? { entryFile: artifact.entryFile } : {}),
         },
       };
 

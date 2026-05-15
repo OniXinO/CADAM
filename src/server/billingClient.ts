@@ -196,7 +196,14 @@ async function call<T>(
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const text = await res.text();
-  const parsed: T = text ? JSON.parse(text) : undefined;
+  let parsed: unknown;
+  if (text) {
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      parsed = text;
+    }
+  }
   if (!res.ok && !options?.allowStatus?.includes(res.status)) {
     throw new BillingClientError(
       `billing ${method} ${path} -> ${res.status}`,
@@ -204,7 +211,7 @@ async function call<T>(
       parsed,
     );
   }
-  return parsed;
+  return parsed as T;
 }
 
 type ConsumeBody = {

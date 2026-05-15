@@ -323,7 +323,7 @@ export function useCreativeChatMutation({
       );
     },
     onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: ['userExtraData'] });
+      queryClient.invalidateQueries({ queryKey: ['billing', 'status'] });
     },
     onError: async (error, { messageId }) => {
       Sentry.captureException(error, {
@@ -414,7 +414,7 @@ export function useParametricChatMutation({
       );
     },
     onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: ['userExtraData'] });
+      queryClient.invalidateQueries({ queryKey: ['billing', 'status'] });
     },
     onError: async (error, { messageId }) => {
       Sentry.captureException(error, {

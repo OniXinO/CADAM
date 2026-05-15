@@ -1,11 +1,12 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { billing, BillingClientError } from '@/server/billingClient';
-import { json } from '@/server/api';
+import { json, preflight } from '@/server/api';
 import { logError } from '@/server/serverLog';
 
 export const Route = createFileRoute('/api/billing-products')({
   server: {
     handlers: {
+      OPTIONS: preflight,
       GET: async ({ request }) => {
         try {
           const type = new URL(request.url).searchParams.get('type');
@@ -19,7 +20,7 @@ export const Route = createFileRoute('/api/billing-products')({
             functionName: 'billing-products',
             statusCode: status,
           });
-          return json({ error: 'billing_products_unavailable' }, 502);
+          return json({ error: 'billing_products_unavailable' }, status);
         }
       },
     },

@@ -1,10 +1,16 @@
 import { createFileRoute } from '@tanstack/react-router';
-import { isUnauthorizedError, json, requireUser } from '@/server/api';
+import {
+  isUnauthorizedError,
+  json,
+  preflight,
+  requireUser,
+} from '@/server/api';
 import { billing } from '@/server/billingClient';
 
 export const Route = createFileRoute('/api/billing-status')({
   server: {
     handlers: {
+      OPTIONS: preflight,
       GET: async ({ request }) => {
         try {
           const user = await requireUser(request);

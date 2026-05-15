@@ -18,8 +18,7 @@ interface VerifyRequestPayload {
 
 export type AgenticCompileResult =
   | { type: 'pending' }
-  | { type: 'stl'; output: Blob; sourceCode: string }
-  | { type: 'compile_error'; sourceCode: string; errorText: string };
+  | { type: 'stl'; output: Blob; sourceCode: string };
 
 type FreshCompileResult =
   | { type: 'stl'; stl: Blob; off?: Blob }
