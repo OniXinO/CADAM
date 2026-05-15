@@ -8,7 +8,7 @@ import { useConversation } from '@/contexts/ConversationContext';
 import { useCurrentMessage } from '@/contexts/CurrentMessageContext';
 import Tree from '@shared/Tree';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
-import type { AgenticCompileResult } from '@/hooks/useAgenticVerification';
+import type { CompileResult } from '@/components/viewer/compileResult';
 
 export default function ParametricShareView() {
   const { conversation } = useConversation();
@@ -16,7 +16,7 @@ export default function ParametricShareView() {
   // single-color STL mesh.
   const color = '#00A6FF';
   const [currentOutput, setCurrentOutput] = useState<Blob | undefined>();
-  const handleCompileResult = useCallback((result: AgenticCompileResult) => {
+  const handleCompileResult = useCallback((result: CompileResult) => {
     setCurrentOutput(result.type === 'stl' ? result.output : undefined);
   }, []);
   const { setCurrentMessage } = useCurrentMessage();

@@ -17,7 +17,7 @@ import { TreeNode } from '@shared/Tree';
 import { ParametricPreviewSection } from '@/components/viewer/ParametricPreviewSection';
 import { ParametricPreviewDialog } from '@/components/viewer/ParametricPreviewDialog';
 import { DxfExporter } from '@/utils/downloadUtils';
-import type { AgenticCompileResult } from '@/hooks/useAgenticVerification';
+import type { CompileResult } from '@/components/viewer/compileResult';
 
 // Panel size constants
 const PANEL_SIZES = {
@@ -44,7 +44,7 @@ interface ParametricViewProps {
   retryMessage?: ({ model, id }: { model: Model; id: string }) => void;
   isLoading: boolean;
   currentOutput: Blob | undefined;
-  onCompileResult: (result: AgenticCompileResult) => void;
+  onCompileResult: (result: CompileResult) => void;
   color: string;
   changeParameters: (message: Message | null, parameters: Parameter[]) => void;
   stopGenerating?: () => void;

@@ -16,8 +16,7 @@ import {
 } from '@/services/messageService';
 import Tree from '@shared/Tree';
 import { useRequestCancellation } from '@/hooks/useRequestCancellation';
-import { useAgenticVerification } from '@/hooks/useAgenticVerification';
-import type { AgenticCompileResult } from '@/hooks/useAgenticVerification';
+import type { CompileResult } from '@/components/viewer/compileResult';
 import posthog from 'posthog-js';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 
@@ -26,7 +25,7 @@ export function ParametricEditorView() {
   const queryClient = useQueryClient();
   const { setCurrentMessage } = useCurrentMessage();
   const [currentOutput, setCurrentOutput] = useState<Blob | undefined>();
-  const handleCompileResult = useCallback((result: AgenticCompileResult) => {
+  const handleCompileResult = useCallback((result: CompileResult) => {
     setCurrentOutput(result.type === 'stl' ? result.output : undefined);
   }, []);
   // Brand fallback color used when OFF parsing fails and we drop back to
@@ -181,9 +180,6 @@ export function ParametricEditorView() {
     },
     [sendMessageMutation, conversation.id, conversation.settings?.model],
   );
-
-  // Browser side of build_cad_model's write -> compile -> screenshot loop.
-  useAgenticVerification();
 
   return (
     <ParametricView

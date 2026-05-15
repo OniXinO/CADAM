@@ -3,12 +3,12 @@ import { useCurrentMessage } from '@/contexts/CurrentMessageContext';
 import Loader from '@/components/viewer/Loader';
 import { OpenSCADPreview } from './OpenSCADViewer';
 import { DxfExporter } from '@/utils/downloadUtils';
-import type { AgenticCompileResult } from '@/hooks/useAgenticVerification';
+import type { CompileResult } from './compileResult';
 
 interface ParametricPreviewSectionProps {
   isLoading: boolean;
   color: string;
-  onCompileResult?: (result: AgenticCompileResult) => void;
+  onCompileResult?: (result: CompileResult) => void;
   onDxfExportChange?: (exporter: DxfExporter | null) => void;
   isMobile?: boolean;
 }

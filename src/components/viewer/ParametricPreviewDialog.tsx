@@ -21,14 +21,14 @@ import * as SheetPrimitive from '@radix-ui/react-dialog';
 import { cn } from '@/lib/utils';
 import { Separator } from '@/components/ui/separator';
 import { DxfExporter } from '@/utils/downloadUtils';
-import type { AgenticCompileResult } from '@/hooks/useAgenticVerification';
+import type { CompileResult } from './compileResult';
 
 interface ParametricPreviewDialogProps {
   onSubmit: (message: Message | null, parameters: Parameter[]) => void;
   currentOutput?: Blob;
   dxfExporter?: DxfExporter | null;
   isLoading?: boolean;
-  onCompileResult?: (result: AgenticCompileResult) => void;
+  onCompileResult?: (result: CompileResult) => void;
   onDxfExportChange?: (exporter: DxfExporter | null) => void;
 }
 

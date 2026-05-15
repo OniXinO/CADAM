@@ -33,41 +33,12 @@ export type MeshData = Omit<
   prompt: Prompt;
 };
 
-// Named camera viewpoints for agentic verification screenshots.
-// These map to fixed azimuth/elevation/distance in the renderer; `custom`
-// lets the agent pass arbitrary `azimuth`/`elevation` (degrees) as well.
-export type ViewName =
-  | 'iso'
-  | 'front'
-  | 'back'
-  | 'left'
-  | 'right'
-  | 'top'
-  | 'bottom'
-  | 'custom';
-
-export type ViewRequest = {
-  view: ViewName;
-  // For `view: 'custom'` only — degrees, world-space.
-  azimuth?: number;
-  elevation?: number;
-  // Optional human-readable label for the chat UI.
-  label?: string;
-};
-
 export type ToolCall = {
   name: string;
-  status: 'pending' | 'error' | 'pending_verification' | 'verified';
+  status: 'pending' | 'error';
   id?: string;
   error?: string;
   result?: { id: string; fileType?: MeshFileType };
-  // For agentic verification: which angles the client should render.
-  views?: ViewRequest[];
-  // For agentic verification: short rationale shown next to the chip.
-  reasoning?: string;
-  // For agentic verification: image IDs of the rendered screenshots once the
-  // client has fulfilled the request.
-  screenshots?: string[];
 };
 
 export type Content = {

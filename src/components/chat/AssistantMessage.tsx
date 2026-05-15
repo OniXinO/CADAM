@@ -258,10 +258,8 @@ export function AssistantMessage({
 
                       if (
                         isCadBuildTool(toolCall.name) &&
-                        (toolCall.status === 'pending_verification' ||
-                          toolCall.status === 'verified' ||
-                          (toolCall.status === 'error' &&
-                            message.content.artifact))
+                        toolCall.status === 'error' &&
+                        message.content.artifact
                       ) {
                         return null;
                       }

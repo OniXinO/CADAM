@@ -4,14 +4,13 @@ import {
   CoreMessage,
   ParametricArtifact,
   ToolCall,
-  ViewRequest,
 } from '@shared/types';
 import { getAnonSupabaseClient } from './supabaseClient';
 import Tree from '@shared/Tree';
 import parseParameters from './parseParameter';
-import { formatUserMessage, getBase64Images } from './messageUtils';
+import { formatUserMessage } from './messageUtils';
 import { billing, BillingClientError } from './billingClient';
-import { env, requiredEnv } from './env';
+import { requiredEnv } from './env';
 import { corsHeaders, isRecord } from './api';
 import { logError } from './serverLog';
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
@@ -26,13 +25,6 @@ import {
 
 const CHAT_TOKEN_COST = 1;
 const PARAMETRIC_TOKEN_COST = 5;
-const ENVIRONMENT = env('ENVIRONMENT').toLowerCase();
-const IS_LOCAL_ENV = !['production', 'prod'].includes(ENVIRONMENT);
-
-function logVerificationEvent(event: string, details: Record<string, unknown>) {
-  if (!IS_LOCAL_ENV) return;
-  console.info(`[parametric-chat] ${event}`, details);
-}
 
 // OpenRouter API configuration
 const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
@@ -331,11 +323,6 @@ async function generateTitleFromMessages(
 // cap so a misbehaving model can't run away with the request budget.
 const MAX_AGENT_ITERATIONS = 8;
 
-// How long the server waits for the browser to fulfill a screenshot
-// broadcast before giving up on that tool call. The browser side renders
-// 2–4 angles + uploads to Supabase Storage; comfortably <10s in practice.
-const BROWSER_SCREENSHOT_TIMEOUT_MS = 25_000;
-
 const PARAMETRIC_AGENT_PROMPT = `You are Adam, an AI CAD editor that creates and modifies OpenSCAD models.
 Speak back to the user briefly, then call build_cad_model with complete OpenSCAD code when the model should change.
 Do not rewrite or change the user's intent. Do not add unrelated constraints.
@@ -355,7 +342,7 @@ Behavior:
 - When the user asks why something happened, how the model is structured, what is visible, or any other explanatory question about the current CAD model, answer in text only. Do not call a tool unless they explicitly ask you to change the model.
 - Keep text concise and helpful. Ask at most 1 follow-up question when truly needed.
 - If there is existing artifact code in the conversation, use it as the base for requested edits and return the complete updated code.
-- If compiler output or screenshot feedback surfaces a problem, call build_cad_model again with complete corrected code. Do not say you will fix a problem unless you call the tool in that same turn.
+- If compiler output surfaces a problem, call build_cad_model again with complete corrected code. Do not say you will fix a problem unless you call the tool in that same turn.
 
 CAD principles:
 - Make the code compile.
@@ -367,17 +354,7 @@ CAD principles:
 - Prefer scalar dimension parameters for ordinary dimensions. Use vectors only when vector input is genuinely the right control.
 - Preserve visual semantics with color(): distinct materials, parts, or regions should have named *_color parameters.
 - Choose the OpenSCAD techniques that fit the shape. Use modules, booleans, hulls, extrusions, sweeps, bevel/rounding helpers, and repeated details when they make the model better; keep simpler geometry simple.
-- If modifying an imported STL, import the STL, add or subtract the requested changes around it, and expose parameters for the modification rather than pretending to fully reconstruct the source object.
-
-AGENTIC VERIFICATION (CRITICAL):
-build_cad_model owns the render and screenshot step. Do NOT call a separate screenshot or verification tool after build_cad_model. When build_cad_model returns screenshots, critically evaluate them against the user's request before finalizing.
-
-When you see the screenshots, reason from the request:
-- Does the result look like the requested subject?
-- Are the important features present, proportioned, and oriented correctly?
-- Did the code introduce visible artifacts that contradict the intended structure?
-
-If something is wrong, call build_cad_model again with a corrected complete code field.`;
+- If modifying an imported STL, import the STL, add or subtract the requested changes around it, and expose parameters for the modification rather than pretending to fully reconstruct the source object.`;
 
 // Tool definitions in OpenAI format
 const tools = [
@@ -385,8 +362,7 @@ const tools = [
     type: 'function',
     function: {
       name: 'build_cad_model',
-      description:
-        'Display, compile, and screenshot a complete OpenSCAD model written by the assistant.',
+      description: 'Write a complete OpenSCAD model for the CAD viewer.',
       parameters: {
         type: 'object',
         properties: {
@@ -431,14 +407,6 @@ function buildParametricModelInput(
     code,
   };
 }
-
-const DEFAULT_BUILD_VERIFICATION_VIEWS: ViewRequest[] = [
-  { view: 'iso', label: 'overall' },
-  { view: 'front', label: 'front' },
-  { view: 'right', label: 'profile' },
-];
-const DEFAULT_BUILD_VERIFICATION_REASONING =
-  'Verify the generated model against the user request. Check recognizable features, proportions, orientation, and visible artifacts.';
 
 function toAiSdkToolSet(toolsForTurn: AgentToolDefinition[]): ToolSet {
   return Object.fromEntries(
@@ -609,9 +577,8 @@ export async function handleParametricChatRequest(req: Request) {
 
   // Request-scoped abort, mirroring the creative-chat cancellation pattern.
   // Wired to a Realtime broadcast (`cancel-request-{messageId}`) and to the
-  // client disconnecting; every upstream fetch + the Realtime verify
-  // round-trip listen on this signal so a click on Stop tears the whole
-  // agent loop down immediately.
+  // client disconnecting; every upstream fetch listens on this signal so a
+  // click on Stop tears the whole agent loop down immediately.
   const abortController = new AbortController();
   const { signal: abortSignal } = abortController;
 
@@ -838,8 +805,8 @@ export async function handleParametricChatRequest(req: Request) {
     // The agent loop maintains its own messages array, growing as the agent
     // emits tool_calls and tools return results. Begins with the system
     // prompt + the persisted conversation. Tool results (assistant tool_calls
-    // / tool messages / synthetic user image messages) accumulate inside the
-    // loop and are NOT persisted to the DB — they're loop-internal state.
+    // / tool messages) accumulate inside the loop and are NOT persisted to
+    // the DB — they're loop-internal state.
     const agentMessages: ModelMessage[] = [
       { role: 'system', content: PARAMETRIC_AGENT_PROMPT },
       ...messagesToSend.map(toAiSdkMessage),
@@ -977,198 +944,6 @@ export async function handleParametricChatRequest(req: Request) {
       return { text, toolCalls: orderedToolCalls, finishReason };
     };
 
-    // Round-trip a screenshot request to the browser via Supabase Realtime.
-    const requestBrowserScreenshots = async (
-      requestId: string,
-      code: string,
-      views: ViewRequest[],
-      reasoning: string,
-    ): Promise<{
-      imageIds: string[];
-      images: Array<{ data: string; mediaType: string }>;
-    }> => {
-      // Conversation-scoped channel so the browser can be subscribed
-      // unconditionally (when the editor is mounted) instead of racing to
-      // wire up the listener after a chat fetch starts. Multiple in-flight
-      // requests on the same conversation disambiguate by requestId.
-      const channelName = `verify-conv-${conversationId}`;
-      const channel = supabaseClient.channel(channelName, {
-        config: { broadcast: { self: false, ack: true } },
-      });
-      logVerificationEvent('browser_screenshots.channel.created', {
-        requestId,
-        conversationId,
-        newMessageId,
-        channelName,
-        viewCount: views.length,
-        views: views.map((v) => v.label ?? v.view),
-      });
-
-      // Accumulators for the pending response listeners. We track them
-      // outside the Promise so the cleanup below can detach without
-      // reaching into closure state — preventing the listener leaked
-      // by Greptile's "responsePromise timeout path" finding.
-      let resolveResponse: ((v: { imageIds: string[] }) => void) | null = null;
-      let rejectResponse: ((err: Error) => void) | null = null;
-      let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
-      const onAbort = () => {
-        if (rejectResponse) {
-          rejectResponse(
-            new Error(
-              abortSignal.reason instanceof Error
-                ? abortSignal.reason.message
-                : 'request aborted',
-            ),
-          );
-        }
-      };
-
-      // Wire the broadcast listener BEFORE subscribing — supabase replays
-      // any messages received between SUBSCRIBED and the first listener,
-      // so registering early is safe and avoids racing the browser.
-      channel.on('broadcast', { event: 'verify_response' }, (msg) => {
-        const raw = isRecord(msg) && isRecord(msg.payload) ? msg.payload : {};
-
-        if (raw.requestId !== requestId) return;
-
-        if (typeof raw.error === 'string') {
-          rejectResponse?.(new Error(`browser error: ${raw.error}`));
-          return;
-        }
-
-        const imageIds = raw.imageIds;
-        if (
-          !Array.isArray(imageIds) ||
-          imageIds.length === 0 ||
-          !imageIds.every((id) => typeof id === 'string')
-        ) {
-          rejectResponse?.(new Error('browser returned no screenshots'));
-          return;
-        }
-        resolveResponse?.({ imageIds });
-      });
-
-      // Single try/finally wraps subscribe → send → await response so a
-      // CHANNEL_ERROR / TIMED_OUT subscribe rejection (or any other early
-      // throw) still tears down the broadcast listener, the verify-response
-      // setTimeout, and the abort listener. Without this, an early reject
-      // would leave the timeout to fire later and surface as an unhandled
-      // rejection in the Deno Deploy runtime.
-      try {
-        // Block the broadcast until the channel is fully SUBSCRIBED —
-        // otherwise the verify_request fires before our listener is wired
-        // and the browser's reply lands on a deaf socket.
-        await new Promise<void>((resolve, reject) => {
-          channel.subscribe((status, err) => {
-            if (status === 'SUBSCRIBED') {
-              logVerificationEvent('browser_screenshots.channel.subscribed', {
-                requestId,
-                conversationId,
-              });
-              resolve();
-            } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-              logVerificationEvent('browser_screenshots.channel.failed', {
-                requestId,
-                conversationId,
-                status,
-                error: err ? String(err) : undefined,
-              });
-              reject(
-                new Error(
-                  `verify channel ${status}${err ? `: ${String(err)}` : ''}`,
-                ),
-              );
-            }
-          });
-        });
-
-        // Arm the response promise *after* SUBSCRIBED so the timeout only
-        // counts from when we're actually awaiting a browser reply.
-        const responsePromise = new Promise<{ imageIds: string[] }>(
-          (resolve, reject) => {
-            resolveResponse = resolve;
-            rejectResponse = reject;
-            const budget = Math.min(
-              BROWSER_SCREENSHOT_TIMEOUT_MS,
-              Math.max(MIN_ABORT_MS, remainingBudgetMs() - 5_000),
-            );
-            logVerificationEvent('browser_screenshots.awaiting_browser', {
-              requestId,
-              conversationId,
-              timeoutMs: budget,
-            });
-            timeoutHandle = setTimeout(() => {
-              reject(
-                new Error(
-                  'browser screenshots timed out; the browser did not respond in time',
-                ),
-              );
-            }, budget);
-            abortSignal.addEventListener('abort', onAbort, { once: true });
-          },
-        );
-        // Suppress unhandled-rejection warnings if the caller never awaits
-        // (e.g. an early throw between subscribe and the await below).
-        responsePromise.catch(() => {});
-
-        await channel.send({
-          type: 'broadcast',
-          event: 'verify_request',
-          payload: {
-            requestId,
-            code,
-            views,
-            reasoning,
-            conversationId,
-            newMessageId,
-          },
-        });
-        logVerificationEvent('browser_screenshots.verify_request.sent', {
-          requestId,
-          conversationId,
-          viewCount: views.length,
-        });
-
-        const { imageIds } = await responsePromise;
-        logVerificationEvent('browser_screenshots.verify_response.received', {
-          requestId,
-          conversationId,
-          imageCount: imageIds.length,
-        });
-
-        const paths = imageIds.map(
-          (id) => `${userData.user.id}/${conversationId}/${id}`,
-        );
-        const images = await getBase64Images(supabaseClient, 'images', paths);
-
-        // If we lost everything the agent would otherwise be told
-        // "N screenshots attached" while seeing zero images — surface as
-        // an error so the loop falls through to the failure path and the
-        // user sees a clear "verification failed" chip.
-        if (images.length === 0) {
-          throw new Error(
-            'failed to load any verification screenshots from storage',
-          );
-        }
-
-        logVerificationEvent('browser_screenshots.images.ready', {
-          requestId,
-          conversationId,
-          imageCount: images.length,
-        });
-
-        return { imageIds, images };
-      } finally {
-        if (timeoutHandle) clearTimeout(timeoutHandle);
-        abortSignal.removeEventListener('abort', onAbort);
-        try {
-          await supabaseClient.removeChannel(channel);
-        } catch (e) {
-          console.error('failed to remove verify channel', e);
-        }
-      }
-    };
-
     const responseStream = new ReadableStream({
       async start(controller) {
         // Helper that mutates the in-flight Content snapshot and pushes
@@ -1189,9 +964,6 @@ export async function handleParametricChatRequest(req: Request) {
               throw new Error('Request cancelled by user');
             }
 
-            // The model no longer gets a standalone screenshot tool. The
-            // build tool owns write -> screenshot inside one tool execution
-            // so the trace is temporally meaningful.
             const turnTools = tools;
 
             // Stream this agent turn. Text deltas append to content.text
@@ -1256,7 +1028,6 @@ export async function handleParametricChatRequest(req: Request) {
 
             // Execute each tool call serially. They share the request
             // budget so a slow tool drains time from later iterations.
-            const screenshotMessages: ModelMessage[] = [];
             for (const tc of turn.toolCalls) {
               if (abortSignal.aborted) {
                 throw new Error('Request cancelled by user');
@@ -1347,12 +1118,6 @@ export async function handleParametricChatRequest(req: Request) {
                 continue;
               }
 
-              const verificationViews = DEFAULT_BUILD_VERIFICATION_VIEWS;
-              const verificationSummary = verificationViews
-                .map((v) => v.label || v.view)
-                .join(', ');
-              const verificationReasoning =
-                DEFAULT_BUILD_VERIFICATION_REASONING;
               let title =
                 input.title ||
                 (await generateTitleFromMessages(
@@ -1374,120 +1139,17 @@ export async function handleParametricChatRequest(req: Request) {
 
               updateContent({
                 ...content,
-                toolCalls: (content.toolCalls || []).map((c) =>
-                  c.id === tc.id
-                    ? {
-                        ...c,
-                        status: 'pending_verification',
-                        views: verificationViews,
-                        screenshots: [],
-                      }
-                    : c,
-                ),
-              });
-
-              const requestId = crypto.randomUUID();
-              let imageIds: string[] = [];
-              let verificationImages: Array<{
-                data: string;
-                mediaType: string;
-              }> = [];
-              let viewError: string | null = null;
-              try {
-                logVerificationEvent('build_cad_model.verification.started', {
-                  requestId,
-                  conversationId,
-                  newMessageId,
-                  toolCallId: tc.id,
-                  title,
-                  views: verificationViews.map((v) => v.label ?? v.view),
-                });
-                const result = await requestBrowserScreenshots(
-                  requestId,
-                  code,
-                  verificationViews,
-                  verificationReasoning,
-                );
-                imageIds = result.imageIds;
-                verificationImages = result.images;
-                logVerificationEvent('build_cad_model.verification.fulfilled', {
-                  requestId,
-                  conversationId,
-                  toolCallId: tc.id,
-                  imageCount: imageIds.length,
-                  attachedImageCount: verificationImages.length,
-                });
-              } catch (err) {
-                viewError =
-                  err instanceof Error ? err.message : 'unknown error';
-                logVerificationEvent('build_cad_model.verification.failed', {
-                  requestId,
-                  conversationId,
-                  toolCallId: tc.id,
-                  error: viewError,
-                });
-                console.error('build_cad_model verification failed:', err);
-              }
-
-              if (viewError) {
-                await refundParametricToken('verification_failed');
-                updateContent({
-                  ...content,
-                  toolCalls: (content.toolCalls || []).map((c) =>
-                    c.id === tc.id
-                      ? { ...c, status: 'error', error: viewError }
-                      : c,
-                  ),
-                });
-                pushToolResult(
-                  tc,
-                  `OpenSCAD model "${title}" failed compile/render verification: ${viewError}\nCall build_cad_model again with a complete corrected OpenSCAD code field. Use the failed code from your previous tool call as the base.`,
-                );
-                continue;
-              }
-
-              updateContent({
-                ...content,
-                toolCalls: (content.toolCalls || []).map((c) =>
-                  c.id === tc.id
-                    ? {
-                        ...c,
-                        status: 'verified',
-                        screenshots: imageIds,
-                      }
-                    : c,
+                toolCalls: (content.toolCalls || []).filter(
+                  (c) => c.id !== tc.id,
                 ),
                 artifact,
               });
 
               pushToolResult(
                 tc,
-                `OpenSCAD model "${title}" displayed successfully (${artifact.parameters.length} parameter${artifact.parameters.length === 1 ? '' : 's'}, ${fileCountSummary}). Tool-call trace:\nwrote code -> compiled/rendered artifact -> captured ${verificationImages.length} screenshot${verificationImages.length === 1 ? '' : 's'} from ${verificationSummary}\nReview the attached screenshots critically. If the model is wrong, call build_cad_model again with complete corrected code.`,
+                `OpenSCAD model "${title}" was written successfully (${artifact.parameters.length} parameter${artifact.parameters.length === 1 ? '' : 's'}, ${fileCountSummary}).`,
               );
-
-              if (supportsVision) {
-                screenshotMessages.push({
-                  role: 'user',
-                  content: [
-                    {
-                      type: 'text',
-                      text: `Verification screenshots captured inside the CAD build step (${verificationSummary}):`,
-                    },
-                    ...verificationImages.map((image) => ({
-                      type: 'image' as const,
-                      image: image.data.split(',')[1] ?? image.data,
-                      mediaType: image.mediaType,
-                    })),
-                  ],
-                });
-              } else {
-                screenshotMessages.push({
-                  role: 'user',
-                  content: `Verification screenshots from ${verificationSummary} were captured inside the CAD build step, but the current model does not accept images. Treat the build as best-effort and confirm completion to the user.`,
-                });
-              }
             }
-            agentMessages.push(...screenshotMessages);
           }
         } catch (error) {
           if (!abortSignal.aborted) {

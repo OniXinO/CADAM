@@ -19,7 +19,7 @@ import { parseColoredOff } from '@/utils/offParser';
 import { MeshFilesContext } from '@/contexts/MeshFilesContext';
 import { createDXFProjectionCode } from '@/utils/dxfUtils';
 import { DxfExporter } from '@/utils/downloadUtils';
-import type { AgenticCompileResult } from '@/hooks/useAgenticVerification';
+import type { CompileResult } from './compileResult';
 
 // Extract import() filenames from OpenSCAD code
 function extractImportFilenames(code: string): string[] {
@@ -76,7 +76,7 @@ function normalizeColor(color: [number, number, number, number] | null) {
 interface OpenSCADPreviewProps {
   scadCode: string | null;
   color: string;
-  onCompileResult?: (result: AgenticCompileResult) => void;
+  onCompileResult?: (result: CompileResult) => void;
   onDxfExportChange?: (exporter: DxfExporter | null) => void;
   isMobile?: boolean;
   backgroundColor?: string;
