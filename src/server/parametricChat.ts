@@ -25,6 +25,7 @@ import {
 
 const CHAT_TOKEN_COST = 1;
 const PARAMETRIC_TOKEN_COST = 5;
+const DEFAULT_GEMINI_REASONING_TOKENS = 1000;
 
 // OpenRouter API configuration
 const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
@@ -43,6 +44,14 @@ const REQUIRES_TOOL_CAPABLE_PROVIDER = new Set<string>([]);
 // `supportsVision: false` entries in PARAMETRIC_MODELS (src/lib/utils.ts) but
 // is not derived from the client to avoid stale-client/direct-API bypass.
 const TEXT_ONLY_MODELS = new Set<string>([]);
+
+function reasoningOptions(model: string, thinking: boolean, tokens: number) {
+  if (thinking) return { reasoning: { max_tokens: tokens } };
+  if (model.includes('gemini-3.1')) {
+    return { reasoning: { max_tokens: DEFAULT_GEMINI_REASONING_TOKENS } };
+  }
+  return {};
+}
 
 // Helper to stream updated assistant message rows.
 // Silently noop if the controller is already closed (e.g. the client
@@ -142,11 +151,15 @@ function scoreOpenSCADCode(code: string): number {
 }
 
 // Helper to mark a tool as error and avoid duplication
-function markToolAsError(content: Content, toolId: string): Content {
+function markToolAsError(
+  content: Content,
+  toolId: string,
+  error?: string,
+): Content {
   return {
     ...content,
     toolCalls: (content.toolCalls || []).map((c: ToolCall) =>
-      c.id === toolId ? { ...c, status: 'error' } : c,
+      c.id === toolId ? { ...c, status: 'error', error } : c,
     ),
   };
 }
@@ -915,11 +928,11 @@ export async function handleParametricChatRequest(req: Request) {
             ...(REQUIRES_TOOL_CAPABLE_PROVIDER.has(model)
               ? { provider: { require_parameters: true } }
               : {}),
-            ...(thinking ? { reasoning: { max_tokens: 9000 } } : {}),
+            ...reasoningOptions(model, thinking, 9000),
           }),
           messages: messagesForTurn,
           tools: toAiSdkToolSet(toolsForTurn),
-          maxOutputTokens: thinking ? 60000 : 48000,
+          maxOutputTokens: thinking ? 20000 : 16000,
           maxRetries: 0,
           abortSignal: turnAbort.signal,
         });
@@ -986,11 +999,12 @@ export async function handleParametricChatRequest(req: Request) {
       let rawCode = '';
       try {
         const result = streamText({
-          model: openrouter.chat(model, {
-            ...(thinking ? { reasoning: { max_tokens: 12000 } } : {}),
-          }),
+          model: openrouter.chat(
+            model,
+            reasoningOptions(model, thinking, 12000),
+          ),
           messages: codeMessages,
-          maxOutputTokens: thinking ? 60000 : 48000,
+          maxOutputTokens: thinking ? 60000 : 16000,
           maxRetries: 0,
           abortSignal: codeAbort.signal,
         });
@@ -1118,7 +1132,7 @@ export async function handleParametricChatRequest(req: Request) {
                 });
                 if (!result.ok) {
                   updateContent({
-                    ...markToolAsError(content, tc.id),
+                    ...markToolAsError(content, tc.id, 'insufficient_tokens'),
                     error: 'insufficient_tokens',
                   });
                   pushToolResult(
@@ -1141,7 +1155,7 @@ export async function handleParametricChatRequest(req: Request) {
                   },
                 });
                 updateContent({
-                  ...markToolAsError(content, tc.id),
+                  ...markToolAsError(content, tc.id, 'billing_unavailable'),
                   error: 'billing_unavailable',
                 });
                 pushToolResult(tc, 'Error: billing service unavailable.');
@@ -1210,7 +1224,9 @@ export async function handleParametricChatRequest(req: Request) {
                 );
               } catch (err) {
                 await refundParametricToken('code_generation_failed');
-                updateContent(markToolAsError(content, tc.id));
+                const message =
+                  err instanceof Error ? err.message : 'code_generation_failed';
+                updateContent(markToolAsError(content, tc.id, message));
                 logError(err, {
                   functionName: 'parametric-chat',
                   statusCode: 502,
@@ -1230,7 +1246,7 @@ export async function handleParametricChatRequest(req: Request) {
 
               if (!code) {
                 await refundParametricToken('empty_code');
-                updateContent(markToolAsError(content, tc.id));
+                updateContent(markToolAsError(content, tc.id, 'empty_code'));
                 pushToolResult(
                   tc,
                   'Error: build_cad_model produced empty OpenSCAD code. Call it again with the same text.',
