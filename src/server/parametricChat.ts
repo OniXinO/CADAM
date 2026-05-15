@@ -974,19 +974,18 @@ export async function handleParametricChatRequest(req: Request) {
 
     const streamGeneratedOpenSCAD = async (
       input: BuildParametricModelInput,
-      onCode: (code: string, rawLength: number) => void,
     ): Promise<string> => {
+      const userRequest =
+        input.text || newMessage.content.text || 'Create a printable model';
+      const prompt = input.error
+        ? `${userRequest}\n\nFix this OpenSCAD error: ${input.error}`
+        : userRequest;
+      const simpleRequest = !input.error && messagesToSend.length <= 2;
       const codeMessages: ModelMessage[] = [
         { role: 'system', content: STRICT_CODE_PROMPT },
-        ...messagesToSend.map(toAiSdkMessage),
+        ...(simpleRequest ? [] : messagesToSend.map(toAiSdkMessage)),
+        { role: 'user', content: prompt },
       ];
-
-      if (input.error) {
-        codeMessages.push({
-          role: 'user',
-          content: `${input.text}\n\nFix this OpenSCAD error: ${input.error}`,
-        });
-      }
 
       const codeAbort = new AbortController();
       const codeTimeout = setTimeout(
@@ -1012,7 +1011,6 @@ export async function handleParametricChatRequest(req: Request) {
         for await (const part of result.fullStream) {
           if (part.type === 'text-delta') {
             rawCode += part.text;
-            onCode(stripCodeFences(rawCode), rawCode.length);
           } else if (part.type === 'error') {
             throw part.error instanceof Error
               ? part.error
@@ -1195,33 +1193,9 @@ export async function handleParametricChatRequest(req: Request) {
                 messagesToSend,
                 openrouterApiKey,
               );
-              let lastFlushTime = 0;
-              let lastFlushedLen = 0;
               let code = '';
               try {
-                code = await streamGeneratedOpenSCAD(
-                  input,
-                  (streamedCode, rawLength) => {
-                    const now = Date.now();
-                    if (
-                      now - lastFlushTime < 120 ||
-                      rawLength <= lastFlushedLen
-                    ) {
-                      return;
-                    }
-                    lastFlushTime = now;
-                    lastFlushedLen = rawLength;
-                    updateContent({
-                      ...content,
-                      artifact: {
-                        title: 'Adam Object',
-                        version: 'v1',
-                        code: streamedCode,
-                        parameters: [],
-                      },
-                    });
-                  },
-                );
+                code = await streamGeneratedOpenSCAD(input);
               } catch (err) {
                 await refundParametricToken('code_generation_failed');
                 const message =
