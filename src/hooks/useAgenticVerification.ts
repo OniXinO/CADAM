@@ -33,6 +33,18 @@ function assertNever(value: never): never {
   throw new Error(`Unhandled compile result: ${JSON.stringify(value)}`);
 }
 
+function assertActive(signal: AbortSignal) {
+  if (signal.aborted) throw new Error('verification_aborted');
+}
+
+function isAbortError(error: unknown, signal: AbortSignal) {
+  return (
+    signal.aborted ||
+    (error instanceof Error &&
+      (error.message === 'verification_aborted' || error.name === 'AbortError'))
+  );
+}
+
 function compileErrorText(error: unknown) {
   if (!(error instanceof Error)) return 'OpenSCAD failed to compile';
   const stdErr = Reflect.get(error, 'stdErr');
@@ -48,6 +60,36 @@ function extractImportFilenames(code: string): string[] {
     filenames.push(match[1]);
   }
   return filenames;
+}
+
+async function uploadVerificationImage(
+  path: string,
+  file: File,
+  accessToken: string,
+  signal: AbortSignal,
+) {
+  assertActive(signal);
+  const form = new FormData();
+  form.append('cacheControl', '3600');
+  form.append('', file);
+
+  const encodedPath = path.split('/').map(encodeURIComponent).join('/');
+  const response = await fetch(
+    `${import.meta.env.VITE_SUPABASE_URL}/storage/v1/object/images/${encodedPath}`,
+    {
+      method: 'POST',
+      headers: {
+        apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
+        Authorization: `Bearer ${accessToken}`,
+        'x-upsert': 'false',
+      },
+      body: form,
+      signal,
+    },
+  );
+  if (!response.ok) {
+    throw new Error(`image_upload_failed:${response.status}`);
+  }
 }
 
 export function useAgenticVerification() {
@@ -66,6 +108,7 @@ export function useAgenticVerification() {
     if (!conversation.id) return;
 
     const lifecycleAbort = new AbortController();
+    const signal = lifecycleAbort.signal;
 
     const channelName = `verify-conv-${conversation.id}`;
     const channel = supabase.channel(channelName, {
@@ -73,6 +116,7 @@ export function useAgenticVerification() {
     });
 
     const sendError = async (requestId: string, error: string) => {
+      if (signal.aborted) return;
       logVerificationEvent('verify_response.error', {
         requestId,
         conversationId: conversation.id,
@@ -87,17 +131,25 @@ export function useAgenticVerification() {
 
     const compileCandidate = async (
       code: string,
+      signal: AbortSignal,
     ): Promise<FreshCompileResult> => {
       const filenames = extractImportFilenames(code);
       for (const filename of filenames) {
+        assertActive(signal);
         const content = meshFilesCtx?.getMeshFile(filename);
-        if (content) await writeFile(filename, content);
+        if (content) {
+          await writeFile(filename, content);
+          assertActive(signal);
+        }
       }
 
       try {
+        assertActive(signal);
         const result = await previewScad(code);
+        assertActive(signal);
         return { type: 'stl', stl: result.stl, off: result.off };
       } catch (err) {
+        if (isAbortError(err, signal)) throw err;
         return { type: 'compile_error', errorText: compileErrorText(err) };
       }
     };
@@ -117,7 +169,7 @@ export function useAgenticVerification() {
         return;
       }
 
-      const compileResult = await compileCandidate(code);
+      const compileResult = await compileCandidate(code, signal);
       switch (compileResult.type) {
         case 'compile_error':
           await sendError(
@@ -130,6 +182,7 @@ export function useAgenticVerification() {
         default:
           assertNever(compileResult);
       }
+      assertActive(signal);
       logVerificationEvent('fresh_stl.ready', {
         requestId,
         conversationId: conversation.id,
@@ -142,6 +195,7 @@ export function useAgenticVerification() {
           views,
           compileResult.off,
         );
+        assertActive(signal);
         logVerificationEvent('screenshots.rendered', {
           requestId,
           conversationId: conversation.id,
@@ -157,24 +211,29 @@ export function useAgenticVerification() {
           const file = new File([blobs[i]], `verify-${id}.png`, {
             type: 'image/png',
           });
-          const { error: uploadErr } = await supabase.storage
+          await uploadVerificationImage(path, file, sess.access_token, signal);
+          assertActive(signal);
+          const { error: rowErr } = await supabase
             .from('images')
-            .upload(path, file, { contentType: 'image/png' });
-          if (uploadErr) throw uploadErr;
-          const { error: rowErr } = await supabase.from('images').upsert(
-            {
-              id,
-              prompt: { text: `verification render: ${viewLabel(views[i])}` },
-              status: 'success',
-              user_id: userId,
-              conversation_id: conversationId,
-            },
-            { onConflict: 'id', ignoreDuplicates: true },
-          );
+            .upsert(
+              {
+                id,
+                prompt: {
+                  text: `verification render: ${viewLabel(views[i])}`,
+                },
+                status: 'success',
+                user_id: userId,
+                conversation_id: conversationId,
+              },
+              { onConflict: 'id', ignoreDuplicates: true },
+            )
+            .abortSignal(signal);
           if (rowErr) throw rowErr;
+          assertActive(signal);
           imageIds.push(id);
         }
 
+        assertActive(signal);
         await channel.send({
           type: 'broadcast',
           event: 'verify_response',
@@ -186,6 +245,7 @@ export function useAgenticVerification() {
           imageIds,
         });
       } catch (err) {
+        if (isAbortError(err, signal)) return;
         await sendError(
           requestId,
           err instanceof Error ? err.message : 'render_failed',
@@ -197,12 +257,13 @@ export function useAgenticVerification() {
       'broadcast',
       { event: 'verify_request' },
       ({ payload }: { payload: VerifyRequestPayload }) => {
-        void handleVerifyRequest(payload).catch((err) =>
-          sendError(
+        void handleVerifyRequest(payload).catch((err) => {
+          if (isAbortError(err, signal)) return;
+          void sendError(
             payload.requestId,
             err instanceof Error ? err.message : 'render_failed',
-          ),
-        );
+          );
+        });
       },
     );
 

@@ -1,4 +1,5 @@
 import { env, requiredEnv } from './env';
+import { z } from 'zod';
 
 export type SubscriptionLevel = 'standard' | 'pro' | 'max';
 
@@ -181,12 +182,107 @@ type CallOptions = {
   allowStatus?: number[];
 };
 
-async function call<T>(
+function invalidBillingResponse(message: string, body: unknown): never {
+  throw new BillingClientError(message, 502, body);
+}
+
+const subscriptionLevelSchema = z.enum(['standard', 'pro', 'max']);
+const balanceSchema = {
+  freeBalance: z.number().finite(),
+  subscriptionBalance: z.number().finite(),
+  purchasedBalance: z.number().finite(),
+  totalBalance: z.number().finite(),
+};
+
+const billingStatusSchema = z.object({
+  user: z.object({ hasTrialed: z.boolean() }),
+  subscription: z
+    .object({
+      level: subscriptionLevelSchema,
+      status: z.string().nullable(),
+      currentPeriodEnd: z.string().nullable(),
+    })
+    .nullable(),
+  tokens: z.object({
+    free: z.number().finite(),
+    subscription: z.number().finite(),
+    purchased: z.number().finite(),
+    total: z.number().finite(),
+  }),
+}) satisfies z.ZodType<BillingStatus>;
+
+const consumeResultSchema = z.discriminatedUnion('ok', [
+  z.object({
+    ok: z.literal(true),
+    tokensDeducted: z.number().finite(),
+    ...balanceSchema,
+  }),
+  z.object({
+    ok: z.literal(false),
+    reason: z.literal('insufficient_tokens'),
+    tokensRequired: z.number().finite(),
+    tokensAvailable: z.number().finite(),
+    tokensDeducted: z.number().finite(),
+  }),
+]) satisfies z.ZodType<ConsumeResult>;
+
+const refundResultSchema = z.object({
+  ok: z.literal(true),
+  tokensRefunded: z.number().finite(),
+  source: z.enum(['subscription', 'purchased']),
+  ...balanceSchema,
+}) satisfies z.ZodType<RefundResult>;
+
+const urlResponseSchema = z.object({ url: z.string() });
+
+const cancelSubscriptionResultSchema = z.discriminatedUnion('canceled', [
+  z.object({ canceled: z.literal(true) }),
+  z.object({
+    canceled: z.literal(false),
+    reason: z.enum(['no_subscription', 'already_canceled']),
+  }),
+]) satisfies z.ZodType<CancelSubscriptionResult>;
+
+const billingProductSchema = z.object({
+  id: z.string(),
+  stripeProductId: z.string(),
+  stripePriceId: z.string(),
+  productType: z.enum(['subscription', 'pack']),
+  subscriptionLevel: subscriptionLevelSchema.nullable(),
+  tokenAmount: z.number().finite(),
+  name: z.string(),
+  priceCents: z.number().finite(),
+  interval: z.string().nullable(),
+  active: z.boolean(),
+}) satisfies z.ZodType<BillingProduct>;
+
+const billingProductsSchema = z.array(billingProductSchema);
+const allBillingProductsSchema = z.object({
+  subscriptions: billingProductsSchema,
+  packs: billingProductsSchema,
+});
+
+function parseResponse<T>(
+  schema: z.ZodType<T>,
+  value: unknown,
+  label: string,
+): T {
+  const parsed = schema.safeParse(value);
+  if (!parsed.success) {
+    invalidBillingResponse(
+      `billing response ${label} did not match expected shape`,
+      parsed.error.flatten(),
+    );
+  }
+  return parsed.data;
+}
+
+async function call(
   method: 'GET' | 'POST',
   path: string,
   body?: unknown,
   options?: CallOptions,
-): Promise<T> {
+): Promise<unknown> {
   const res = await fetch(`${baseUrl()}${path}`, {
     method,
     headers: {
@@ -211,7 +307,13 @@ async function call<T>(
       parsed,
     );
   }
-  return parsed as T;
+  if (text.length === 0) {
+    invalidBillingResponse(
+      `billing ${method} ${path} returned an empty response body`,
+      undefined,
+    );
+  }
+  return parsed;
 }
 
 type ConsumeBody = {
@@ -253,52 +355,53 @@ export type CancelSubscriptionResult =
 export const billing = {
   getStatus(email: string) {
     if (isBypassed()) return Promise.resolve(devStatus());
-    return call<BillingStatus>('GET', `/v1/users/${enc(email)}/status`);
+    return call('GET', `/v1/users/${enc(email)}/status`).then((value) =>
+      parseResponse(billingStatusSchema, value, 'status'),
+    );
   },
 
   consume(email: string, body: ConsumeBody) {
     if (isBypassed())
       return Promise.resolve<ConsumeResult>(devConsume(body.tokens));
-    return call<ConsumeResult>(
-      'POST',
-      `/v1/users/${enc(email)}/consume`,
-      body,
-      {
-        allowStatus: [422],
-      },
-    );
+    return call('POST', `/v1/users/${enc(email)}/consume`, body, {
+      allowStatus: [422],
+    }).then((value) => parseResponse(consumeResultSchema, value, 'consume'));
   },
 
   refund(email: string, body: RefundBody) {
     if (isBypassed()) return Promise.resolve(devRefund(body.tokens));
-    return call<RefundResult>('POST', `/v1/users/${enc(email)}/refund`, body);
+    return call('POST', `/v1/users/${enc(email)}/refund`, body).then((value) =>
+      parseResponse(refundResultSchema, value, 'refund'),
+    );
   },
 
   createCheckout(email: string, body: CheckoutBody) {
     if (isBypassed()) return Promise.reject(devCheckoutError());
-    return call<{ url: string }>(
-      'POST',
-      `/v1/users/${enc(email)}/checkout`,
-      body,
+    return call('POST', `/v1/users/${enc(email)}/checkout`, body).then(
+      (value) => parseResponse(urlResponseSchema, value, 'checkout'),
     );
   },
 
   createPortal(email: string, body: { returnUrl: string }) {
     if (isBypassed()) return Promise.reject(devCheckoutError());
-    return call<{ url: string }>(
-      'POST',
-      `/v1/users/${enc(email)}/portal`,
-      body,
+    return call('POST', `/v1/users/${enc(email)}/portal`, body).then((value) =>
+      parseResponse(urlResponseSchema, value, 'portal'),
     );
   },
 
   cancelSubscription(email: string, body: CancelSubscriptionBody = {}) {
     if (isBypassed())
       return Promise.resolve<CancelSubscriptionResult>({ canceled: true });
-    return call<CancelSubscriptionResult>(
+    return call(
       'POST',
       `/v1/users/${enc(email)}/cancel-subscription`,
       body,
+    ).then((value) =>
+      parseResponse(
+        cancelSubscriptionResultSchema,
+        value,
+        'cancel-subscription',
+      ),
     );
   },
 
@@ -308,7 +411,9 @@ export const billing = {
         type === 'subscription' ? devProducts.subscriptions : devProducts.packs,
       );
     }
-    return call<BillingProduct[]>('GET', `/v1/products?type=${type}`);
+    return call('GET', `/v1/products?type=${type}`).then((value) =>
+      parseResponse(billingProductsSchema, value, `products:${type}`),
+    );
   },
 
   getAllProducts() {
@@ -318,9 +423,8 @@ export const billing = {
         packs: devProducts.packs,
       });
     }
-    return call<{ subscriptions: BillingProduct[]; packs: BillingProduct[] }>(
-      'GET',
-      '/v1/products',
+    return call('GET', '/v1/products').then((value) =>
+      parseResponse(allBillingProductsSchema, value, 'products'),
     );
   },
 };
