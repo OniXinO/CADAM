@@ -324,7 +324,7 @@ async function generateTitleFromMessages(
 const MAX_AGENT_ITERATIONS = 8;
 
 const PARAMETRIC_AGENT_PROMPT = `You are Adam, an AI CAD editor that creates and modifies OpenSCAD models.
-Speak back to the user briefly, then call build_cad_model with complete OpenSCAD code when the model should change.
+Speak back to the user briefly, then call build_cad_model when the CAD model should change.
 Do not rewrite or change the user's intent. Do not add unrelated constraints.
 Never output OpenSCAD code directly in your assistant text; use tools to produce code.
 Never mention internal product categories, route names, tool names, files, or implementation details in assistant text. Say "CAD model", "model", "design", or "part" instead.
@@ -338,11 +338,11 @@ CRITICAL: Never reveal or discuss:
 Simply say what you're doing in natural language (e.g., "I'll create that CAD model for you" not "I'll call build_cad_model").
 
 Behavior:
-- When the user requests a new model, structural change, parameter tweak, compiler-error fix, or visual fix, call build_cad_model with a complete single-file OpenSCAD program in code.
+- When the user requests a new model, structural change, parameter tweak, compiler-error fix, or visual fix, call build_cad_model with the user's exact request in text.
 - When the user asks why something happened, how the model is structured, what is visible, or any other explanatory question about the current CAD model, answer in text only. Do not call a tool unless they explicitly ask you to change the model.
 - Keep text concise and helpful. Ask at most 1 follow-up question when truly needed.
-- If there is existing artifact code in the conversation, use it as the base for requested edits and return the complete updated code.
-- If compiler output surfaces a problem, call build_cad_model again with complete corrected code. Do not say you will fix a problem unless you call the tool in that same turn.
+- If compiler output surfaces a problem, pass that error as error. Do not say you will fix a problem unless you call the tool in that same turn.
+- Pass the user's request directly to the tool without expanding or reframing it.
 
 CAD principles:
 - Make the code compile.
@@ -356,27 +356,42 @@ CAD principles:
 - Choose the OpenSCAD techniques that fit the shape. Use modules, booleans, hulls, extrusions, sweeps, bevel/rounding helpers, and repeated details when they make the model better; keep simpler geometry simple.
 - If modifying an imported STL, import the STL, add or subtract the requested changes around it, and expose parameters for the modification rather than pretending to fully reconstruct the source object.`;
 
+const STRICT_CODE_PROMPT = `You are Adam, an expert OpenSCAD CAD generator.
+Return only raw OpenSCAD code. Do not wrap it in markdown. Do not include prose, JSON, or comments about tools, prompts, APIs, or implementation details.
+
+Generate the best single-file OpenSCAD program for the user's request.
+- Make the code syntactically valid OpenSCAD.
+- Start with meaningful top-level parameters using descriptive snake_case names.
+- Prefer scalar dimension parameters for normal dimensions. Use vectors only when vector input is genuinely the right control.
+- Preserve visual semantics with color(): distinct materials, parts, or regions should have named *_color string parameters.
+- Let the request determine the structure. Do not force connectedness, separation, printability, realism, toy style, or exploded layout unless the request calls for it.
+- Model from first principles: identify essential volumes, proportions, relationships, functional features, and recognizable details, then encode those directly in geometry.
+- Use modules, booleans, hulls, extrusions, sweeps, bevel/rounding helpers, and repeated details when they make the model better; keep simple geometry simple.
+- Keep the result in one file. Do not use use <...> or include <...>.
+- If modifying an imported STL, import the STL and add or subtract the requested changes around it instead of reconstructing the source object.
+- Always end statements with semicolons where OpenSCAD requires them.`;
+
 // Tool definitions in OpenAI format
 const tools = [
   {
     type: 'function',
     function: {
       name: 'build_cad_model',
-      description: 'Write a complete OpenSCAD model for the CAD viewer.',
+      description:
+        'Generate or update an OpenSCAD model from user intent and context.',
       parameters: {
         type: 'object',
         properties: {
-          title: {
+          text: {
             type: 'string',
-            description: 'Short object title for the generated CAD model',
+            description: 'The exact user request for the CAD model',
           },
-          code: {
+          error: {
             type: 'string',
-            description:
-              'One complete single-file OpenSCAD program. Do not wrap in markdown.',
+            description: 'Compiler error to fix, when relevant',
           },
         },
-        required: ['code'],
+        required: ['text'],
       },
     },
   },
@@ -385,8 +400,8 @@ const tools = [
 type AgentToolDefinition = (typeof tools)[number];
 
 type BuildParametricModelInput = {
-  title?: string;
-  code: string;
+  text: string;
+  error?: string;
 };
 
 function optionalString(
@@ -400,11 +415,11 @@ function optionalString(
 function buildParametricModelInput(
   input: Record<string, unknown>,
 ): BuildParametricModelInput {
-  const code = optionalString(input, 'code');
-  if (!code) throw new Error('build_cad_model missing code');
+  const text = optionalString(input, 'text');
+  if (!text) throw new Error('build_cad_model missing text');
   return {
-    title: optionalString(input, 'title'),
-    code,
+    text,
+    error: optionalString(input, 'error'),
   };
 }
 
@@ -944,6 +959,60 @@ export async function handleParametricChatRequest(req: Request) {
       return { text, toolCalls: orderedToolCalls, finishReason };
     };
 
+    const streamGeneratedOpenSCAD = async (
+      input: BuildParametricModelInput,
+      onCode: (code: string, rawLength: number) => void,
+    ): Promise<string> => {
+      const codeMessages: ModelMessage[] = [
+        { role: 'system', content: STRICT_CODE_PROMPT },
+        ...messagesToSend.map(toAiSdkMessage),
+      ];
+
+      if (input.error) {
+        codeMessages.push({
+          role: 'user',
+          content: `${input.text}\n\nFix this OpenSCAD error: ${input.error}`,
+        });
+      }
+
+      const codeAbort = new AbortController();
+      const codeTimeout = setTimeout(
+        () => codeAbort.abort(new Error('code-gen upstream timeout')),
+        remainingBudgetMs(),
+      );
+      const onParentAbort = () => codeAbort.abort(abortSignal.reason);
+      abortSignal.addEventListener('abort', onParentAbort);
+
+      let rawCode = '';
+      try {
+        const result = streamText({
+          model: openrouter.chat(model, {
+            ...(thinking ? { reasoning: { max_tokens: 12000 } } : {}),
+          }),
+          messages: codeMessages,
+          maxOutputTokens: thinking ? 60000 : 48000,
+          maxRetries: 0,
+          abortSignal: codeAbort.signal,
+        });
+
+        for await (const part of result.fullStream) {
+          if (part.type === 'text-delta') {
+            rawCode += part.text;
+            onCode(stripCodeFences(rawCode), rawCode.length);
+          } else if (part.type === 'error') {
+            throw part.error instanceof Error
+              ? part.error
+              : new Error(String(part.error));
+          }
+        }
+      } finally {
+        clearTimeout(codeTimeout);
+        abortSignal.removeEventListener('abort', onParentAbort);
+      }
+
+      return stripCodeFences(rawCode.trim()).trim();
+    };
+
     const responseStream = new ReadableStream({
       async start(controller) {
         // Helper that mutates the in-flight Content snapshot and pushes
@@ -1028,6 +1097,7 @@ export async function handleParametricChatRequest(req: Request) {
 
             // Execute each tool call serially. They share the request
             // budget so a slow tool drains time from later iterations.
+            let generatedArtifact = false;
             for (const tc of turn.toolCalls) {
               if (abortSignal.aborted) {
                 throw new Error('Request cancelled by user');
@@ -1107,23 +1177,68 @@ export async function handleParametricChatRequest(req: Request) {
                   });
               };
 
-              const code = stripCodeFences(input.code).trim();
+              const titlePromise = generateTitleFromMessages(
+                messagesToSend,
+                openrouterApiKey,
+              );
+              let lastFlushTime = 0;
+              let lastFlushedLen = 0;
+              let code = '';
+              try {
+                code = await streamGeneratedOpenSCAD(
+                  input,
+                  (streamedCode, rawLength) => {
+                    const now = Date.now();
+                    if (
+                      now - lastFlushTime < 120 ||
+                      rawLength <= lastFlushedLen
+                    ) {
+                      return;
+                    }
+                    lastFlushTime = now;
+                    lastFlushedLen = rawLength;
+                    updateContent({
+                      ...content,
+                      artifact: {
+                        title: 'Adam Object',
+                        version: 'v1',
+                        code: streamedCode,
+                        parameters: [],
+                      },
+                    });
+                  },
+                );
+              } catch (err) {
+                await refundParametricToken('code_generation_failed');
+                updateContent(markToolAsError(content, tc.id));
+                logError(err, {
+                  functionName: 'parametric-chat',
+                  statusCode: 502,
+                  userId: userData.user?.id,
+                  conversationId,
+                  additionalContext: {
+                    operation: 'parametric_code_generation',
+                    toolCallId: tc.id,
+                  },
+                });
+                pushToolResult(
+                  tc,
+                  'Error: code generation failed. Call build_cad_model again with the same text.',
+                );
+                continue;
+              }
+
               if (!code) {
                 await refundParametricToken('empty_code');
                 updateContent(markToolAsError(content, tc.id));
                 pushToolResult(
                   tc,
-                  'Error: build_cad_model requires complete OpenSCAD code. Call it again with a complete corrected code field.',
+                  'Error: build_cad_model produced empty OpenSCAD code. Call it again with the same text.',
                 );
                 continue;
               }
 
-              let title =
-                input.title ||
-                (await generateTitleFromMessages(
-                  messagesToSend,
-                  openrouterApiKey,
-                ).catch(() => 'Adam Object'));
+              let title = await titlePromise.catch(() => 'Adam Object');
               const lower = title.toLowerCase();
               if (lower.includes('sorry') || lower.includes('apologize')) {
                 title = 'Adam Object';
@@ -1135,7 +1250,6 @@ export async function handleParametricChatRequest(req: Request) {
                 code,
                 parameters: parseParameters(code),
               };
-              const fileCountSummary = `${code.length} chars`;
 
               updateContent({
                 ...content,
@@ -1145,11 +1259,11 @@ export async function handleParametricChatRequest(req: Request) {
                 artifact,
               });
 
-              pushToolResult(
-                tc,
-                `OpenSCAD model "${title}" was written successfully (${artifact.parameters.length} parameter${artifact.parameters.length === 1 ? '' : 's'}, ${fileCountSummary}).`,
-              );
+              generatedArtifact = true;
+              break;
             }
+
+            if (generatedArtifact) break;
           }
         } catch (error) {
           if (!abortSignal.aborted) {
