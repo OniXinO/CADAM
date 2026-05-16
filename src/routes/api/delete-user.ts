@@ -67,7 +67,6 @@ export const Route = createFileRoute('/api/delete-user')({
               subscriptionError,
             );
           }
-          return json({ error: 'Failed to cancel subscription' }, 500);
         }
         const { error: deleteError } = await supabase.auth.admin.deleteUser(
           data.user.id,
