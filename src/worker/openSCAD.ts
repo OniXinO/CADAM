@@ -25,7 +25,6 @@ const EXPORT_FORMAT_FLAGS: Record<string, string> = {
 };
 
 let defaultFont: ArrayBuffer;
-let openscadWasmBinary: ArrayBuffer;
 
 class OpenSCADWrapper {
   log: { stdErr: string[]; stdOut: string[] } = {
@@ -36,14 +35,8 @@ class OpenSCADWrapper {
   files: WorkspaceFile[] = [];
 
   async getInstance(): Promise<OpenSCAD> {
-    if (!openscadWasmBinary) {
-      const response = await fetch(`${import.meta.env.BASE_URL}/openscad.wasm`);
-      openscadWasmBinary = await response.arrayBuffer();
-    }
-
     const instance = await openscad({
       noInitialRun: true,
-      wasmBinary: openscadWasmBinary,
       print: this.logger('stdOut'),
       printErr: this.logger('stdErr'),
     });
