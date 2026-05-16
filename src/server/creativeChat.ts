@@ -903,6 +903,8 @@ export async function handleCreativeChatRequest(req: Request) {
       },
     });
   } catch (error) {
+    await refundChatToken();
+
     // Handle abort errors specifically
     if (abortSignal.aborted) {
       // Persist partial content if it has been modified beyond the default empty state
