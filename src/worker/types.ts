@@ -34,14 +34,7 @@ export type WorkerResponseMessage = {
     | FileSystemWorkerMessageData
     | boolean
     | null;
-  err?:
-    | Error
-    | {
-        name: 'OpenSCADError';
-        message: string;
-        code: string;
-        stdErr: string[];
-      };
+  err?: Error;
 };
 
 export type OpenSCADWorkerMessageData = {

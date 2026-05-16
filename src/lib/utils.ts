@@ -105,28 +105,6 @@ export function validateRedirectUrlServer(
 }
 
 export function updateParameter(code: string, param: Parameter): string {
-  const arrayPart = param.name.match(/^(.+)\[(\d+)\]$/);
-  if (arrayPart) {
-    const baseName = arrayPart[1];
-    const index = Number(arrayPart[2]);
-    const escapedBaseName = escapeRegExp(baseName);
-    const arrayRegex = new RegExp(
-      `^(\\s*${escapedBaseName}\\s*=\\s*)\\[([^\\]]*)\\](;[\\t\\f\\cK ]*(\\/\\/[^\n]*)?)?`,
-      'm',
-    );
-    return code.replace(
-      arrayRegex,
-      (match, prefix, rawValues, suffix = ';') => {
-        const values = String(rawValues)
-          .split(',')
-          .map((value) => value.trim());
-        if (index >= values.length) return match;
-        values[index] = String(param.value);
-        return `${prefix}[${values.join(', ')}]${suffix}`;
-      },
-    );
-  }
-
   const escapedName = escapeRegExp(param.name);
   const regex = new RegExp(
     `^\\s*(${escapedName}\\s*=\\s*)[^;]+;([\\t\\f\\cK ]*\\/\\/[^\n]*)?`,

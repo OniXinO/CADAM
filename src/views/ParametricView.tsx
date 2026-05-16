@@ -1,6 +1,7 @@
 import { ChatSection } from '@/components/chat/ChatSection';
 import { ParameterSection } from '@/components/parameter/ParameterSection';
 import { Content, Message, Model, Parameter } from '@shared/types';
+import OpenSCADError from '@/lib/OpenSCADError';
 import { cn } from '@/lib/utils';
 import { useRef, useState, useMemo, useCallback, useLayoutEffect } from 'react';
 import {
@@ -17,7 +18,6 @@ import { TreeNode } from '@shared/Tree';
 import { ParametricPreviewSection } from '@/components/viewer/ParametricPreviewSection';
 import { ParametricPreviewDialog } from '@/components/viewer/ParametricPreviewDialog';
 import { DxfExporter } from '@/utils/downloadUtils';
-import type { CompileResult } from '@/components/viewer/compileResult';
 
 // Panel size constants
 const PANEL_SIZES = {
@@ -44,10 +44,12 @@ interface ParametricViewProps {
   retryMessage?: ({ model, id }: { model: Model; id: string }) => void;
   isLoading: boolean;
   currentOutput: Blob | undefined;
-  onCompileResult: (result: CompileResult) => void;
+  setCurrentOutput: (output: Blob | undefined) => void;
   color: string;
+  limitReached?: boolean;
   changeParameters: (message: Message | null, parameters: Parameter[]) => void;
   stopGenerating?: () => void;
+  fixError?: (error: OpenSCADError) => void;
   changeRating?: (data: { messageId: string; rating: number }) => void;
   restoreMessage?: (message: Message) => void;
 }
@@ -59,10 +61,12 @@ export default function ParametricView({
   retryMessage,
   isLoading,
   currentOutput,
-  onCompileResult,
+  setCurrentOutput,
   color,
+  limitReached = false,
   changeParameters,
   stopGenerating,
+  fixError,
   changeRating,
   restoreMessage,
 }: ParametricViewProps) {
@@ -166,25 +170,6 @@ export default function ParametricView({
     }
   }, [hasArtifact]);
 
-  // Same fix for the chat panel: autoSaveId can restore size 0 from a
-  // prior session where the user collapsed it, but our local
-  // `isChatCollapsed` state stays at its default `false`. With those two
-  // disagreeing, neither the in-panel collapse overlay nor the
-  // out-of-panel expand-tab renders — leaving an empty void with no way
-  // to recover short of clearing localStorage. Force the chat open on
-  // first mount so it's always visible to start with; the user can still
-  // collapse manually via the chevron afterwards (which now correctly
-  // syncs both layers).
-  useLayoutEffect(() => {
-    const panel = chatPanelRef.current;
-    if (!panel) return;
-    if (panel.isCollapsed()) {
-      panel.expand();
-    }
-    setIsChatCollapsed(false);
-    // Intentionally empty deps — runs once on mount only.
-  }, []);
-
   // Optimized collapse/expand handlers
   const handleChatCollapse = useCallback(() => {
     const panel = chatPanelRef.current;
@@ -242,12 +227,12 @@ export default function ParametricView({
             restoreMessage={restoreMessage}
           />
           <ParametricPreviewDialog
-            onCompileResult={onCompileResult}
+            onOutputChange={setCurrentOutput}
             onDxfExportChange={handleDxfExportChange}
+            fixError={!limitReached ? fixError : undefined}
             onSubmit={changeParameters}
             currentOutput={currentOutput}
             dxfExporter={dxfExporter}
-            isLoading={isLoading}
           />
         </div>
       ) : (
@@ -321,9 +306,10 @@ export default function ParametricView({
           >
             <ParametricPreviewSection
               isLoading={isLoading}
-              onCompileResult={onCompileResult}
+              onOutputChange={setCurrentOutput}
               onDxfExportChange={handleDxfExportChange}
               color={color}
+              fixError={!limitReached ? fixError : undefined}
             />
           </Panel>
           {/*

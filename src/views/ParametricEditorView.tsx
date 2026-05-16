@@ -4,6 +4,7 @@ import { useIsMutating, useQueryClient } from '@tanstack/react-query';
 import { updateParameter } from '@/lib/utils';
 import ParametricView from './ParametricView';
 import { useConversation } from '@/contexts/ConversationContext';
+import OpenSCADError from '@/lib/OpenSCADError';
 import { useCurrentMessage } from '@/contexts/CurrentMessageContext';
 import {
   useEditMessageMutation,
@@ -14,20 +15,19 @@ import {
   useUpdateMessageOptimisticMutation,
   useChangeRatingMutation,
 } from '@/services/messageService';
+import { useAuth } from '@/contexts/AuthContext';
 import Tree from '@shared/Tree';
 import { useRequestCancellation } from '@/hooks/useRequestCancellation';
-import type { CompileResult } from '@/components/viewer/compileResult';
 import posthog from 'posthog-js';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 
 export function ParametricEditorView() {
   const { conversation, updateConversationAsync } = useConversation();
   const queryClient = useQueryClient();
-  const { setCurrentMessage } = useCurrentMessage();
+  const { currentMessage, setCurrentMessage } = useCurrentMessage();
+  const { billing } = useAuth();
+  const totalTokens = billing?.tokens.total ?? 0;
   const [currentOutput, setCurrentOutput] = useState<Blob | undefined>();
-  const handleCompileResult = useCallback((result: CompileResult) => {
-    setCurrentOutput(result.type === 'stl' ? result.output : undefined);
-  }, []);
   // Brand fallback color used when OFF parsing fails and we drop back to
   // the single-color STL mesh.
   const color = '#00A6FF';
@@ -120,7 +120,6 @@ export function ParametricEditorView() {
     (message: Message | null, updatedParameters: Parameter[]) => {
       if (!message) return;
 
-      const artifact = message.content.artifact;
       let newCode = message.content.artifact?.code ?? '';
       updatedParameters.forEach((param) => {
         if (param.name.length > 0) {
@@ -137,8 +136,6 @@ export function ParametricEditorView() {
           code: newCode,
           parameters: updatedParameters,
           suggestions: message.content.artifact?.suggestions ?? [],
-          ...(artifact?.files ? { files: artifact.files } : {}),
-          ...(artifact?.entryFile ? { entryFile: artifact.entryFile } : {}),
         },
       };
 
@@ -181,6 +178,18 @@ export function ParametricEditorView() {
     [sendMessageMutation, conversation.id, conversation.settings?.model],
   );
 
+  const fixError = useCallback(
+    async (error: OpenSCADError) => {
+      const newContent: Content = {
+        text: 'Fix with AI',
+        error: error.stdErr.join('\n'),
+      };
+
+      sendMessage(newContent);
+    },
+    [sendMessage],
+  );
+
   return (
     <ParametricView
       messages={currentMessageBranch}
@@ -189,12 +198,14 @@ export function ParametricEditorView() {
       retryMessage={retryMessage}
       isLoading={isLoading}
       currentOutput={currentOutput}
-      onCompileResult={handleCompileResult}
+      setCurrentOutput={setCurrentOutput}
       color={color}
       changeParameters={changeParameters}
       stopGenerating={stopGenerating}
+      fixError={currentMessage?.id === lastMessage?.id ? fixError : undefined}
       changeRating={changeRating}
       restoreMessage={restoreMessage}
+      limitReached={totalTokens <= 0}
     />
   );
 }

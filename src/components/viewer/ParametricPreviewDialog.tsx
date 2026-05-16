@@ -8,6 +8,7 @@ import {
 } from '@/components/ui/dialog';
 import { ImageGallery } from '@/components/viewer/ImageGallery';
 import { OpenSCADPreview } from './OpenSCADViewer';
+import OpenSCADError from '@/lib/OpenSCADError';
 import {
   Sheet,
   SheetDescription,
@@ -21,24 +22,23 @@ import * as SheetPrimitive from '@radix-ui/react-dialog';
 import { cn } from '@/lib/utils';
 import { Separator } from '@/components/ui/separator';
 import { DxfExporter } from '@/utils/downloadUtils';
-import type { CompileResult } from './compileResult';
 
 interface ParametricPreviewDialogProps {
   onSubmit: (message: Message | null, parameters: Parameter[]) => void;
   currentOutput?: Blob;
   dxfExporter?: DxfExporter | null;
-  isLoading?: boolean;
-  onCompileResult?: (result: CompileResult) => void;
+  onOutputChange?: (output: Blob | undefined) => void;
   onDxfExportChange?: (exporter: DxfExporter | null) => void;
+  fixError?: (error: OpenSCADError) => void;
 }
 
 export function ParametricPreviewDialog({
   onSubmit,
   currentOutput,
   dxfExporter,
-  isLoading = false,
-  onCompileResult,
+  onOutputChange,
   onDxfExportChange,
+  fixError,
 }: ParametricPreviewDialogProps) {
   const { currentMessage, setCurrentMessage } = useCurrentMessage();
   const [open, setOpen] = useState(true);
@@ -161,12 +161,10 @@ export function ParametricPreviewDialog({
                   <div className="h-full w-full overflow-hidden rounded-xl">
                     <OpenSCADPreview
                       scadCode={currentMessage.content.artifact.code}
-                      files={currentMessage.content.artifact.files}
-                      entryFile={currentMessage.content.artifact.entryFile}
                       color="#F8248A"
-                      onCompileResult={onCompileResult}
+                      onOutputChange={onOutputChange}
                       onDxfExportChange={onDxfExportChange}
-                      suppressCompileErrors={isLoading}
+                      fixError={fixError}
                       isMobile={true}
                       backgroundColor="#212121"
                     />

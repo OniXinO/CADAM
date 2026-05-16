@@ -1,12 +1,5 @@
 import { useOpenSCAD } from '@/hooks/useOpenSCAD';
-import {
-  useCallback,
-  useEffect,
-  useState,
-  useContext,
-  useRef,
-  useMemo,
-} from 'react';
+import { useCallback, useEffect, useState, useContext, useRef } from 'react';
 import { ThreeScene } from '@/components/viewer/ThreeScene';
 import { STLLoader } from 'three/addons/loaders/STLLoader.js';
 import {
@@ -17,12 +10,14 @@ import {
   Mesh,
   MeshStandardMaterial,
 } from 'three';
-import { Loader2, CircleAlert } from 'lucide-react';
+import { Loader2, CircleAlert, Wrench } from 'lucide-react';
 import { parseColoredOff } from '@/utils/offParser';
+import { Button } from '@/components/ui/button';
+import OpenSCADError from '@/lib/OpenSCADError';
+import { cn } from '@/lib/utils';
 import { MeshFilesContext } from '@/contexts/MeshFilesContext';
 import { createDXFProjectionCode } from '@/utils/dxfUtils';
 import { DxfExporter } from '@/utils/downloadUtils';
-import type { CompileResult } from './compileResult';
 
 // Extract import() filenames from OpenSCAD code
 function extractImportFilenames(code: string): string[] {
@@ -48,49 +43,24 @@ function disposeGroup(group: Group) {
   });
 }
 
-function normalizeColor(color: [number, number, number, number] | null) {
-  if (!color) return null;
-
-  const r = Math.round(color[0] * 255);
-  const g = Math.round(color[1] * 255);
-  const b = Math.round(color[2] * 255);
-  if (r === 249 && g === 215 && b === 44) return null;
-  if (r === 157 && g === 203 && b === 81) return null;
-  return color;
-}
-
 interface OpenSCADPreviewProps {
   scadCode: string | null;
   color: string;
-  onCompileResult?: (result: CompileResult) => void;
+  onOutputChange?: (output: Blob | undefined) => void;
   onDxfExportChange?: (exporter: DxfExporter | null) => void;
+  fixError?: (error: OpenSCADError) => void;
   isMobile?: boolean;
   backgroundColor?: string;
-  suppressCompileErrors?: boolean;
-  // Optional set of supplementary .scad files for multi-file artifacts.
-  // Each is written to the WASM filesystem before compile so the entry
-  // (`scadCode`) can `use <name.scad>` / `include <name.scad>` them.
-  // Bare filenames only — no directories.
-  files?: { name: string; content: string }[];
-  // Filename of the entry file inside `files`. The entry's content is
-  // already passed to `compileScad` via `scadCode`, so we skip writing
-  // it again. We key the skip on filename (not on content equality)
-  // because two distinct files could share identical content, and
-  // during `update_file` streams the `files` prop updates one render
-  // ahead of `scadCode` — so identity by content briefly disagrees.
-  entryFile?: string;
 }
 
 export function OpenSCADPreview({
   scadCode,
   color,
-  onCompileResult,
+  onOutputChange,
   onDxfExportChange,
+  fixError,
   isMobile,
   backgroundColor,
-  suppressCompileErrors = false,
-  files,
-  entryFile,
 }: OpenSCADPreviewProps) {
   const {
     compileScad,
@@ -100,6 +70,7 @@ export function OpenSCADPreview({
     output,
     offOutput,
     isError,
+    error,
   } = useOpenSCAD();
   const [geometry, setGeometry] = useState<BufferGeometry | null>(null);
   const [coloredGroup, setColoredGroup] = useState<Group | null>(null);
@@ -110,74 +81,23 @@ export function OpenSCADPreview({
   // Hold on to the last colored group so its meshes' GPU resources can be
   // released when a new compile replaces it (or the component unmounts).
   const mountedGroupRef = useRef<Group | null>(null);
-  // Every compile produces a fresh geometry, so the previous geometry's VRAM
-  // must be released on replacement.
+  // Same story for the STL-path BufferGeometry — every compile produces a
+  // fresh one, and even when OFF wins the render the STL still parses, so
+  // the previous geometry's VRAM must be released on replacement.
   const mountedGeometryRef = useRef<BufferGeometry | null>(null);
+  // Capture the brand fallback color in a ref so the OFF-parse effect can
+  // read the current value without listing `color` as a dependency —
+  // otherwise every fallback-color change would rebuild the entire
+  // per-color mesh group, which gets expensive for large models.
   const fallbackColorRef = useRef(color);
   useEffect(() => {
     fallbackColorRef.current = color;
   }, [color]);
 
-  const showCompiling = isCompiling;
-  const pendingPreviewCodeRef = useRef<string | null>(null);
-  const lastCompileRef = useRef<{
-    code: string;
-    filesKey: string;
-    entryFile?: string;
-  } | null>(null);
-
-  // Track which `.scad` aux files we've written (and their content) so we
-  // skip the worker round-trip when nothing changed between recompiles —
-  // critical for streaming multi-file artifacts where this fires dozens
-  // of times as files arrive.
-  const writtenScadFilesRef = useRef<Map<string, string>>(new Map());
-  const filesRef = useRef(files);
-  useEffect(() => {
-    filesRef.current = files;
-  }, [files]);
-
-  const scadFilesKey = useMemo(
-    () =>
-      (files ?? [])
-        .map(
-          (f) => `${f.name.length}:${f.name}:${f.content.length}:${f.content}`,
-        )
-        .join('\n'),
-    [files],
-  );
-
   // Shared by preview compilation and on-demand exports so import() files are
-  // available in the OpenSCAD worker before either operation runs. Also
-  // covers multi-file artifacts: each supplementary `.scad` from `files`
-  // is written so the entry can `use <name.scad>` / `include <name.scad>`.
+  // available in the OpenSCAD worker before either operation runs.
   const prepareMeshFiles = useCallback(
     async (code: string) => {
-      // Write supplementary .scad files first — the entry's `use <...>`
-      // resolution needs them on disk before compileScad runs.
-      const scadFiles = filesRef.current;
-      if (scadFilesKey && scadFiles && scadFiles.length > 0) {
-        for (const f of scadFiles) {
-          // Skip the entry file BY NAME — its content is passed to
-          // compileScad directly via `scadCode`. Keying on content
-          // equality (the previous approach) was fragile in two ways:
-          // (1) two distinct files could share identical content; (2)
-          // when `update_file` streams a patched entry, the `files`
-          // prop updates one render before `scadCode`, so for one
-          // frame the entry's content in `files` no longer equals
-          // `code` and the entry would get duplicate-written to the
-          // WASM fs alongside the compileScad call → OpenSCAD would
-          // see redeclared top-level vars and error out.
-          if (entryFile && f.name === entryFile) continue;
-          const previous = writtenScadFilesRef.current.get(f.name);
-          if (previous === f.content) continue;
-          await writeFile(
-            f.name,
-            new Blob([f.content], { type: 'text/plain' }),
-          );
-          writtenScadFilesRef.current.set(f.name, f.content);
-        }
-      }
-
       // Extract any import() filenames from the code
       const importedFiles = extractImportFilenames(code);
 
@@ -196,60 +116,24 @@ export function OpenSCADPreview({
         }
       }
     },
-    [writeFile, meshFilesCtx, scadFilesKey, entryFile],
+    [writeFile, meshFilesCtx],
   );
 
   // Recompile the preview whenever the current SCAD code changes.
   useEffect(() => {
     if (!scadCode) return;
 
-    const isSameCompile = () => {
-      const previous = lastCompileRef.current;
-      return (
-        previous?.code === scadCode &&
-        previous.filesKey === scadFilesKey &&
-        previous.entryFile === entryFile
-      );
-    };
-
-    if (isSameCompile()) {
-      return;
-    }
-
-    let cancelled = false;
-
     const compileWithMeshFiles = async () => {
       try {
-        await Promise.resolve();
-        if (cancelled) return;
         await prepareMeshFiles(scadCode);
-        if (cancelled || isSameCompile()) return;
-        lastCompileRef.current = {
-          code: scadCode,
-          filesKey: scadFilesKey,
-          entryFile,
-        };
-        pendingPreviewCodeRef.current = scadCode;
-        onCompileResult?.({ type: 'pending' });
         compileScad(scadCode);
       } catch (err) {
-        if (err instanceof Error && err.message === 'Worker terminated') return;
         console.error('[OpenSCAD] Error preparing files for compilation:', err);
       }
     };
 
     compileWithMeshFiles();
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    scadCode,
-    scadFilesKey,
-    entryFile,
-    compileScad,
-    onCompileResult,
-    prepareMeshFiles,
-  ]);
+  }, [scadCode, compileScad, prepareMeshFiles]);
 
   // Register a parent-owned DXF exporter for the current SCAD code. The export
   // runs only when the user chooses DXF from the download menu.
@@ -265,12 +149,7 @@ export function OpenSCADPreview({
   }, [scadCode, exportScad, onDxfExportChange, prepareMeshFiles]);
 
   useEffect(() => {
-    const sourceCode = pendingPreviewCodeRef.current;
-    if (output && sourceCode) {
-      onCompileResult?.({ type: 'stl', output, sourceCode });
-    } else {
-      onCompileResult?.({ type: 'pending' });
-    }
+    onOutputChange?.(output);
 
     // Mirror the colored-group pattern: every path that clears geometry
     // state must first release the previous vertex buffers, otherwise
@@ -308,11 +187,14 @@ export function OpenSCADPreview({
     } else {
       clearGeometry();
     }
-  }, [output, onCompileResult]);
+  }, [output, onOutputChange]);
 
   useEffect(() => {
     let cancelled = false;
 
+    // Centralize the "clear colored group" path so the previous group's GPU
+    // resources are always released before we drop the reference, no matter
+    // which branch fires (no-OFF, parse error, empty-after-filtering).
     const clearColoredGroup = () => {
       if (mountedGroupRef.current) {
         disposeGroup(mountedGroupRef.current);
@@ -340,8 +222,13 @@ export function OpenSCADPreview({
         // yellow-green (#9DCB51 ≈ 157,203,81) for CSG-cut faces; treat that
         // the same. Explicit color() values pass through untouched.
         for (const face of parsed.faces) {
-          const normalized = normalizeColor(face.color);
-          if (normalized !== face.color) face.color = normalized;
+          if (!face.color) continue;
+          const r = Math.round(face.color[0] * 255);
+          const g = Math.round(face.color[1] * 255);
+          const b = Math.round(face.color[2] * 255);
+          const isOpenscadDefault = r === 249 && g === 215 && b === 44;
+          const isManifoldCutDefault = r === 157 && g === 203 && b === 81;
+          if (isOpenscadDefault || isManifoldCutDefault) face.color = null;
         }
 
         const buckets = new Map<string, typeof parsed.faces>();
@@ -350,11 +237,6 @@ export function OpenSCADPreview({
           const bucket = buckets.get(key);
           if (bucket) bucket.push(face);
           else buckets.set(key, [face]);
-        }
-
-        if (buckets.size === 0) {
-          clearColoredGroup();
-          return;
         }
 
         const group = new Group();
@@ -376,7 +258,6 @@ export function OpenSCADPreview({
             positions[base + 7] = vc[1];
             positions[base + 8] = vc[2];
           }
-
           const geom = new BufferGeometry();
           geom.setAttribute(
             'position',
@@ -386,6 +267,10 @@ export function OpenSCADPreview({
 
           const firstFace = faces[0];
           const faceColor = key === '__default' ? null : firstFace.color;
+          // Keep the picker's metallic look when falling back, but render
+          // SCAD-declared colors with a low-metalness matte finish so they
+          // read as the author intended instead of picking up cool sky-tint
+          // highlights from the HDR environment.
           const mat = new MeshStandardMaterial({
             color: faceColor
               ? (Math.round(faceColor[0] * 255) << 16) |
@@ -402,17 +287,22 @@ export function OpenSCADPreview({
           group.add(new Mesh(geom, mat));
         }
 
+        // If every face was rejected (malformed OFF, empty mesh, etc.) the
+        // group has zero children — leave coloredGroup null so the render
+        // gate falls back to the single-color STL path instead of drawing
+        // nothing.
         if (group.children.length === 0) {
-          clearColoredGroup();
+          if (!cancelled) clearColoredGroup();
           return;
         }
 
+        // Release the previous group's GPU resources before swapping it in.
         if (mountedGroupRef.current) disposeGroup(mountedGroupRef.current);
         mountedGroupRef.current = group;
         setColoredGroup(group);
       })
       .catch((err) => {
-        console.error('[OpenSCAD] Failed to parse colored OFF preview:', err);
+        console.error('[OpenSCAD] Failed to parse OFF preview:', err);
         if (!cancelled) clearColoredGroup();
       });
 
@@ -450,14 +340,14 @@ export function OpenSCADPreview({
           </div>
         ) : (
           <>
-            {isError && !suppressCompileErrors && (
+            {isError && (
               <div className="flex h-full items-center justify-center">
-                <CompileErrorState />
+                <FixWithAIButton error={error} fixError={fixError} />
               </div>
             )}
           </>
         )}
-        {showCompiling && (
+        {isCompiling && (
           <div className="absolute inset-0 flex items-center justify-center rounded-lg bg-adam-neutral-700/30 backdrop-blur-sm">
             <div className="flex flex-col items-center gap-3">
               <Loader2 className="h-6 w-6 animate-spin text-adam-blue" />
@@ -475,11 +365,18 @@ export function OpenSCADPreview({
 // Alias for backwards compatibility (ViewerSection imports OpenSCADViewer)
 export { OpenSCADPreview as OpenSCADViewer };
 
-function CompileErrorState() {
+function FixWithAIButton({
+  error,
+  fixError,
+}: {
+  error?: OpenSCADError | Error;
+  fixError?: (error: OpenSCADError) => void;
+}) {
   return (
     <div className="flex h-full flex-col items-center justify-center gap-4 p-6">
       <div className="flex flex-col items-center gap-3">
         <div className="relative">
+          <div className="absolute inset-0 animate-ping rounded-full bg-adam-blue/20" />
           <CircleAlert className="h-8 w-8 text-adam-blue" />
         </div>
         <div className="text-center">
@@ -491,6 +388,36 @@ function CompileErrorState() {
           </p>
         </div>
       </div>
+      {fixError && error && error.name === 'OpenSCADError' && (
+        <Button
+          variant="ghost"
+          className={cn(
+            'group relative flex items-center gap-2 rounded-lg border',
+            'bg-gradient-to-br from-adam-blue/20 to-adam-neutral-800/70 p-3',
+            'border-adam-blue/30 text-adam-text-primary',
+            'transition-all duration-300 ease-in-out',
+            'hover:border-adam-blue/70 hover:bg-adam-blue/50 hover:text-white',
+            'hover:shadow-[0_0_25px_rgba(249,115,184,0.4)]',
+            'focus:outline-none focus:ring-2 focus:ring-adam-blue/30',
+          )}
+          onClick={() => {
+            // error crosses the worker boundary as a plain object, so
+            // instanceof OpenSCADError won't narrow — check the name
+            // discriminator and narrow via a local type guard instead of
+            // a cast.
+            const isOpenSCADError = (e: unknown): e is OpenSCADError =>
+              !!e &&
+              typeof e === 'object' &&
+              'name' in e &&
+              e.name === 'OpenSCADError';
+            if (isOpenSCADError(error)) fixError?.(error);
+          }}
+        >
+          <div className="absolute inset-0 rounded-lg bg-gradient-to-br from-adam-blue/20 to-transparent opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
+          <Wrench className="h-4 w-4 transition-transform duration-300 group-hover:rotate-12" />
+          <span className="relative text-sm font-medium">Fix with AI</span>
+        </Button>
+      )}
     </div>
   );
 }

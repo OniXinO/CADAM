@@ -1,4 +1,4 @@
-import { createContext, useContext, useRef, useCallback, useMemo } from 'react';
+import { createContext, useContext, useRef, useCallback } from 'react';
 
 interface MeshFilesContextType {
   // Store a mesh file by filename
@@ -36,13 +36,10 @@ export function MeshFilesProvider({ children }: { children: React.ReactNode }) {
     meshFilesRef.current.clear();
   }, []);
 
-  const value = useMemo(
-    () => ({ setMeshFile, getMeshFile, hasMeshFile, clearMeshFiles }),
-    [setMeshFile, getMeshFile, hasMeshFile, clearMeshFiles],
-  );
-
   return (
-    <MeshFilesContext.Provider value={value}>
+    <MeshFilesContext.Provider
+      value={{ setMeshFile, getMeshFile, hasMeshFile, clearMeshFiles }}
+    >
       {children}
     </MeshFilesContext.Provider>
   );

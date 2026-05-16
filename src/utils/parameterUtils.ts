@@ -210,54 +210,6 @@ export function isColorParameter(param: Parameter): boolean {
   return cssToHex(String(param.value ?? param.defaultValue ?? '')) !== '';
 }
 
-export function flattenNumberArrayParameters(parameters: Parameter[]) {
-  return parameters.flatMap((param) => {
-    if (param.type !== 'number[]' || !Array.isArray(param.value)) return param;
-
-    const labels = numberArrayLabels(param);
-    return param.value.map((value, index) => ({
-      ...param,
-      name: `${param.name}[${index}]`,
-      displayName: displayNameForArrayItem(param.displayName, labels[index]),
-      value,
-      defaultValue: Array.isArray(param.defaultValue)
-        ? param.defaultValue[index]
-        : value,
-      type: 'number' as const,
-    }));
-  });
-}
-
-export function numberArrayLabels(param: Parameter): string[] {
-  if (!Array.isArray(param.value)) return [];
-  if (param.value.length === 2) return ['X', 'Y'];
-  if (param.value.length !== 3) {
-    return param.value.map((_, index) => String(index + 1));
-  }
-
-  const name = param.name.toLowerCase();
-  if (
-    name.includes('size') ||
-    name.includes('dimension') ||
-    name.includes('body') ||
-    name.includes('torso') ||
-    name.includes('head') ||
-    name.includes('foot') ||
-    name.includes('base')
-  ) {
-    return ['Width', 'Depth', 'Height'];
-  }
-
-  return ['X', 'Y', 'Z'];
-}
-
-function displayNameForArrayItem(displayName: string, label: string) {
-  if (['Width', 'Depth', 'Height'].includes(label)) {
-    return displayName.replace(/\s+Size$/i, '') + ` ${label}`;
-  }
-  return `${displayName} ${label}`;
-}
-
 /**
  * Validates and sanitizes a parameter value
  */
@@ -277,28 +229,6 @@ export function validateParameterValue(
 }
 
 export function updateParameter(code: string, param: Parameter): string {
-  const arrayPart = param.name.match(/^(.+)\[(\d+)\]$/);
-  if (arrayPart) {
-    const baseName = arrayPart[1];
-    const index = Number(arrayPart[2]);
-    const escapedBaseName = escapeRegExp(baseName);
-    const arrayRegex = new RegExp(
-      `^(\\s*${escapedBaseName}\\s*=\\s*)\\[([^\\]]*)\\](;[\\t\\f\\cK ]*(\\/\\/[^\n]*)?)?`,
-      'm',
-    );
-    return code.replace(
-      arrayRegex,
-      (match, prefix, rawValues, suffix = ';') => {
-        const values = String(rawValues)
-          .split(',')
-          .map((value) => value.trim());
-        if (index >= values.length) return match;
-        values[index] = String(param.value);
-        return `${prefix}[${values.join(', ')}]${suffix}`;
-      },
-    );
-  }
-
   const escapedName = escapeRegExp(param.name);
   const regex = new RegExp(
     `^\\s*(${escapedName}\\s*=\\s*)[^;]+;([\\t\\f\\cK ]*\\/\\/[^\n]*)?`,

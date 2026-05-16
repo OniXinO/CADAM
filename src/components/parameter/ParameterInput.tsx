@@ -6,7 +6,6 @@ import {
   validateParameterValue,
   isMeasurementParameter,
   cssToHex,
-  numberArrayLabels,
 } from '@/utils/parameterUtils';
 import { ParameterSlider } from '@/components/parameter/ParameterSlider';
 import { Label } from '@/components/ui/label';
@@ -192,7 +191,6 @@ export function ParameterInput({
   }
   if (paramState.type === 'number[]') {
     if (Array.isArray(paramState.value)) {
-      const itemLabels = numberArrayLabels(paramState);
       return (
         <div className="grid w-full grid-cols-[80px_1fr] items-start gap-3">
           <Label
@@ -213,9 +211,6 @@ export function ParameterInput({
 
               return (
                 <div key={index} className="flex w-full items-center gap-3">
-                  <span className="w-10 flex-shrink-0 text-xs text-adam-neutral-400">
-                    {itemLabels[index]}
-                  </span>
                   <ParameterSlider
                     param={itemParam}
                     onValueChange={(newValue) =>

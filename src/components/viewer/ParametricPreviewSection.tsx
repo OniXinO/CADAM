@@ -2,33 +2,31 @@ import { ImageGallery } from '@/components/viewer/ImageGallery';
 import { useCurrentMessage } from '@/contexts/CurrentMessageContext';
 import Loader from '@/components/viewer/Loader';
 import { OpenSCADPreview } from './OpenSCADViewer';
+import OpenSCADError from '@/lib/OpenSCADError';
 import { DxfExporter } from '@/utils/downloadUtils';
-import type { CompileResult } from './compileResult';
 
 interface ParametricPreviewSectionProps {
   isLoading: boolean;
   color: string;
-  onCompileResult?: (result: CompileResult) => void;
+  onOutputChange?: (output: Blob | undefined) => void;
   onDxfExportChange?: (exporter: DxfExporter | null) => void;
+  fixError?: (error: OpenSCADError) => void;
   isMobile?: boolean;
 }
 
 export function ParametricPreviewSection({
   isLoading,
   color,
-  onCompileResult,
+  onOutputChange,
   onDxfExportChange,
+  fixError,
   isMobile,
 }: ParametricPreviewSectionProps) {
   const { currentMessage: message } = useCurrentMessage();
-  const artifact = message?.content.artifact;
-  const images = message?.content.images;
-  const hasImages = Array.isArray(images) && images.length > 0;
-  const hasPreviewContent = !!artifact?.code || hasImages;
 
   return (
     <div className="flex h-full w-full items-center justify-center bg-adam-neutral-700">
-      {isLoading && !hasPreviewContent ? (
+      {isLoading ? (
         <div
           className={`flex h-full items-center justify-center ${isMobile ? 'pb-20 pt-0' : ''}`}
         >
@@ -36,16 +34,16 @@ export function ParametricPreviewSection({
         </div>
       ) : (
         <div className="flex h-full w-full flex-1 flex-col items-center justify-center gap-2">
-          {hasImages && <ImageGallery imageIds={images} />}
-          {artifact?.code && (
+          {message?.content.images && Array.isArray(message.content.images) && (
+            <ImageGallery imageIds={message.content.images} />
+          )}
+          {message?.content.artifact?.code && (
             <OpenSCADPreview
-              scadCode={artifact.code}
-              files={artifact.files}
-              entryFile={artifact.entryFile}
+              scadCode={message.content.artifact.code}
               color={color}
-              onCompileResult={onCompileResult}
+              onOutputChange={onOutputChange}
               onDxfExportChange={onDxfExportChange}
-              suppressCompileErrors={isLoading}
+              fixError={fixError}
             />
           )}
         </div>

@@ -66,30 +66,12 @@ export type Content = {
   preferredFormat?: 'glb' | 'fbx';
 };
 
-export type ParametricFile = {
-  // Filename inside the OpenSCAD WASM filesystem. Bare names only — no
-  // directories — to keep `use <name.scad>` / `include <name.scad>`
-  // resolution simple in the viewer.
-  name: string;
-  content: string;
-};
-
 export type ParametricArtifact = {
   title: string;
   version: string;
-  // The entry file's content. Always present so existing code paths
-  // (parameter parsing, single-file rendering, share view, etc.) keep
-  // working unchanged for single-file artifacts.
   code: string;
   parameters: Parameter[];
   suggestions?: string[];
-  // When the agent decomposes a model into multiple .scad files, the
-  // FULL set lives here (entry file included). Empty/unset for the
-  // single-file path — `code` is authoritative there.
-  files?: ParametricFile[];
-  // Filename of the entry file inside `files`. Defaults to the first
-  // file when set; only meaningful when `files` is non-empty.
-  entryFile?: string;
 };
 
 export type ParameterOption = { value: string | number; label: string };

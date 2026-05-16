@@ -47,13 +47,16 @@ import { useMeshData } from '@/hooks/useMeshData';
 import { MeshImagePreview } from '@/components/viewer/MeshImagePreview';
 import { TreeNode } from '@shared/Tree';
 
-const isCadBuildTool = (name: string) => name === 'build_cad_model';
-
-const sanitizeAssistantText = (text: string) =>
+const linkParametricMode = (text: string) =>
   text.replace(
-    /(```[\s\S]*?```|`[^`\n]*`)|parametric mode|parametric/gi,
-    (_match, codeSpan) => codeSpan ?? 'CAD',
+    /(```[\s\S]*?```|`[^`\n]*`)|parametric mode/gi,
+    (match, codeSpan) => codeSpan ?? `[${match}](https://adam.new/cadam)`,
   );
+
+const isCadBuildTool = (name: string) =>
+  name === 'build_cad_model' ||
+  name === 'build_parametric_model' ||
+  name === 'apply_parameter_changes';
 
 interface AssistantMessageProps {
   message: TreeNode<Message>;
@@ -164,7 +167,7 @@ export function AssistantMessage({
 
   const markdownText = useMemo(
     () =>
-      message.content.text ? sanitizeAssistantText(message.content.text) : '',
+      message.content.text ? linkParametricMode(message.content.text) : '',
     [message.content.text],
   );
 
@@ -254,14 +257,6 @@ export function AssistantMessage({
                             isStreaming={true}
                           />
                         );
-                      }
-
-                      if (
-                        isCadBuildTool(toolCall.name) &&
-                        toolCall.status === 'error' &&
-                        message.content.artifact
-                      ) {
-                        return null;
                       }
 
                       return (
@@ -597,11 +592,11 @@ function TrialUserMessage() {
 function LimitReachedMessage() {
   return (
     <span>
-      You have reached the CAD generation limit in your current plan.{' '}
+      You have reached the limit of parametric generations in your current plan.{' '}
       <Link to="/subscription" className="text-adam-blue hover:underline">
         Upgrade
       </Link>{' '}
-      for more CAD generations :)
+      for more parametric generations :)
     </span>
   );
 }
