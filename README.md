@@ -120,6 +120,7 @@ npm run dev
   BILLING_SERVICE_URL="<Test Billing Service URL>"
   BILLING_SERVICE_KEY="<Test Billing Service Key>"
   ENVIRONMENT="local"
+  ADAM_URL="<Adam URL or dev URL>" # Checkout and portal redirect target
   WEBHOOK_BASE_URL="<Public TanStack App URL>" # Your app URL for /cadam/api callbacks
   NGROK_URL="<NGROK URL>" # Optional local Supabase Storage tunnel for provider-readable signed URLs
   ```

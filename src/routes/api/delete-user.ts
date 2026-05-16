@@ -52,9 +52,23 @@ export const Route = createFileRoute('/api/delete-user')({
           return json({ error: 'Unauthorized' }, 401);
 
         try {
-          await billing.cancelSubscription(data.user.email, {
-            feedback: reason,
-          });
+          const subscription = await billing.cancelSubscription(
+            data.user.email,
+            { feedback: reason },
+          );
+          if (!subscription.canceled) {
+            switch (subscription.reason) {
+              case 'no_subscription':
+              case 'already_canceled':
+                break;
+              default: {
+                const unknownReason: never = subscription.reason;
+                throw new Error(
+                  `Unknown subscription cancellation reason: ${unknownReason}`,
+                );
+              }
+            }
+          }
         } catch (subscriptionError) {
           if (subscriptionError instanceof BillingClientError) {
             console.error('Failed to cancel user subscription:', {
@@ -67,6 +81,7 @@ export const Route = createFileRoute('/api/delete-user')({
               subscriptionError,
             );
           }
+          return json({ error: 'Failed to cancel subscription' }, 500);
         }
         const { error: deleteError } = await supabase.auth.admin.deleteUser(
           data.user.id,
