@@ -1,13 +1,41 @@
 import { sentryVitePlugin } from '@sentry/vite-plugin';
 import { tanstackStart } from '@tanstack/react-start/plugin/vite';
 import { nitro } from 'nitro/vite';
+import fs from 'node:fs';
 import path from 'path';
 import react from '@vitejs/plugin-react';
-import { defineConfig } from 'vite';
+import { defineConfig, type Plugin } from 'vite';
+
+function serveOpenScadWasmInDev(): Plugin {
+  return {
+    name: 'serve-openscad-wasm-in-dev',
+    configureServer(server) {
+      const wasmPath = path.resolve(
+        __dirname,
+        'src/vendor/openscad-wasm/openscad.wasm',
+      );
+
+      server.middlewares.use((req, res, next) => {
+        if (!req.url) return next();
+
+        const url = new URL(req.url, 'http://localhost');
+        if (url.pathname !== '/cadam/src/vendor/openscad-wasm/openscad.wasm') {
+          return next();
+        }
+
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/wasm');
+        res.setHeader('Cache-Control', 'no-cache');
+        fs.createReadStream(wasmPath).pipe(res);
+      });
+    },
+  };
+}
 
 export default defineConfig({
   base: '/cadam',
   plugins: [
+    serveOpenScadWasmInDev(),
     tanstackStart({
       router: {
         basepath: '/cadam',
