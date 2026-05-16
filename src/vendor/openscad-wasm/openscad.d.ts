@@ -1,5 +1,6 @@
 export interface InitOptions {
     noInitialRun: boolean;
+    wasmBinary?: ArrayBuffer | ArrayBufferView;
     print?: (text: string) => void;
     printErr?: (text: string) => void;
 }
