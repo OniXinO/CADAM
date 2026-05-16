@@ -1,4 +1,5 @@
 import { default as openscad } from '@/vendor/openscad-wasm/openscad.js';
+import openscadWasmUrl from '@/vendor/openscad-wasm/openscad.wasm?url';
 import { ZipReader, BlobReader, Uint8ArrayWriter } from '@zip.js/zip.js';
 import { OpenSCAD } from '@/vendor/openscad-wasm/openscad.d.js';
 import WorkspaceFile from '../lib/WorkspaceFile.ts';
@@ -25,6 +26,7 @@ const EXPORT_FORMAT_FLAGS: Record<string, string> = {
 };
 
 let defaultFont: ArrayBuffer;
+let openscadWasmBinary: ArrayBuffer;
 
 class OpenSCADWrapper {
   log: { stdErr: string[]; stdOut: string[] } = {
@@ -35,10 +37,19 @@ class OpenSCADWrapper {
   files: WorkspaceFile[] = [];
 
   async getInstance(): Promise<OpenSCAD> {
+    if (!openscadWasmBinary) {
+      const response = await fetch(openscadWasmUrl);
+      if (!response.ok) {
+        throw new Error(`Failed to load OpenSCAD WASM: ${response.status}`);
+      }
+      openscadWasmBinary = await response.arrayBuffer();
+    }
+
     const instance = await openscad({
       noInitialRun: true,
       print: this.logger('stdOut'),
       printErr: this.logger('stdErr'),
+      wasmBinary: openscadWasmBinary,
     });
     try {
       if (!defaultFont) {

@@ -2,6 +2,7 @@ export interface InitOptions {
     noInitialRun: boolean;
     print?: (text: string) => void;
     printErr?: (text: string) => void;
+    wasmBinary?: ArrayBuffer;
 }
 export interface OpenSCAD {
     callMain(args: Array<string>): number;
