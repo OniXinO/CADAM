@@ -120,6 +120,11 @@ export function OpenSCADPreview({
 
   const showCompiling = isCompiling;
   const pendingPreviewCodeRef = useRef<string | null>(null);
+  const lastCompileRef = useRef<{
+    code: string;
+    filesKey: string;
+    entryFile?: string;
+  } | null>(null);
 
   // Track which `.scad` aux files we've written (and their content) so we
   // skip the worker round-trip when nothing changed between recompiles —
@@ -198,9 +203,32 @@ export function OpenSCADPreview({
   useEffect(() => {
     if (!scadCode) return;
 
+    const isSameCompile = () => {
+      const previous = lastCompileRef.current;
+      return (
+        previous?.code === scadCode &&
+        previous.filesKey === scadFilesKey &&
+        previous.entryFile === entryFile
+      );
+    };
+
+    if (isSameCompile()) {
+      return;
+    }
+
+    let cancelled = false;
+
     const compileWithMeshFiles = async () => {
       try {
+        await Promise.resolve();
+        if (cancelled) return;
         await prepareMeshFiles(scadCode);
+        if (cancelled || isSameCompile()) return;
+        lastCompileRef.current = {
+          code: scadCode,
+          filesKey: scadFilesKey,
+          entryFile,
+        };
         pendingPreviewCodeRef.current = scadCode;
         onCompileResult?.({ type: 'pending' });
         compileScad(scadCode);
@@ -211,7 +239,17 @@ export function OpenSCADPreview({
     };
 
     compileWithMeshFiles();
-  }, [scadCode, compileScad, onCompileResult, prepareMeshFiles]);
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    scadCode,
+    scadFilesKey,
+    entryFile,
+    compileScad,
+    onCompileResult,
+    prepareMeshFiles,
+  ]);
 
   // Register a parent-owned DXF exporter for the current SCAD code. The export
   // runs only when the user chooses DXF from the download menu.
