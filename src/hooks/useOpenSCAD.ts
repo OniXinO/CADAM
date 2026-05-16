@@ -178,8 +178,6 @@ export function useOpenSCAD() {
       setIsCompiling(true);
       setError(undefined);
       setIsError(false);
-      setOutput(undefined);
-      setOffOutput(undefined);
 
       const worker = getWorker();
       const requestId = `preview-${Date.now()}-${Math.random().toString(36).slice(2)}`;

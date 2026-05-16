@@ -12,6 +12,9 @@ import { STLLoader } from 'three/addons/loaders/STLLoader.js';
 import {
   BufferGeometry,
   Float32BufferAttribute,
+  Group,
+  Material,
+  Mesh,
   MeshStandardMaterial,
 } from 'three';
 import { Loader2, CircleAlert } from 'lucide-react';
@@ -32,33 +35,16 @@ function extractImportFilenames(code: string): string[] {
   return filenames;
 }
 
-type ColoredPreview = {
-  geometry: BufferGeometry;
-  materials: MeshStandardMaterial[];
-};
-
-function disposeColoredPreview(preview: ColoredPreview | null) {
-  if (!preview) return;
-  preview.geometry.dispose();
-  preview.materials.forEach((material) => material.dispose());
-}
-
-function createMaterial(
-  color: [number, number, number, number] | null,
-  fallbackColor: string,
-) {
-  const faceColor = normalizeColor(color);
-  return new MeshStandardMaterial({
-    color: faceColor
-      ? (Math.round(faceColor[0] * 255) << 16) |
-        (Math.round(faceColor[1] * 255) << 8) |
-        Math.round(faceColor[2] * 255)
-      : fallbackColor,
-    metalness: faceColor ? 0.05 : 0.6,
-    roughness: faceColor ? 0.7 : 0.3,
-    envMapIntensity: faceColor ? 0.15 : 0.3,
-    transparent: faceColor ? faceColor[3] < 1 : false,
-    opacity: faceColor ? faceColor[3] : 1,
+// Walk a Three.js Group and release GPU resources for each mesh's geometry
+// and material. Called whenever a compile produces a new group so the old
+// one doesn't pile up VRAM across frequent recompiles.
+function disposeGroup(group: Group) {
+  group.traverse((obj) => {
+    if (!(obj instanceof Mesh)) return;
+    obj.geometry?.dispose();
+    const mat = obj.material;
+    if (Array.isArray(mat)) mat.forEach((m: Material) => m.dispose());
+    else mat?.dispose();
   });
 }
 
@@ -116,23 +102,23 @@ export function OpenSCADPreview({
     isError,
   } = useOpenSCAD();
   const [geometry, setGeometry] = useState<BufferGeometry | null>(null);
-  const [coloredPreview, setColoredPreview] = useState<ColoredPreview | null>(
-    null,
-  );
+  const [coloredGroup, setColoredGroup] = useState<Group | null>(null);
   // Use context directly to avoid throwing if provider is not mounted (e.g. VisualCard)
   const meshFilesCtx = useContext(MeshFilesContext);
   // Track which files we've written to avoid re-writing unchanged blobs
   const writtenFilesRef = useRef<Map<string, Blob>>(new Map());
+  // Hold on to the last colored group so its meshes' GPU resources can be
+  // released when a new compile replaces it (or the component unmounts).
+  const mountedGroupRef = useRef<Group | null>(null);
   // Every compile produces a fresh geometry, so the previous geometry's VRAM
   // must be released on replacement.
   const mountedGeometryRef = useRef<BufferGeometry | null>(null);
-  const mountedColoredPreviewRef = useRef<ColoredPreview | null>(null);
   const fallbackColorRef = useRef(color);
   useEffect(() => {
     fallbackColorRef.current = color;
   }, [color]);
 
-  const showCompiling = isCompiling || (suppressCompileErrors && isError);
+  const showCompiling = isCompiling;
   const pendingPreviewCodeRef = useRef<string | null>(null);
 
   // Track which `.scad` aux files we've written (and their content) so we
@@ -289,14 +275,16 @@ export function OpenSCADPreview({
   useEffect(() => {
     let cancelled = false;
 
-    const clearColoredPreview = () => {
-      disposeColoredPreview(mountedColoredPreviewRef.current);
-      mountedColoredPreviewRef.current = null;
-      setColoredPreview(null);
+    const clearColoredGroup = () => {
+      if (mountedGroupRef.current) {
+        disposeGroup(mountedGroupRef.current);
+        mountedGroupRef.current = null;
+      }
+      setColoredGroup(null);
     };
 
     if (!(offOutput instanceof Blob)) {
-      clearColoredPreview();
+      clearColoredGroup();
       return;
     }
 
@@ -306,71 +294,88 @@ export function OpenSCADPreview({
         if (cancelled) return;
 
         const parsed = parseColoredOff(text);
-        const buckets = new Map<
-          string,
-          {
-            color: [number, number, number, number] | null;
-            positions: number[];
-          }
-        >();
 
+        // OpenSCAD paints any face without an explicit color() call with its
+        // built-in model yellow (#F9D72C ≈ 249,215,44). That's a noisy
+        // default for our preview — strip it so those faces fall through to
+        // the brand fallback color instead. Manifold also emits a secondary
+        // yellow-green (#9DCB51 ≈ 157,203,81) for CSG-cut faces; treat that
+        // the same. Explicit color() values pass through untouched.
+        for (const face of parsed.faces) {
+          const normalized = normalizeColor(face.color);
+          if (normalized !== face.color) face.color = normalized;
+        }
+
+        const buckets = new Map<string, typeof parsed.faces>();
         for (const face of parsed.faces) {
           const key = face.color ? face.color.join(',') : '__default';
-          let bucket = buckets.get(key);
-          if (!bucket) {
-            bucket = { color: face.color, positions: [] };
-            buckets.set(key, bucket);
-          }
-
-          for (const index of face.vertices) {
-            const vertex = parsed.vertices[index];
-            bucket.positions.push(vertex[0], vertex[1], vertex[2]);
-          }
+          const bucket = buckets.get(key);
+          if (bucket) bucket.push(face);
+          else buckets.set(key, [face]);
         }
 
         if (buckets.size === 0) {
-          clearColoredPreview();
+          clearColoredGroup();
           return;
         }
 
-        const positions = new Float32Array(
-          Array.from(buckets.values()).reduce(
-            (sum, bucket) => sum + bucket.positions.length,
-            0,
-          ),
-        );
-        const geometry = new BufferGeometry();
-        const materials: MeshStandardMaterial[] = [];
+        const group = new Group();
+        for (const [key, faces] of buckets) {
+          const positions = new Float32Array(faces.length * 9);
+          for (let f = 0; f < faces.length; f++) {
+            const [a, b, c] = faces[f].vertices;
+            const va = parsed.vertices[a];
+            const vb = parsed.vertices[b];
+            const vc = parsed.vertices[c];
+            const base = f * 9;
+            positions[base + 0] = va[0];
+            positions[base + 1] = va[1];
+            positions[base + 2] = va[2];
+            positions[base + 3] = vb[0];
+            positions[base + 4] = vb[1];
+            positions[base + 5] = vb[2];
+            positions[base + 6] = vc[0];
+            positions[base + 7] = vc[1];
+            positions[base + 8] = vc[2];
+          }
 
-        let offset = 0;
-        for (const bucket of buckets.values()) {
-          positions.set(bucket.positions, offset);
-          geometry.addGroup(
-            offset / 3,
-            bucket.positions.length / 3,
-            materials.length,
+          const geom = new BufferGeometry();
+          geom.setAttribute(
+            'position',
+            new Float32BufferAttribute(positions, 3),
           );
-          materials.push(
-            createMaterial(bucket.color, fallbackColorRef.current),
-          );
-          offset += bucket.positions.length;
+          geom.computeVertexNormals();
+
+          const firstFace = faces[0];
+          const faceColor = key === '__default' ? null : firstFace.color;
+          const mat = new MeshStandardMaterial({
+            color: faceColor
+              ? (Math.round(faceColor[0] * 255) << 16) |
+                (Math.round(faceColor[1] * 255) << 8) |
+                Math.round(faceColor[2] * 255)
+              : fallbackColorRef.current,
+            metalness: faceColor ? 0.05 : 0.6,
+            roughness: faceColor ? 0.7 : 0.3,
+            envMapIntensity: faceColor ? 0.15 : 0.3,
+            transparent: faceColor ? faceColor[3] < 1 : false,
+            opacity: faceColor ? faceColor[3] : 1,
+          });
+
+          group.add(new Mesh(geom, mat));
         }
 
-        geometry.setAttribute(
-          'position',
-          new Float32BufferAttribute(positions, 3),
-        );
-        geometry.center();
-        geometry.computeVertexNormals();
+        if (group.children.length === 0) {
+          clearColoredGroup();
+          return;
+        }
 
-        const nextPreview = { geometry, materials };
-        disposeColoredPreview(mountedColoredPreviewRef.current);
-        mountedColoredPreviewRef.current = nextPreview;
-        setColoredPreview(nextPreview);
+        if (mountedGroupRef.current) disposeGroup(mountedGroupRef.current);
+        mountedGroupRef.current = group;
+        setColoredGroup(group);
       })
       .catch((err) => {
         console.error('[OpenSCAD] Failed to parse colored OFF preview:', err);
-        if (!cancelled) clearColoredPreview();
+        if (!cancelled) clearColoredGroup();
       });
 
     return () => {
@@ -378,11 +383,13 @@ export function OpenSCADPreview({
     };
   }, [offOutput]);
 
-  // Release the last mounted geometry's GPU resources on unmount.
+  // Release the last mounted group's and geometry's GPU resources on unmount.
   useEffect(() => {
     return () => {
-      disposeColoredPreview(mountedColoredPreviewRef.current);
-      mountedColoredPreviewRef.current = null;
+      if (mountedGroupRef.current) {
+        disposeGroup(mountedGroupRef.current);
+        mountedGroupRef.current = null;
+      }
       if (mountedGeometryRef.current) {
         mountedGeometryRef.current.dispose();
         mountedGeometryRef.current = null;
@@ -393,12 +400,11 @@ export function OpenSCADPreview({
   return (
     <div className="h-full w-full bg-adam-neutral-700/50 shadow-lg backdrop-blur-sm transition-all duration-300 ease-in-out">
       <div className="h-full w-full">
-        {geometry ? (
+        {geometry || coloredGroup ? (
           <div className="h-full w-full">
             <ThreeScene
               geometry={geometry}
-              coloredGeometry={coloredPreview?.geometry}
-              coloredMaterials={coloredPreview?.materials}
+              coloredGroup={coloredGroup}
               color={color}
               isMobile={isMobile}
               backgroundColor={backgroundColor}
