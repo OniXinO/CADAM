@@ -106,7 +106,7 @@ async function readChatResponse(
       (toolCall) =>
         toolCall.status === 'error' &&
         !!toolCall.error &&
-        toolCall.name === 'build_cad_model',
+        toolCall.name === 'build_parametric_model',
     );
     if (failedCadTool?.id && !loggedToolErrors.has(failedCadTool.id)) {
       loggedToolErrors.add(failedCadTool.id);

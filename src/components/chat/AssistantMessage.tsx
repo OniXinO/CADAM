@@ -53,11 +53,6 @@ const linkParametricMode = (text: string) =>
     (match, codeSpan) => codeSpan ?? `[${match}](https://adam.new/cadam)`,
   );
 
-const isCadBuildTool = (name: string) =>
-  name === 'build_cad_model' ||
-  name === 'build_parametric_model' ||
-  name === 'apply_parameter_changes';
-
 interface AssistantMessageProps {
   message: TreeNode<Message>;
   isLoading: boolean;
@@ -246,7 +241,7 @@ export function AssistantMessage({
                       const streamingCode =
                         message.content.artifact?.code ?? '';
                       if (
-                        isCadBuildTool(toolCall.name) &&
+                        toolCall.name === 'build_parametric_model' &&
                         toolCall.status === 'pending' &&
                         streamingCode.length > 0
                       ) {
@@ -271,7 +266,8 @@ export function AssistantMessage({
                             {toolCall.name === 'create_mesh' && (
                               <Box className="h-4 w-4 text-white" />
                             )}
-                            {isCadBuildTool(toolCall.name) && (
+                            {(toolCall.name === 'build_parametric_model' ||
+                              toolCall.name === 'apply_parameter_changes') && (
                               <Box className="h-4 w-4 text-white" />
                             )}
                             {toolCall.status === 'pending' && (
@@ -280,7 +276,10 @@ export function AssistantMessage({
                                   ? 'Queuing image...'
                                   : toolCall.name === 'create_mesh'
                                     ? 'Queuing mesh...'
-                                    : isCadBuildTool(toolCall.name)
+                                    : toolCall.name ===
+                                          'build_parametric_model' ||
+                                        toolCall.name ===
+                                          'apply_parameter_changes'
                                       ? 'Building CAD...'
                                       : `${toolCall.name}...`}
                               </span>
@@ -291,7 +290,10 @@ export function AssistantMessage({
                                   ? 'Failed to start image generation'
                                   : toolCall.name === 'create_mesh'
                                     ? 'Failed to start mesh generation'
-                                    : isCadBuildTool(toolCall.name)
+                                    : toolCall.name ===
+                                          'build_parametric_model' ||
+                                        toolCall.name ===
+                                          'apply_parameter_changes'
                                       ? 'Failed to generate CAD'
                                       : `${toolCall.name}...`}
                               </span>
@@ -326,7 +328,9 @@ export function AssistantMessage({
               )}
               {message.content.artifact &&
                 !message.content.toolCalls?.some(
-                  (c) => isCadBuildTool(c.name) && c.status === 'pending',
+                  (c) =>
+                    c.name === 'build_parametric_model' &&
+                    c.status === 'pending',
                 ) && (
                   <ObjectButton
                     message={message}
