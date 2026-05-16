@@ -15,6 +15,7 @@ import { corsHeaders, isRecord } from './api';
 import { logError } from './serverLog';
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
 import {
+  generateText,
   jsonSchema,
   streamText,
   tool,
@@ -330,7 +331,7 @@ async function generateTitleFromMessages(
 // Hard cap on total agent loop iterations (text/tool-call cycles) inside a
 // single request, regardless of which tool is being called. Belt-and-braces
 // cap so a misbehaving model can't run away with the request budget.
-const MAX_AGENT_ITERATIONS = 8;
+const MAX_AGENT_ITERATIONS = 1;
 
 const PARAMETRIC_AGENT_PROMPT = `You are Adam, an AI CAD editor that creates and modifies OpenSCAD models.
 Speak back to the user briefly (one or two sentences), then use tools to make changes.
@@ -858,15 +859,7 @@ export async function handleParametricChatRequest(req: Request) {
       }),
     );
 
-    // The agent loop maintains its own messages array, growing as the agent
-    // emits tool_calls and tools return results. Begins with the system
-    // prompt + the persisted conversation. Tool results (assistant tool_calls
-    // / tool messages) accumulate inside the loop and are NOT persisted to
-    // the DB — they're loop-internal state.
-    const agentMessages: ModelMessage[] = [
-      { role: 'system', content: PARAMETRIC_AGENT_PROMPT },
-      ...messagesToSend.map(toAiSdkMessage),
-    ];
+    const agentMessages: ModelMessage[] = messagesToSend.map(toAiSdkMessage);
 
     type StreamingToolCall = {
       id: string;
@@ -957,6 +950,7 @@ export async function handleParametricChatRequest(req: Request) {
               : {}),
             ...reasoningOptions(model, thinking, 9000),
           }),
+          system: PARAMETRIC_AGENT_PROMPT,
           messages: messagesForTurn,
           tools: toAiSdkToolSet(toolsForTurn),
           maxOutputTokens: thinking ? 20000 : 16000,
@@ -1018,7 +1012,6 @@ export async function handleParametricChatRequest(req: Request) {
           ]
         : [];
       const codeMessages: ModelMessage[] = [
-        { role: 'system', content: STRICT_CODE_PROMPT },
         ...messagesToSend.map(toAiSdkMessage),
         ...baseContext.map(toAiSdkMessage),
         ...finalUserMessage.map(toAiSdkMessage),
@@ -1032,34 +1025,24 @@ export async function handleParametricChatRequest(req: Request) {
       const onParentAbort = () => codeAbort.abort(abortSignal.reason);
       abortSignal.addEventListener('abort', onParentAbort);
 
-      let rawCode = '';
       try {
-        const result = streamText({
+        const result = await generateText({
           model: openrouter.chat(
             model,
             reasoningOptions(model, thinking, 12000),
           ),
+          system: STRICT_CODE_PROMPT,
           messages: codeMessages,
           maxOutputTokens: thinking ? 60000 : 48000,
-          maxRetries: 0,
+          maxRetries: 1,
           abortSignal: codeAbort.signal,
         });
 
-        for await (const part of result.fullStream) {
-          if (part.type === 'text-delta') {
-            rawCode += part.text;
-          } else if (part.type === 'error') {
-            throw part.error instanceof Error
-              ? part.error
-              : new Error(String(part.error));
-          }
-        }
+        return stripCodeFences(result.text.trim()).trim();
       } finally {
         clearTimeout(codeTimeout);
         abortSignal.removeEventListener('abort', onParentAbort);
       }
-
-      return stripCodeFences(rawCode.trim()).trim();
     };
 
     const responseStream = new ReadableStream({
@@ -1197,7 +1180,7 @@ export async function handleParametricChatRequest(req: Request) {
                 billingFailed = true;
               }
               if (billingFailed) {
-                continue;
+                break;
               }
 
               let parametricTokenRefunded = false;
@@ -1248,11 +1231,8 @@ export async function handleParametricChatRequest(req: Request) {
                     toolCallId: tc.id,
                   },
                 });
-                pushToolResult(
-                  tc,
-                  'Error: code generation failed. Call build_parametric_model again with the same text.',
-                );
-                continue;
+                pushToolResult(tc, 'Error: code generation failed.');
+                break;
               }
 
               if (!code) {
@@ -1260,9 +1240,9 @@ export async function handleParametricChatRequest(req: Request) {
                 updateContent(markToolAsError(content, tc.id, 'empty_code'));
                 pushToolResult(
                   tc,
-                  'Error: build_parametric_model produced empty OpenSCAD code. Call it again with the same text.',
+                  'Error: build_parametric_model produced empty OpenSCAD code.',
                 );
-                continue;
+                break;
               }
 
               let title = await titlePromise.catch(() => 'Adam Object');
