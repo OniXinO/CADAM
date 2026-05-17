@@ -1,4 +1,4 @@
-import { corsHeaders } from './api';
+import { corsHeaders, isRecord } from './api';
 import Anthropic from '@anthropic-ai/sdk';
 import type { MessageParam } from '@anthropic-ai/sdk/resources/messages';
 import {
@@ -18,7 +18,7 @@ import {
   getSignedUrls,
   formatCreativeUserMessage,
 } from './messageUtils';
-import { env, webhookBaseUrl } from './env';
+import { env, requiredEnv, webhookBaseUrl } from './env';
 
 const CHAT_TOKEN_COST = 1;
 
@@ -252,6 +252,23 @@ const tools: Anthropic.Messages.ToolUnion[] = [
   },
 ];
 
+type CreativeChatBody = {
+  messageId: string;
+  conversationId: string;
+  model: Model;
+  newMessageId: string;
+};
+
+function isCreativeChatBody(value: unknown): value is CreativeChatBody {
+  return (
+    isRecord(value) &&
+    typeof value.messageId === 'string' &&
+    typeof value.conversationId === 'string' &&
+    typeof value.model === 'string' &&
+    typeof value.newMessageId === 'string'
+  );
+}
+
 // Helper function to streamline controller.enqueue calls
 function streamMessage(
   controller: ReadableStreamDefaultController,
@@ -367,19 +384,8 @@ export async function handleCreativeChatRequest(req: Request) {
     });
   }
 
-  const body = (await req.json().catch(() => null)) as {
-    messageId?: string;
-    conversationId?: string;
-    model?: Model;
-    newMessageId?: string;
-  } | null;
-  if (
-    !body ||
-    typeof body.messageId !== 'string' ||
-    typeof body.conversationId !== 'string' ||
-    typeof body.model !== 'string' ||
-    typeof body.newMessageId !== 'string'
-  ) {
+  const body = await req.json().catch(() => null);
+  if (!isCreativeChatBody(body)) {
     return new Response(JSON.stringify({ error: 'invalid_request' }), {
       status: 400,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -598,7 +604,7 @@ export async function handleCreativeChatRequest(req: Request) {
     ).flat();
 
     const anthropic = new Anthropic({
-      apiKey: env('ANTHROPIC_API_KEY') ?? '',
+      apiKey: requiredEnv('ANTHROPIC_API_KEY'),
     });
 
     const stream = await anthropic.messages.create(

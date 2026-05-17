@@ -32,6 +32,27 @@ function isCancellationFeedback(value: unknown): value is CancellationFeedback {
   }
 }
 
+function isSubscriptionNoopReason(value: unknown) {
+  switch (value) {
+    case 'no_subscription':
+    case 'already_canceled':
+      return true;
+    default:
+      return false;
+  }
+}
+
+function isSubscriptionNoopError(error: unknown): error is BillingClientError {
+  if (!(error instanceof BillingClientError) || !isRecord(error.body)) {
+    return false;
+  }
+  return (
+    isSubscriptionNoopReason(error.body.reason) ||
+    isSubscriptionNoopReason(error.body.error) ||
+    isSubscriptionNoopReason(error.body.code)
+  );
+}
+
 export const Route = createFileRoute('/api/delete-user')({
   server: {
     handlers: {
@@ -70,18 +91,23 @@ export const Route = createFileRoute('/api/delete-user')({
             }
           }
         } catch (subscriptionError) {
-          if (subscriptionError instanceof BillingClientError) {
+          if (isSubscriptionNoopError(subscriptionError)) {
+            console.error('No active subscription to cancel:', {
+              body: subscriptionError.body,
+            });
+          } else if (subscriptionError instanceof BillingClientError) {
             console.error('Failed to cancel user subscription:', {
               status: subscriptionError.status,
               body: subscriptionError.body,
             });
+            return json({ error: 'Failed to cancel subscription' }, 500);
           } else {
             console.error(
               'Failed to cancel user subscription:',
               subscriptionError,
             );
+            return json({ error: 'Failed to cancel subscription' }, 500);
           }
-          return json({ error: 'Failed to cancel subscription' }, 500);
         }
         const { error: deleteError } = await supabase.auth.admin.deleteUser(
           data.user.id,
