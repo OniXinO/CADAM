@@ -308,7 +308,6 @@ const generatedArtifactSchema = z.object({
   code: z.string().min(20),
   parameters: z.array(parameterSchema),
   parts: z.array(partSchema),
-  suggestions: z.array(z.string()).optional(),
 });
 
 type GeneratedArtifact = z.infer<typeof generatedArtifactSchema>;
@@ -329,7 +328,6 @@ function artifactFromStructured(
     parameters,
     parts,
     legacy: { parameters: legacyParameters },
-    suggestions: generated.suggestions,
   };
 }
 
