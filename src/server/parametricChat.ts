@@ -414,8 +414,17 @@ module torus(r1, r2) {
     circle(r=r2);
 }`;
 
+type AgentToolDefinition = {
+  type: 'function';
+  function: {
+    name: string;
+    description: string;
+    parameters: Parameters<typeof jsonSchema>[0];
+  };
+};
+
 // Tool definitions in OpenAI format
-const tools = [
+const tools: AgentToolDefinition[] = [
   {
     type: 'function',
     function: {
@@ -438,8 +447,6 @@ const tools = [
     },
   },
 ];
-
-type AgentToolDefinition = (typeof tools)[number];
 
 type BuildParametricModelInput = {
   text?: string;
@@ -471,11 +478,7 @@ function toAiSdkToolSet(toolsForTurn: AgentToolDefinition[]): ToolSet {
       definition.function.name,
       tool({
         description: definition.function.description,
-        inputSchema: jsonSchema(
-          definition.function.parameters as unknown as Parameters<
-            typeof jsonSchema
-          >[0],
-        ),
+        inputSchema: jsonSchema(definition.function.parameters),
       }),
     ]),
   );
