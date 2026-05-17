@@ -10,6 +10,7 @@ import {
   useQueryClient,
 } from '@tanstack/react-query';
 import * as Sentry from '@sentry/react';
+import { apiUrl } from '@/services/api';
 
 function messageSentConversationUpdate(
   newMessage: Message,
@@ -37,6 +38,131 @@ function messageSentConversationUpdate(
         );
       });
   };
+}
+
+function updateStreamingMessage(
+  queryClient: QueryClient,
+  conversationId: string,
+  message: Message,
+) {
+  queryClient.setQueryData(
+    ['messages', conversationId],
+    (oldMessages: Message[] | undefined) => {
+      if (!oldMessages || oldMessages.length === 0) return [message];
+      if (oldMessages.find((msg) => msg.id === message.id)) {
+        return oldMessages.map((msg) =>
+          msg.id === message.id ? message : msg,
+        );
+      }
+      return [...oldMessages, message];
+    },
+  );
+}
+
+async function readChatResponse(
+  response: Response,
+  queryClient: QueryClient,
+  conversationId: string,
+  newMessageId: string,
+): Promise<Message> {
+  const contentType = response.headers.get('Content-Type') ?? '';
+
+  if (contentType.includes('application/json')) {
+    const data: { message?: Message } = await response.json();
+    if (!data.message) throw new Error('No message received');
+    return data.message;
+  }
+
+  if (contentType && !contentType.includes('text/plain')) {
+    const preview = (await response.text()).slice(0, 160);
+    throw new Error(`Unexpected chat response (${contentType}): ${preview}`);
+  }
+
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error('No reader available');
+
+  const initialize = async () => {
+    await queryClient.cancelQueries({
+      queryKey: ['conversation', conversationId],
+    });
+    queryClient.setQueryData(
+      ['conversation', conversationId],
+      (oldConversation: Conversation) => ({
+        ...oldConversation,
+        current_message_leaf_id: newMessageId,
+      }),
+    );
+  };
+
+  const decoder = new TextDecoder();
+  let leftover = '';
+  let initialized = false;
+  let finalMessage: Message | null = null;
+  const loggedToolErrors = new Set<string>();
+
+  const acceptLine = async (line: string) => {
+    const message: Message = JSON.parse(line);
+    const failedCadTool = message.content.toolCalls?.find(
+      (toolCall) =>
+        toolCall.status === 'error' &&
+        !!toolCall.error &&
+        toolCall.name === 'build_parametric_model',
+    );
+    if (failedCadTool?.id && !loggedToolErrors.has(failedCadTool.id)) {
+      loggedToolErrors.add(failedCadTool.id);
+      console.error('[parametric-chat] CAD generation failed:', {
+        messageId: message.id,
+        toolCallId: failedCadTool.id,
+        error: failedCadTool.error,
+      });
+    }
+    finalMessage = message;
+    updateStreamingMessage(queryClient, conversationId, message);
+    if (!initialized) {
+      await initialize();
+      initialized = true;
+    }
+  };
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      leftover += decoder.decode(value, { stream: true });
+      const lines = leftover.split('\n');
+      leftover = lines.pop() ?? '';
+
+      for (const rawLine of lines) {
+        const line = rawLine.trim();
+        if (!line) continue;
+        try {
+          await acceptLine(line);
+        } catch {
+          throw new Error(`Invalid chat stream line: ${line.slice(0, 160)}`);
+        }
+      }
+    }
+
+    const flushRemainder = decoder.decode();
+    if (flushRemainder) leftover += flushRemainder;
+
+    const tail = leftover.trim();
+    if (tail) {
+      try {
+        await acceptLine(tail);
+      } catch {
+        throw new Error(
+          `Invalid final chat stream line: ${tail.slice(0, 160)}`,
+        );
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  if (!finalMessage) throw new Error('No final message received');
+  return finalMessage;
 }
 
 function messageInsertedConversationUpdate(
@@ -159,27 +285,22 @@ export function useCreativeChatMutation({
       conversationId: string;
     }) => {
       const newMessageId = crypto.randomUUID();
-      let initialized = false;
-
       // Start streaming request
-      const response = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/creative-chat`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${
-              (await supabase.auth.getSession()).data.session?.access_token
-            }`,
-          },
-          body: JSON.stringify({
-            conversationId,
-            messageId,
-            model,
-            newMessageId,
-          }),
+      const response = await fetch(apiUrl('creative-chat'), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${
+            (await supabase.auth.getSession()).data.session?.access_token
+          }`,
         },
-      );
+        body: JSON.stringify({
+          conversationId,
+          messageId,
+          model,
+          newMessageId,
+        }),
+      });
 
       if (!response.ok) {
         throw new Error(
@@ -187,122 +308,12 @@ export function useCreativeChatMutation({
         );
       }
 
-      if (response.headers.get('Content-Type')?.includes('application/json')) {
-        const data = await response.json();
-        if (data.message) {
-          return data.message;
-        } else {
-          throw new Error('No message received');
-        }
-      }
-
-      async function initialize() {
-        // Cancel any pending queries and update conversation leaf ID
-        await queryClient.cancelQueries({
-          queryKey: ['conversation', conversationId],
-        });
-        queryClient.setQueryData(
-          ['conversation', conversationId],
-          (oldConversation: Conversation) => ({
-            ...oldConversation,
-            current_message_leaf_id: newMessageId,
-          }),
-        );
-      }
-
-      const reader = response.body?.getReader();
-      if (!reader) {
-        throw new Error('No reader available');
-      }
-
-      const decoder = new TextDecoder();
-      let leftover = '';
-
-      let finalMessage: Message | null = null;
-
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          // Append decoded chunk to leftover buffer
-          leftover += decoder.decode(value, { stream: true });
-
-          // Split into lines; keep the last partial line in leftover
-          const lines = leftover.split('\n');
-          leftover = lines.pop() ?? '';
-
-          for (const rawLine of lines) {
-            const line = rawLine.trim();
-            if (!line) continue;
-            try {
-              const data: Message = JSON.parse(line);
-
-              finalMessage = data;
-
-              // Update existing streaming message
-              queryClient.setQueryData(
-                ['messages', conversationId],
-                (oldMessages: Message[] | undefined) => {
-                  if (!oldMessages || oldMessages.length === 0) {
-                    return [data];
-                  }
-                  if (oldMessages.find((msg) => msg.id === data.id)) {
-                    return oldMessages.map((msg) =>
-                      msg.id === data.id ? data : msg,
-                    );
-                  } else {
-                    return [...oldMessages, data];
-                  }
-                },
-              );
-
-              if (!initialized) {
-                await initialize();
-                initialized = true;
-              }
-            } catch (parseError) {
-              console.error('Error parsing streaming data:', parseError);
-            }
-          }
-        }
-
-        // Flush decoder and process any remaining buffered content
-        const flushRemainder = decoder.decode();
-        if (flushRemainder) leftover += flushRemainder;
-        const tail = leftover.trim();
-        if (tail) {
-          try {
-            const data: Message = JSON.parse(tail);
-            finalMessage = data;
-            queryClient.setQueryData(
-              ['messages', conversationId],
-              (oldMessages: Message[] | undefined) => {
-                if (!oldMessages || oldMessages.length === 0) {
-                  return [data];
-                }
-                if (oldMessages.find((msg) => msg.id === data.id)) {
-                  return oldMessages.map((msg) =>
-                    msg.id === data.id ? data : msg,
-                  );
-                } else {
-                  return [...oldMessages, data];
-                }
-              },
-            );
-          } catch (parseError) {
-            console.error('Error parsing final streaming data:', parseError);
-          }
-        }
-      } finally {
-        reader.releaseLock();
-      }
-
-      if (!finalMessage) {
-        throw new Error('No final message received');
-      }
-
-      return finalMessage;
+      return readChatResponse(
+        response,
+        queryClient,
+        conversationId,
+        newMessageId,
+      );
     },
     onSuccess: (newMessage) => {
       messageInsertedConversationUpdate(
@@ -312,7 +323,7 @@ export function useCreativeChatMutation({
       );
     },
     onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: ['userExtraData'] });
+      queryClient.invalidateQueries({ queryKey: ['billing', 'status'] });
     },
     onError: async (error, { messageId }) => {
       Sentry.captureException(error, {
@@ -365,27 +376,22 @@ export function useParametricChatMutation({
       conversationId: string;
     }) => {
       const newMessageId = crypto.randomUUID();
-      let initialized = false;
-
       // Start streaming request
-      const response = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/parametric-chat`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${
-              (await supabase.auth.getSession()).data.session?.access_token
-            }`,
-          },
-          body: JSON.stringify({
-            conversationId,
-            messageId,
-            model,
-            newMessageId,
-          }),
+      const response = await fetch(apiUrl('parametric-chat'), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${
+            (await supabase.auth.getSession()).data.session?.access_token
+          }`,
         },
-      );
+        body: JSON.stringify({
+          conversationId,
+          messageId,
+          model,
+          newMessageId,
+        }),
+      });
 
       if (!response.ok) {
         throw new Error(
@@ -393,122 +399,12 @@ export function useParametricChatMutation({
         );
       }
 
-      if (response.headers.get('Content-Type')?.includes('application/json')) {
-        const data = await response.json();
-        if (data.message) {
-          return data.message;
-        } else {
-          throw new Error('No message received');
-        }
-      }
-
-      async function initialize() {
-        // Cancel any pending queries and update conversation leaf ID
-        await queryClient.cancelQueries({
-          queryKey: ['conversation', conversationId],
-        });
-        queryClient.setQueryData(
-          ['conversation', conversationId],
-          (oldConversation: Conversation) => ({
-            ...oldConversation,
-            current_message_leaf_id: newMessageId,
-          }),
-        );
-      }
-
-      const reader = response.body?.getReader();
-      if (!reader) {
-        throw new Error('No reader available');
-      }
-
-      const decoder = new TextDecoder();
-      let leftover = '';
-
-      let finalMessage: Message | null = null;
-
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          // Append decoded chunk to leftover buffer
-          leftover += decoder.decode(value, { stream: true });
-
-          // Split into lines; keep the last partial line in leftover
-          const lines = leftover.split('\n');
-          leftover = lines.pop() ?? '';
-
-          for (const rawLine of lines) {
-            const line = rawLine.trim();
-            if (!line) continue;
-            try {
-              const data: Message = JSON.parse(line);
-
-              finalMessage = data;
-
-              // Update existing streaming message
-              queryClient.setQueryData(
-                ['messages', conversationId],
-                (oldMessages: Message[] | undefined) => {
-                  if (!oldMessages || oldMessages.length === 0) {
-                    return [data];
-                  }
-                  if (oldMessages.find((msg) => msg.id === data.id)) {
-                    return oldMessages.map((msg) =>
-                      msg.id === data.id ? data : msg,
-                    );
-                  } else {
-                    return [...oldMessages, data];
-                  }
-                },
-              );
-
-              if (!initialized) {
-                await initialize();
-                initialized = true;
-              }
-            } catch (parseError) {
-              console.error('Error parsing streaming data:', parseError);
-            }
-          }
-        }
-
-        // Flush decoder and process any remaining buffered content
-        const flushRemainder = decoder.decode();
-        if (flushRemainder) leftover += flushRemainder;
-        const tail = leftover.trim();
-        if (tail) {
-          try {
-            const data: Message = JSON.parse(tail);
-            finalMessage = data;
-            queryClient.setQueryData(
-              ['messages', conversationId],
-              (oldMessages: Message[] | undefined) => {
-                if (!oldMessages || oldMessages.length === 0) {
-                  return [data];
-                }
-                if (oldMessages.find((msg) => msg.id === data.id)) {
-                  return oldMessages.map((msg) =>
-                    msg.id === data.id ? data : msg,
-                  );
-                } else {
-                  return [...oldMessages, data];
-                }
-              },
-            );
-          } catch (parseError) {
-            console.error('Error parsing final streaming data:', parseError);
-          }
-        }
-      } finally {
-        reader.releaseLock();
-      }
-
-      if (!finalMessage) {
-        throw new Error('No final message received');
-      }
-
-      return finalMessage;
+      return readChatResponse(
+        response,
+        queryClient,
+        conversationId,
+        newMessageId,
+      );
     },
     onSuccess: (newMessage) => {
       messageInsertedConversationUpdate(
@@ -518,7 +414,7 @@ export function useParametricChatMutation({
       );
     },
     onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: ['userExtraData'] });
+      queryClient.invalidateQueries({ queryKey: ['billing', 'status'] });
     },
     onError: async (error, { messageId }) => {
       Sentry.captureException(error, {
@@ -901,24 +797,21 @@ export function useUpscaleMutation({
         });
       }
 
-      const response = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/mesh`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${
-              (await supabase.auth.getSession()).data.session?.access_token
-            }`,
-          },
-          body: JSON.stringify({
-            action: 'upscale',
-            meshId,
-            conversationId: conversation.id,
-            parentMessageId,
-          }),
+      const response = await fetch(apiUrl('mesh'), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${
+            (await supabase.auth.getSession()).data.session?.access_token
+          }`,
         },
-      );
+        body: JSON.stringify({
+          action: 'upscale',
+          meshId,
+          conversationId: conversation.id,
+          parentMessageId,
+        }),
+      });
 
       if (!response.ok) {
         throw new Error('Failed to upscale');
@@ -982,8 +875,8 @@ export function useUpscaleMutation({
               await initialize(data.id);
               initialized = true;
             }
-          } catch (parseError) {
-            console.error('Error parsing streaming data:', parseError);
+          } catch {
+            throw new Error(`Invalid mesh stream line: ${line.slice(0, 160)}`);
           }
         }
       }
@@ -1009,8 +902,10 @@ export function useUpscaleMutation({
               }
             },
           );
-        } catch (parseError) {
-          console.error('Error parsing final streaming data:', parseError);
+        } catch {
+          throw new Error(
+            `Invalid final mesh stream line: ${tail.slice(0, 160)}`,
+          );
         }
       }
 

@@ -107,19 +107,27 @@ npm run dev
   VITE_SUPABASE_URL='http://127.0.0.1:54321'
   ```
 
-### 2. Supabase Functions Environment:
+### 2. Server Environment:
 
-- Copy `supabase/functions/.env.template` to `supabase/functions/.env`
-- Update all required keys in `supabase/functions/.env`, including:
+- Add server-side keys to `.env.local`, including:
   ```
   ANTHROPIC_API_KEY="<Test Anthropic API Key>"
+  OPENROUTER_API_KEY="<Test OpenRouter API Key>"
+  OPENAI_API_KEY="<Test OpenAI API Key>"
+  GOOGLE_API_KEY="<Test Google API Key>"
+  FAL_KEY="<Test FAL API Key>"
+  SUPABASE_SERVICE_ROLE_KEY="<Test Service Role Key>"
+  BILLING_SERVICE_URL="<Test Billing Service URL>"
+  BILLING_SERVICE_KEY="<Test Billing Service Key>"
   ENVIRONMENT="local"
-  NGROK_URL="<NGROK URL>" # Your ngrok tunnel URL, e.g., https://xxxx-xx-xx-xxx-xx.ngrok.io
+  ADAM_URL="<Adam URL or dev URL>" # Checkout and portal redirect target
+  WEBHOOK_BASE_URL="<Public TanStack App URL>" # Your app URL for /cadam/api callbacks
+  NGROK_URL="<NGROK URL>" # Optional local Supabase Storage tunnel for provider-readable signed URLs
   ```
 
 ## 🌐 Setting Up ngrok for Local Development
 
-CADAM uses ngrok to send image URLs to Anthropic:
+CADAM uses public URLs for provider callbacks and local signed storage URLs:
 
 1. Install ngrok if you haven't already:
 
@@ -129,19 +137,21 @@ CADAM uses ngrok to send image URLs to Anthropic:
    brew install ngrok
    ```
 
-2. Start an ngrok tunnel pointing to your Supabase instance:
+2. Start an ngrok tunnel pointing to your TanStack Start dev server:
 
    ```bash
-   ngrok http 54321
+   ngrok http 3000
    ```
 
-3. Copy the generated ngrok URL (e.g., https://xxxx-xx-xx-xxx-xx.ngrok.io) and add it to your `supabase/functions/.env` file:
+3. Copy the generated ngrok URL (e.g., https://xxxx-xx-xx-xxx-xx.ngrok.io) and add it to your `.env.local` file:
 
    ```
-   NGROK_URL="https://xxxx-xx-xx-xxx-xx.ngrok.io"
+   WEBHOOK_BASE_URL="https://xxxx-xx-xx-xxx-xx.ngrok.io"
    ```
 
-4. Ensure `ENVIRONMENT="local"` is set in the same file.
+4. If a provider must fetch local Supabase Storage signed URLs, run a second tunnel to Supabase and set `NGROK_URL` to that URL.
+
+5. Ensure `ENVIRONMENT="local"` is set in the same file.
 
 ## 💻 Development Workflow
 
@@ -155,7 +165,7 @@ npm i
 
 ```bash
 npx supabase start
-npx supabase functions serve --no-verify-jwt
+npm run dev
 ```
 
 ## 🛠️ Built With
@@ -163,7 +173,7 @@ npx supabase functions serve --no-verify-jwt
 - **Frontend:** React 19 + TypeScript + TanStack Start + Vite
 - **3D Rendering:** Three.js + React Three Fiber
 - **CAD Engine:** OpenSCAD WebAssembly
-- **Backend:** Supabase (PostgreSQL + Edge Functions)
+- **Backend:** TanStack Start server routes + Supabase PostgreSQL/Auth/Storage
 - **AI:** Anthropic Claude API
 - **Styling:** Tailwind CSS + shadcn/ui
 - **Libraries:** BOSL, BOSL2, MCAD

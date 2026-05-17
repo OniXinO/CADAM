@@ -1,17 +1,18 @@
 import { useState, useEffect } from 'react';
 
 export function useIsMobile(): boolean {
-  const [isMobile, setIsMobile] = useState(window.innerWidth < 640);
+  const [isMobile, setIsMobile] = useState(() =>
+    typeof window === 'undefined' ? false : window.innerWidth < 640,
+  );
 
   useEffect(() => {
-    // Function to check if the viewport width is mobile-sized
     const checkIsMobile = () => {
-      setIsMobile(window.innerWidth < 640); // 640px is the 'sm' breakpoint in Tailwind
+      setIsMobile(window.innerWidth < 640);
     };
-    // Add event listener for window resize
+
+    checkIsMobile();
     window.addEventListener('resize', checkIsMobile);
 
-    // Clean up event listener
     return () => window.removeEventListener('resize', checkIsMobile);
   }, []);
 

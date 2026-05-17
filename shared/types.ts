@@ -37,6 +37,7 @@ export type ToolCall = {
   name: string;
   status: 'pending' | 'error';
   id?: string;
+  error?: string;
   result?: { id: string; fileType?: MeshFileType };
 };
 
@@ -70,7 +71,19 @@ export type ParametricArtifact = {
   version: string;
   code: string;
   parameters: Parameter[];
+  parts?: ParametricPart[];
+  legacy?: {
+    parameters?: Parameter[];
+  };
   suggestions?: string[];
+};
+
+export type ParametricPart = {
+  id: string;
+  displayName: string;
+  description: string;
+  colorParameter?: string;
+  parameterNames: string[];
 };
 
 export type ParameterOption = { value: string | number; label: string };
