@@ -21,6 +21,7 @@ import {
 import { env, requiredEnv, webhookBaseUrl } from './env';
 
 const CHAT_TOKEN_COST = 1;
+const ANTHROPIC_API_KEY = requiredEnv('ANTHROPIC_API_KEY');
 
 // Initialize Sentry for error logging
 
@@ -390,7 +391,7 @@ export async function handleCreativeChatRequest(req: Request) {
     });
   }
 
-  const body = await req.json().catch(() => null);
+  const body: unknown = await req.json().catch(() => null);
   if (!isCreativeChatBody(body)) {
     return new Response(JSON.stringify({ error: 'invalid_request' }), {
       status: 400,
@@ -610,7 +611,7 @@ export async function handleCreativeChatRequest(req: Request) {
     ).flat();
 
     const anthropic = new Anthropic({
-      apiKey: requiredEnv('ANTHROPIC_API_KEY'),
+      apiKey: ANTHROPIC_API_KEY,
     });
 
     const stream = await anthropic.messages.create(

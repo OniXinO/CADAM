@@ -16,7 +16,28 @@ const TITLE_SYSTEM_PROMPT =
   'Generate a concise, descriptive title under 80 characters for this CAD conversation. Return only the title. If unclear, return "New Conversation".';
 
 function isContent(value: unknown): value is Content {
-  return isRecord(value);
+  if (!isRecord(value)) return false;
+
+  for (const key of ['text', 'model', 'error']) {
+    const field = Reflect.get(value, key);
+    if (field !== undefined && typeof field !== 'string') return false;
+  }
+
+  const images = Reflect.get(value, 'images');
+  if (
+    images !== undefined &&
+    (!Array.isArray(images) ||
+      images.some((image) => typeof image !== 'string'))
+  ) {
+    return false;
+  }
+
+  for (const key of ['artifact', 'mesh', 'meshBoundingBox']) {
+    const field = Reflect.get(value, key);
+    if (field !== undefined && !isRecord(field)) return false;
+  }
+
+  return true;
 }
 
 export const Route = createFileRoute('/api/title-generator')({
@@ -35,7 +56,7 @@ export const Route = createFileRoute('/api/title-generator')({
           throw err;
         }
         try {
-          const body = await request.json();
+          const body: unknown = await request.json();
           if (
             !isRecord(body) ||
             typeof body.conversationId !== 'string' ||

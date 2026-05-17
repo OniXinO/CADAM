@@ -6,6 +6,9 @@ import path from 'path';
 import react from '@vitejs/plugin-react';
 import { defineConfig, type Plugin } from 'vite';
 
+const appBase = '/cadam';
+const normalizedAppBase = appBase.replace(/\/$/, '');
+
 function serveOpenScadWasmInDev(): Plugin {
   return {
     name: 'serve-openscad-wasm-in-dev',
@@ -19,34 +22,39 @@ function serveOpenScadWasmInDev(): Plugin {
         if (!req.url) return next();
 
         const url = new URL(req.url, 'http://localhost');
-        if (url.pathname !== '/cadam/src/vendor/openscad-wasm/openscad.wasm') {
+        if (
+          url.pathname !==
+          `${normalizedAppBase}/src/vendor/openscad-wasm/openscad.wasm`
+        ) {
           return next();
         }
 
         res.statusCode = 200;
         res.setHeader('Content-Type', 'application/wasm');
         res.setHeader('Cache-Control', 'no-cache');
-        fs.createReadStream(wasmPath).pipe(res);
+        fs.createReadStream(wasmPath)
+          .on('error', (error) => next(error))
+          .pipe(res);
       });
     },
   };
 }
 
 export default defineConfig({
-  base: '/cadam',
+  base: appBase,
   plugins: [
     serveOpenScadWasmInDev(),
     tanstackStart({
       router: {
-        basepath: '/cadam',
+        basepath: normalizedAppBase,
       },
       spa: {
         enabled: true,
-        maskPath: '/cadam',
+        maskPath: normalizedAppBase,
       },
     }),
     nitro({
-      baseURL: '/cadam',
+      baseURL: normalizedAppBase,
       inlineDynamicImports: true,
     }),
     react(),
