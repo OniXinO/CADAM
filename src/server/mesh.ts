@@ -19,7 +19,7 @@ import { reformatSignedUrl } from './messageUtils';
 import { billing, BillingClientError } from './billingClient';
 import { logApiError, logError } from './serverLog';
 import { Buffer } from 'node:buffer';
-import { env, webhookBaseUrl } from './env';
+import { env, requiredEnv, webhookBaseUrl } from './env';
 
 const MESH_TOKEN_COST = 30;
 
@@ -343,20 +343,20 @@ async function getRecentMeshPreview(
 let falConfigured = false;
 function ensureFalConfig() {
   if (falConfigured) return;
-  fal.config({ credentials: env('FAL_KEY') });
+  fal.config({ credentials: requiredEnv('FAL_KEY') });
   falConfigured = true;
 }
 
 function getGoogleGenAI() {
-  return new GoogleGenAI({ apiKey: env('GOOGLE_API_KEY') });
+  return new GoogleGenAI({ apiKey: requiredEnv('GOOGLE_API_KEY') });
 }
 
 function getOpenAI() {
-  return new OpenAI({ apiKey: env('OPENAI_API_KEY') });
+  return new OpenAI({ apiKey: requiredEnv('OPENAI_API_KEY') });
 }
 
 function getAnthropic() {
-  return new Anthropic({ apiKey: env('ANTHROPIC_API_KEY') });
+  return new Anthropic({ apiKey: requiredEnv('ANTHROPIC_API_KEY') });
 }
 
 function getSupabaseClient() {

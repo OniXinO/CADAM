@@ -4,7 +4,7 @@ import { GoogleGenAI, Modality } from '@google/genai';
 import { fal } from '@fal-ai/client';
 import OpenAI from 'openai';
 import { reformatSignedUrl } from './messageUtils';
-import { env } from './env';
+import { env, requiredEnv } from './env';
 
 const DEBUG_LOGS =
   env('ENVIRONMENT') === 'local' || env('DEBUG_LOGS') === 'true';
@@ -19,7 +19,7 @@ export const INSTRUCTIONS_3D =
 let falConfigured = false;
 function ensureFalConfig() {
   if (falConfigured) return;
-  fal.config({ credentials: env('FAL_KEY') });
+  fal.config({ credentials: requiredEnv('FAL_KEY') });
   falConfigured = true;
 }
 
