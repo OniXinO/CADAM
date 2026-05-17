@@ -1,12 +1,27 @@
 import { unzipSync } from 'fflate';
 import { env } from './env';
 import { getServiceRoleSupabaseClient } from './supabaseClient';
+import { isRecord } from './api';
 
 const DEBUG_LOGS =
   env('ENVIRONMENT') === 'local' || env('DEBUG_LOGS') === 'true';
 const debugLog = (...args: unknown[]) => {
   if (DEBUG_LOGS) console.log(...args);
 };
+
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function errorStack(error: unknown) {
+  return error instanceof Error ? error.stack : undefined;
+}
+
+function errorName(error: unknown) {
+  if (error instanceof Error) return error.name;
+  if (isRecord(error) && typeof error.name === 'string') return error.name;
+  return undefined;
+}
 
 export async function handleFalWebhookRequest(request: Request) {
   const supabaseClient = getServiceRoleSupabaseClient();
@@ -232,7 +247,7 @@ export async function handleFalWebhookRequest(request: Request) {
       debugLog('Model size:', model.byteLength, 'bytes');
     } catch (fetchError) {
       clearTimeout(timeoutId);
-      if ((fetchError as Error).name === 'AbortError') {
+      if (errorName(fetchError) === 'AbortError') {
         throw new Error('Model fetch timed out after 45 seconds');
       }
       throw fetchError;
@@ -266,7 +281,7 @@ export async function handleFalWebhookRequest(request: Request) {
       } catch (zipError) {
         console.error('Failed to extract GLB from zip:', zipError);
         throw new Error(
-          `Failed to extract GLB from zip: ${(zipError as Error).message}`,
+          `Failed to extract GLB from zip: ${errorMessage(zipError)}`,
         );
       }
     }
@@ -321,8 +336,8 @@ export async function handleFalWebhookRequest(request: Request) {
     console.error('Webhook error details:', {
       id,
       mode,
-      error: (error as Error).message,
-      stack: (error as Error).stack,
+      error: errorMessage(error),
+      stack: errorStack(error),
       meshDataStatus: meshData?.status,
     });
 

@@ -34,6 +34,14 @@ const debugLog = (...args: unknown[]) => {
   if (DEBUG_LOGS) console.log(...args);
 };
 
+function recordValue(value: unknown): Record<string, unknown> {
+  return isRecord(value) ? value : {};
+}
+
+function optionalErrorField(error: unknown, field: 'body' | 'status') {
+  return isRecord(error) ? error[field] : undefined;
+}
+
 function runBackgroundTask(task: Promise<unknown>) {
   const loggedTask = task.catch((error) => {
     console.error('Background task failed:', error);
@@ -87,7 +95,9 @@ async function getPriorImageCallId(
       .eq('conversation_id', conversationId)
       .maybeSingle();
     const meshImageIds = Array.isArray(meshRow?.images)
-      ? (meshRow.images as string[])
+      ? meshRow.images.filter(
+          (image): image is string => typeof image === 'string',
+        )
       : [];
     if (meshImageIds.length > 0) {
       const { data } = await supabaseClient
@@ -602,6 +612,8 @@ export async function handleMeshRequest(req: Request) {
       const imageUrl = await fal.storage.upload(imageFile);
       debugLog('Uploaded seed image to FAL:', imageUrl, { seedMime });
 
+      const originalPrompt = recordValue(originalMesh.prompt);
+
       // Create new mesh entry for upscaled result
       const { data: newMeshData, error: newMeshError } = await supabaseClient
         .from('meshes')
@@ -611,7 +623,7 @@ export async function handleMeshRequest(req: Request) {
           conversation_id: conversationId,
           file_type: 'glb',
           prompt: {
-            ...((originalMesh.prompt as Record<string, unknown>) || {}),
+            ...originalPrompt,
             upscaledFrom: upscaleMeshId,
             model: 'ultra', // Mark as ultra since it's upscaled
           },
@@ -632,8 +644,10 @@ export async function handleMeshRequest(req: Request) {
       }
 
       const newMessageId = crypto.randomUUID();
-      const originalPrompt = (originalMesh.prompt as Record<string, unknown>)
-        ?.text as string | undefined;
+      const originalPromptText =
+        typeof originalPrompt.text === 'string'
+          ? originalPrompt.text
+          : undefined;
 
       // Create the streaming response
       const responseStream = new ReadableStream({
@@ -665,8 +679,8 @@ export async function handleMeshRequest(req: Request) {
               messages: [
                 {
                   role: 'user',
-                  content: originalPrompt
-                    ? `Generate a fun message about upscaling this: "${originalPrompt}"`
+                  content: originalPromptText
+                    ? `Generate a fun message about upscaling this: "${originalPromptText}"`
                     : 'Generate a fun message about upscaling a mesh to production quality',
                 },
               ],
@@ -727,17 +741,13 @@ export async function handleMeshRequest(req: Request) {
                 'Successfully submitted to Hunyuan3D v3.1 Pro for upscaling',
               );
             } catch (submitError) {
-              const errObj = submitError as {
-                body?: unknown;
-                status?: number;
-              };
               console.error('Hunyuan v3.1 Pro submit failed:', {
                 message:
                   submitError instanceof Error
                     ? submitError.message
                     : String(submitError),
-                status: errObj?.status,
-                body: errObj?.body,
+                status: optionalErrorField(submitError, 'status'),
+                body: optionalErrorField(submitError, 'body'),
                 input: hunyuanInput,
               });
               throw submitError;
@@ -1622,14 +1632,13 @@ Output:`;
           'Successfully submitted to Tripo v2.5 textureless with conversational context',
         );
       } catch (submitError) {
-        const errObj = submitError as { body?: unknown; status?: number };
         console.error('Tripo v2.5 submit failed:', {
           message:
             submitError instanceof Error
               ? submitError.message
               : String(submitError),
-          status: errObj?.status,
-          body: errObj?.body,
+          status: optionalErrorField(submitError, 'status'),
+          body: optionalErrorField(submitError, 'body'),
           input: tripoInput,
         });
         throw submitError;
