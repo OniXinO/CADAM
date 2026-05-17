@@ -9,11 +9,52 @@ type ContentBlock =
       source:
         | {
             type: 'base64';
-            media_type: 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp';
+            media_type: AnthropicImageMediaType;
             data: string;
           }
         | { type: 'url'; url: string };
     };
+
+type AnthropicImageMediaType =
+  | 'image/jpeg'
+  | 'image/png'
+  | 'image/gif'
+  | 'image/webp';
+
+function anthropicImageMediaType(
+  mediaType: string,
+): AnthropicImageMediaType | null {
+  switch (mediaType.toLowerCase()) {
+    case 'image/jpg':
+    case 'image/jpeg':
+      return 'image/jpeg';
+    case 'image/png':
+      return 'image/png';
+    case 'image/gif':
+      return 'image/gif';
+    case 'image/webp':
+      return 'image/webp';
+    default:
+      return null;
+  }
+}
+
+function base64ImageBlock(image: {
+  data: string;
+  mediaType: string;
+}): ContentBlock | null {
+  const mediaType = anthropicImageMediaType(image.mediaType);
+  if (!mediaType) return null;
+
+  return {
+    type: 'image',
+    source: {
+      type: 'base64',
+      media_type: mediaType,
+      data: image.data.slice(image.data.indexOf(',') + 1),
+    },
+  };
+}
 
 /**
  * Reformats a Supabase signed URL to use the correct host (local ngrok or production)
@@ -148,26 +189,17 @@ export async function formatUserMessage(
       'images',
       imageFiles,
     );
+    const imageBlocks = base64Images.flatMap((image) => {
+      const block = base64ImageBlock(image);
+      return block ? [block] : [];
+    });
 
-    if (base64Images.length > 0) {
+    if (imageBlocks.length > 0) {
       parts.push({
         type: 'text',
         text: `Reference images (IDs: ${message.content.images.join(', ')}):`,
       });
-      parts.push(
-        ...base64Images.map((image) => ({
-          type: 'image' as const,
-          source: {
-            type: 'base64' as const,
-            media_type: image.mediaType as
-              | 'image/jpeg'
-              | 'image/png'
-              | 'image/gif'
-              | 'image/webp',
-            data: image.data.split(',')[1],
-          },
-        })),
-      );
+      parts.push(...imageBlocks);
     } else {
       parts.push({
         type: 'text',
@@ -244,18 +276,10 @@ The render images show the model from: isometric, top, front, right views.`;
       ]);
       if (base64Preview.length > 0) {
         parts.push(
-          ...base64Preview.map((image) => ({
-            type: 'image' as const,
-            source: {
-              type: 'base64' as const,
-              media_type: image.mediaType as
-                | 'image/jpeg'
-                | 'image/png'
-                | 'image/gif'
-                | 'image/webp',
-              data: image.data.split(',')[1],
-            },
-          })),
+          ...base64Preview.flatMap((image) => {
+            const block = base64ImageBlock(image);
+            return block ? [block] : [];
+          }),
         );
       }
     } else {
