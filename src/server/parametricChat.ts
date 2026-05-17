@@ -1225,10 +1225,6 @@ export async function handleParametricChatRequest(req: Request) {
               };
 
               try {
-                const titlePromise = generateTitleFromMessages(
-                  messagesToSend,
-                  openrouterApiKey,
-                );
                 let code = '';
                 try {
                   code = await streamGeneratedOpenSCAD(input);
@@ -1263,7 +1259,10 @@ export async function handleParametricChatRequest(req: Request) {
                   break;
                 }
 
-                let title = await titlePromise.catch(() => 'Adam Object');
+                let title = await generateTitleFromMessages(
+                  messagesToSend,
+                  openrouterApiKey,
+                ).catch(() => 'Adam Object');
                 const lower = title.toLowerCase();
                 if (lower.includes('sorry') || lower.includes('apologize')) {
                   title = 'Adam Object';
