@@ -66,6 +66,9 @@ import {
 import { useMeshFiles } from '@/contexts/MeshFilesContext';
 import { AnimatePresence, motion } from 'framer-motion';
 import { apiJson } from '@/services/api';
+import { z } from 'zod';
+
+const promptResponseSchema = z.object({ prompt: z.string().optional() });
 
 interface TextAreaChatProps {
   type: 'parametric' | 'creative';
@@ -1151,13 +1154,17 @@ function TextAreaChat({
     if (isGeneratingPrompt) return;
     setIsGeneratingPrompt(true);
     try {
-      const data = await apiJson<{ prompt?: string }>('prompt-generator', {
-        method: 'POST',
-        body: JSON.stringify({
-          existingText: input.trim() || undefined,
-          type,
-        }),
-      });
+      const data = await apiJson(
+        'prompt-generator',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            existingText: input.trim() || undefined,
+            type,
+          }),
+        },
+        promptResponseSchema,
+      );
       if (!data?.prompt) throw new Error('No prompt generated');
 
       setInput(data.prompt);

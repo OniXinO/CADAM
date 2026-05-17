@@ -1,14 +1,25 @@
 import { supabase } from '@/lib/supabase';
+import { z } from 'zod';
 
 export function apiUrl(path: string) {
   const basePath = import.meta.env.BASE_URL.replace(/\/$/, '');
   return `${basePath}/api/${path}`;
 }
 
+export async function apiJson(
+  path: string,
+  init?: RequestInit,
+): Promise<unknown>;
+export async function apiJson<T>(
+  path: string,
+  init: RequestInit,
+  schema: z.ZodType<T>,
+): Promise<T>;
 export async function apiJson<T>(
   path: string,
   init: RequestInit = {},
-): Promise<T> {
+  schema?: z.ZodType<T>,
+): Promise<T | unknown> {
   const token = (await supabase.auth.getSession()).data.session?.access_token;
   const url = apiUrl(path);
   const response = await fetch(url, {
@@ -34,5 +45,5 @@ export async function apiJson<T>(
       typeof errorValue === 'string' ? errorValue : response.statusText,
     );
   }
-  return data as T;
+  return schema ? schema.parse(data) : data;
 }

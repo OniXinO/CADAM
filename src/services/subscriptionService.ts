@@ -3,19 +3,23 @@ import { useMutation } from '@tanstack/react-query';
 import posthog from 'posthog-js';
 import * as Sentry from '@sentry/react';
 import { apiJson } from '@/services/api';
+import { z } from 'zod';
 
 type CheckoutResponse = { url: string };
+const urlResponseSchema = z.object({ url: z.string() });
 
 async function invokeCheckout(body: {
   priceId: string;
   trialPeriodDays?: number;
 }): Promise<CheckoutResponse> {
-  const data = await apiJson<CheckoutResponse>('billing-checkout', {
-    method: 'POST',
-    body: JSON.stringify(body),
-  });
-  if (!data.url) throw new Error('No checkout URL returned');
-  return data;
+  return apiJson(
+    'billing-checkout',
+    {
+      method: 'POST',
+      body: JSON.stringify(body),
+    },
+    urlResponseSchema,
+  );
 }
 
 export const useSubscriptionService = () => {
@@ -78,11 +82,7 @@ export const useManageSubscription = () => {
 
   return useMutation({
     mutationFn: async () => {
-      const data = await apiJson<{ url: string }>('billing-portal', {
-        method: 'POST',
-      });
-      if (!data.url) throw new Error('No portal URL returned');
-      return data;
+      return apiJson('billing-portal', { method: 'POST' }, urlResponseSchema);
     },
     onSuccess: (data) => {
       window.location.href = data.url;

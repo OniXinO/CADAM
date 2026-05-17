@@ -20,6 +20,9 @@ import { useSendContentMutation } from '@/services/messageService';
 import { useProfile } from '@/services/profileService';
 import { useLayoutContext } from '@/contexts/LayoutContext';
 import { apiJson } from '@/services/api';
+import { z } from 'zod';
+
+const titleResponseSchema = z.object({ title: z.string().optional() });
 
 const EXTENSION_PILLS = [
   {
@@ -156,13 +159,17 @@ export function PromptView() {
     },
     onSuccess: (data) => {
       // Generate title in the background if there's content
-      apiJson<{ title?: string }>('title-generator', {
-        method: 'POST',
-        body: JSON.stringify({
-          content: data.content,
-          conversationId: data.conversationId,
-        }),
-      })
+      apiJson(
+        'title-generator',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            content: data.content,
+            conversationId: data.conversationId,
+          }),
+        },
+        titleResponseSchema,
+      )
         .then(async (titleData) => {
           if (titleData.title) {
             // Update conversation title once generated

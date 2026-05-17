@@ -6,6 +6,7 @@ import { useNavigate } from '@tanstack/react-router';
 import posthog from 'posthog-js';
 import { AuthContext, type BillingStatus, getLevel } from './AuthContext';
 import { apiJson } from '@/services/api';
+import { z } from 'zod';
 
 const LOCAL_BILLING_STATUS: BillingStatus = {
   user: { hasTrialed: false },
@@ -23,6 +24,27 @@ const LOCAL_BILLING_STATUS: BillingStatus = {
     total: 3_000_000,
   },
 };
+
+const billingStatusSchema = z.object({
+  user: z.object({ hasTrialed: z.boolean() }),
+  subscription: z
+    .object({
+      level: z.union([
+        z.literal('standard'),
+        z.literal('pro'),
+        z.literal('max'),
+      ]),
+      status: z.string().nullable(),
+      currentPeriodEnd: z.string().nullable(),
+    })
+    .nullable(),
+  tokens: z.object({
+    free: z.number(),
+    subscription: z.number(),
+    purchased: z.number(),
+    total: z.number(),
+  }),
+});
 
 const ensurePermission = async () => {
   if (typeof window === 'undefined' || !('Notification' in window)) {
@@ -86,7 +108,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     refetchInterval: 30000,
     queryFn: async (): Promise<BillingStatus> => {
       try {
-        return await apiJson<BillingStatus>('billing-status');
+        return await apiJson('billing-status', {}, billingStatusSchema);
       } catch (err) {
         if (import.meta.env.DEV) return LOCAL_BILLING_STATUS;
         throw err;
