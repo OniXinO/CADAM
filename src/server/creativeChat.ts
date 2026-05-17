@@ -21,7 +21,7 @@ import {
 import { env, requiredEnv, webhookBaseUrl } from './env';
 
 const CHAT_TOKEN_COST = 1;
-const ANTHROPIC_API_KEY = requiredEnv('ANTHROPIC_API_KEY');
+const getAnthropicApiKey = () => requiredEnv('ANTHROPIC_API_KEY');
 
 // Initialize Sentry for error logging
 
@@ -611,7 +611,7 @@ export async function handleCreativeChatRequest(req: Request) {
     ).flat();
 
     const anthropic = new Anthropic({
-      apiKey: ANTHROPIC_API_KEY,
+      apiKey: getAnthropicApiKey(),
     });
 
     const stream = await anthropic.messages.create(

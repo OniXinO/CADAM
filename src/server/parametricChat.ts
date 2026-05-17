@@ -26,7 +26,7 @@ import {
 
 const CHAT_TOKEN_COST = 1;
 const PARAMETRIC_TOKEN_COST = 5;
-const OPENROUTER_API_KEY = requiredEnv('OPENROUTER_API_KEY');
+const getOpenRouterApiKey = () => requiredEnv('OPENROUTER_API_KEY');
 
 // OpenRouter API configuration
 const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
@@ -685,8 +685,9 @@ export async function handleParametricChatRequest(req: Request) {
     });
   }
   const currentMessageBranch = messageTree.getPath(newMessage.id);
+  const openrouterApiKey = getOpenRouterApiKey();
   const openrouter = createOpenRouter({
-    apiKey: OPENROUTER_API_KEY,
+    apiKey: openrouterApiKey,
     appName: 'Adam CAD',
     appUrl: 'https://adam-cad.com',
   });
@@ -1261,7 +1262,7 @@ export async function handleParametricChatRequest(req: Request) {
 
                 let title = await generateTitleFromMessages(
                   messagesToSend,
-                  OPENROUTER_API_KEY,
+                  openrouterApiKey,
                 ).catch(() => 'Adam Object');
                 const lower = title.toLowerCase();
                 if (lower.includes('sorry') || lower.includes('apologize')) {
@@ -1345,7 +1346,7 @@ export async function handleParametricChatRequest(req: Request) {
               if (extractedCode) {
                 const title = await generateTitleFromMessages(
                   messagesToSend,
-                  OPENROUTER_API_KEY,
+                  openrouterApiKey,
                 ).catch(() => 'Adam Object');
                 let cleanedText = content.text
                   .replace(/```(?:openscad)?\s*\n?[\s\S]*?\n?```/g, '')
