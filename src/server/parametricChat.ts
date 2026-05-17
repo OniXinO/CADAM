@@ -724,6 +724,30 @@ export async function handleParametricChatRequest(req: Request) {
     });
   }
 
+  let chatTokenRefunded = false;
+  const refundChatToken = async (reason: string) => {
+    if (chatTokenRefunded) return;
+    chatTokenRefunded = true;
+    await billing
+      .refund(userData.user.email!, {
+        tokens: CHAT_TOKEN_COST,
+        operation: 'chat',
+        referenceId: chatBillingReferenceId,
+      })
+      .catch((err) => {
+        logError(err, {
+          functionName: 'parametric-chat',
+          statusCode: err instanceof BillingClientError ? err.status : 502,
+          userId: userData.user?.id,
+          conversationId,
+          additionalContext: {
+            operation: 'chat_refund',
+            reason,
+          },
+        });
+      });
+  };
+
   // Insert placeholder assistant message that we will stream updates into
   let content: Content = { model };
   const { data: newMessageData, error: newMessageError } = await supabaseClient
@@ -739,19 +763,7 @@ export async function handleParametricChatRequest(req: Request) {
     .single()
     .overrideTypes<{ content: Content; role: 'assistant' }>();
   if (!newMessageData) {
-    await billing
-      .refund(userData.user.email, {
-        tokens: CHAT_TOKEN_COST,
-        operation: 'chat',
-        referenceId: chatBillingReferenceId,
-      })
-      .catch((err) => {
-        logError(err, {
-          functionName: 'parametric-chat',
-          statusCode: err instanceof BillingClientError ? err.status : 502,
-          userId: userData.user.id,
-        });
-      });
+    await refundChatToken('assistant_message_insert_failed');
     return new Response(
       JSON.stringify({
         error:
@@ -1209,70 +1221,96 @@ export async function handleParametricChatRequest(req: Request) {
                   });
               };
 
-              const titlePromise = generateTitleFromMessages(
-                messagesToSend,
-                openrouterApiKey,
-              );
-              let code = '';
               try {
-                code = await streamGeneratedOpenSCAD(input);
+                const titlePromise = generateTitleFromMessages(
+                  messagesToSend,
+                  openrouterApiKey,
+                );
+                let code = '';
+                try {
+                  code = await streamGeneratedOpenSCAD(input);
+                } catch (err) {
+                  await refundParametricToken('code_generation_failed');
+                  const message =
+                    err instanceof Error
+                      ? err.message
+                      : 'code_generation_failed';
+                  updateContent(markToolAsError(content, tc.id, message));
+                  logError(err, {
+                    functionName: 'parametric-chat',
+                    statusCode: 502,
+                    userId: userData.user?.id,
+                    conversationId,
+                    additionalContext: {
+                      operation: 'parametric_code_generation',
+                      toolCallId: tc.id,
+                    },
+                  });
+                  pushToolResult(tc, 'Error: code generation failed.');
+                  break;
+                }
+
+                if (!code) {
+                  await refundParametricToken('empty_code');
+                  updateContent(markToolAsError(content, tc.id, 'empty_code'));
+                  pushToolResult(
+                    tc,
+                    'Error: build_parametric_model produced empty OpenSCAD code.',
+                  );
+                  break;
+                }
+
+                let title = await titlePromise.catch(() => 'Adam Object');
+                const lower = title.toLowerCase();
+                if (lower.includes('sorry') || lower.includes('apologize')) {
+                  title = 'Adam Object';
+                }
+
+                const artifact: ParametricArtifact = {
+                  title,
+                  version: 'v1',
+                  code,
+                  parameters: parseParameters(code),
+                };
+
+                updateContent({
+                  ...content,
+                  toolCalls: (content.toolCalls || []).filter(
+                    (c) => c.id !== tc.id,
+                  ),
+                  artifact,
+                });
+
+                generatedArtifact = true;
+                break;
               } catch (err) {
-                await refundParametricToken('code_generation_failed');
+                await refundParametricToken('artifact_creation_failed');
                 const message =
-                  err instanceof Error ? err.message : 'code_generation_failed';
+                  err instanceof Error
+                    ? err.message
+                    : 'artifact_creation_failed';
                 updateContent(markToolAsError(content, tc.id, message));
                 logError(err, {
                   functionName: 'parametric-chat',
-                  statusCode: 502,
+                  statusCode: 500,
                   userId: userData.user?.id,
                   conversationId,
                   additionalContext: {
-                    operation: 'parametric_code_generation',
+                    operation: 'parametric_artifact_creation',
                     toolCallId: tc.id,
                   },
                 });
-                pushToolResult(tc, 'Error: code generation failed.');
+                pushToolResult(tc, 'Error: CAD artifact creation failed.');
                 break;
               }
-
-              if (!code) {
-                await refundParametricToken('empty_code');
-                updateContent(markToolAsError(content, tc.id, 'empty_code'));
-                pushToolResult(
-                  tc,
-                  'Error: build_parametric_model produced empty OpenSCAD code.',
-                );
-                break;
-              }
-
-              let title = await titlePromise.catch(() => 'Adam Object');
-              const lower = title.toLowerCase();
-              if (lower.includes('sorry') || lower.includes('apologize')) {
-                title = 'Adam Object';
-              }
-
-              const artifact: ParametricArtifact = {
-                title,
-                version: 'v1',
-                code,
-                parameters: parseParameters(code),
-              };
-
-              updateContent({
-                ...content,
-                toolCalls: (content.toolCalls || []).filter(
-                  (c) => c.id !== tc.id,
-                ),
-                artifact,
-              });
-
-              generatedArtifact = true;
-              break;
             }
 
             if (generatedArtifact) break;
           }
         } catch (error) {
+          if (!content.artifact) {
+            await refundChatToken('stream_failed');
+          }
           if (!abortSignal.aborted) {
             console.error(error);
             logError(error, {
@@ -1296,31 +1334,43 @@ export async function handleParametricChatRequest(req: Request) {
           // error so the bubble doesn't render as a perpetual spinner.
           content = markPendingToolsAsError(content);
 
-          // Fallback: if the model dumped OpenSCAD into its text instead of
-          // calling build_parametric_model (rare but happens on long
-          // conversations), pull it out and synthesize an artifact.
-          if (!content.artifact && content.text) {
-            const extractedCode = extractOpenSCADCodeFromText(content.text);
-            if (extractedCode) {
-              const title = await generateTitleFromMessages(
-                messagesToSend,
-                openrouterApiKey,
-              );
-              let cleanedText = content.text
-                .replace(/```(?:openscad)?\s*\n?[\s\S]*?\n?```/g, '')
-                .trim();
-              if (cleanedText.length < 10) cleanedText = '';
-              content = {
-                ...content,
-                text: cleanedText || undefined,
-                artifact: {
-                  title,
-                  version: 'v1',
-                  code: extractedCode,
-                  parameters: parseParameters(extractedCode),
-                },
-              };
+          try {
+            // Fallback: if the model dumped OpenSCAD into its text instead of
+            // calling build_parametric_model (rare but happens on long
+            // conversations), pull it out and synthesize an artifact.
+            if (!content.artifact && content.text) {
+              const extractedCode = extractOpenSCADCodeFromText(content.text);
+              if (extractedCode) {
+                const title = await generateTitleFromMessages(
+                  messagesToSend,
+                  openrouterApiKey,
+                ).catch(() => 'Adam Object');
+                let cleanedText = content.text
+                  .replace(/```(?:openscad)?\s*\n?[\s\S]*?\n?```/g, '')
+                  .trim();
+                if (cleanedText.length < 10) cleanedText = '';
+                content = {
+                  ...content,
+                  text: cleanedText || undefined,
+                  artifact: {
+                    title,
+                    version: 'v1',
+                    code: extractedCode,
+                    parameters: parseParameters(extractedCode),
+                  },
+                };
+              }
             }
+          } catch (error) {
+            logError(error, {
+              functionName: 'parametric-chat',
+              statusCode: 500,
+              userId: userData.user?.id,
+              conversationId,
+              additionalContext: {
+                operation: 'parametric_final_artifact_fallback',
+              },
+            });
           }
 
           // Last-line safety: never persist a totally empty assistant
@@ -1377,6 +1427,7 @@ export async function handleParametricChatRequest(req: Request) {
     });
   } catch (error) {
     console.error(error);
+    await refundChatToken('setup_failed');
     // Tear down the cancel channel — the stream's inner finally won't run
     // because we never returned the ReadableStream.
     cleanupCancel();
@@ -1392,13 +1443,27 @@ export async function handleParametricChatRequest(req: Request) {
     // never leave a pending entry in the persisted row.
     content = markPendingToolsAsError(content);
 
-    const { data: updatedMessageData } = await supabaseClient
-      .from('messages')
-      .update({ content })
-      .eq('id', newMessageData.id)
-      .select()
-      .single()
-      .overrideTypes<{ content: Content; role: 'assistant' }>();
+    let updatedMessageData: Message | null = null;
+    try {
+      const { data } = await supabaseClient
+        .from('messages')
+        .update({ content })
+        .eq('id', newMessageData.id)
+        .select()
+        .single()
+        .overrideTypes<{ content: Content; role: 'assistant' }>();
+      updatedMessageData = data;
+    } catch (dbError) {
+      logError(dbError, {
+        functionName: 'parametric-chat',
+        statusCode: 500,
+        userId: userData.user?.id,
+        conversationId,
+        additionalContext: {
+          operation: 'parametric_outer_error_update',
+        },
+      });
+    }
 
     if (updatedMessageData) {
       return new Response(JSON.stringify({ message: updatedMessageData }), {
@@ -1408,11 +1473,9 @@ export async function handleParametricChatRequest(req: Request) {
     }
 
     return new Response(
-      JSON.stringify({
-        error: error instanceof Error ? error.message : 'Unknown error',
-      }),
+      JSON.stringify({ message: { ...newMessageData, content } }),
       {
-        status: 500,
+        status: 200,
         headers: { 'Content-Type': 'application/json', ...corsHeaders },
       },
     );
