@@ -71,6 +71,7 @@ export default function ParametricShareView() {
     const newContent: Content = {
       text: message?.content.text ?? '',
       artifact: {
+        ...message?.content.artifact,
         title: message?.content.artifact?.title ?? '',
         version: message?.content.artifact?.version ?? '',
         code: newCode,

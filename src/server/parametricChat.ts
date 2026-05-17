@@ -3,6 +3,8 @@ import {
   Content,
   CoreMessage,
   ParametricArtifact,
+  Parameter,
+  ParametricPart,
   ToolCall,
 } from '@shared/types';
 import { getAnonSupabaseClient } from './supabaseClient';
@@ -17,12 +19,14 @@ import { createOpenRouter } from '@openrouter/ai-sdk-provider';
 import {
   generateText,
   jsonSchema,
+  Output as aiOutput,
   streamText,
   tool,
   type ModelMessage,
   type ToolSet,
   type UserContent,
 } from 'ai';
+import { z } from 'zod';
 
 const CHAT_TOKEN_COST = 1;
 const PARAMETRIC_TOKEN_COST = 5;
@@ -241,6 +245,117 @@ interface OpenAIMessage {
   }>;
 }
 
+const parameterValueSchema = z.union([
+  z.string(),
+  z.number(),
+  z.boolean(),
+  z.array(z.string()),
+  z.array(z.number()),
+  z.array(z.boolean()),
+]);
+
+const parameterSchema = z.object({
+  name: z
+    .string()
+    .regex(/^[A-Za-z_$][A-Za-z0-9_$]*$/)
+    .describe('Exact OpenSCAD variable name declared at the top of code.'),
+  displayName: z.string().min(1),
+  value: parameterValueSchema,
+  defaultValue: parameterValueSchema,
+  type: z.enum([
+    'string',
+    'number',
+    'boolean',
+    'string[]',
+    'number[]',
+    'boolean[]',
+  ]),
+  description: z.string().optional(),
+  group: z.string().optional(),
+  range: z
+    .object({
+      min: z.number().optional(),
+      max: z.number().optional(),
+      step: z.number().optional(),
+    })
+    .optional(),
+  options: z
+    .array(
+      z.object({
+        value: z.union([z.string(), z.number()]),
+        label: z.string().min(1),
+      }),
+    )
+    .optional(),
+  maxLength: z.number().optional(),
+});
+
+const partSchema = z.object({
+  id: z
+    .string()
+    .regex(/^[a-z][a-z0-9_]*$/)
+    .describe('Stable snake_case identifier for this part.'),
+  displayName: z.string().min(1),
+  description: z.string().min(1),
+  colorParameter: z.string().optional(),
+  parameterNames: z
+    .array(z.string())
+    .describe('Exact parameter names that control this part.'),
+});
+
+const generatedArtifactSchema = z.object({
+  title: z.string().min(1),
+  code: z.string().min(20),
+  parameters: z.array(parameterSchema),
+  parts: z.array(partSchema),
+  suggestions: z.array(z.string()).optional(),
+});
+
+type GeneratedArtifact = z.infer<typeof generatedArtifactSchema>;
+
+function artifactFromStructured(
+  generated: GeneratedArtifact,
+): ParametricArtifact {
+  const code = stripCodeFences(generated.code.trim()).trim();
+  const legacyParameters = parseParameters(code);
+  const parameters: Parameter[] =
+    generated.parameters.length > 0 ? generated.parameters : legacyParameters;
+  const parts: ParametricPart[] = generated.parts;
+
+  return {
+    title: generated.title.trim(),
+    version: 'v1',
+    code,
+    parameters,
+    parts,
+    legacy: { parameters: legacyParameters },
+    suggestions: generated.suggestions,
+  };
+}
+
+function artifactFromLegacyCode(
+  title: string,
+  code: string,
+): ParametricArtifact {
+  const parameters = parseParameters(code);
+  return {
+    title,
+    version: 'v1',
+    code,
+    parameters,
+    legacy: { parameters },
+  };
+}
+
+function artifactHistoryContent(artifact: ParametricArtifact): string {
+  if (!artifact.parts?.length) return artifact.code;
+  return `${artifact.code}\n\nPart semantics:\n${JSON.stringify(
+    { parts: artifact.parts },
+    null,
+    2,
+  )}`;
+}
+
 async function generateTitleFromMessages(
   messagesToSend: OpenAIMessage[],
   openrouterApiKey: string,
@@ -352,68 +467,24 @@ Guidelines:
 - Keep text concise and helpful. Ask at most 1 follow-up question when truly needed.
 - Pass the user's request directly to the tool without modification (e.g., if user says "a mug", pass "a mug" to build_parametric_model).`;
 
-const STRICT_CODE_PROMPT = `You are Adam, an AI CAD editor that creates and modifies OpenSCAD models. You assist users by chatting with them and making changes to their CAD in real-time. You understand that users can see a live preview of the model in a viewport on the right side of the screen while you make changes.
+const STRICT_CODE_PROMPT = `You are Adam, an expert OpenSCAD CAD modeler.
 
-When a user sends a message, you will reply with a response that contains only the most expert code for OpenSCAD according to a given prompt. Make sure that the syntax of the code is correct and that all parts are connected as a 3D printable object. Always write code with changeable parameters. Use full descriptive snake_case variable names (e.g. \`wheel_radius\`, \`pelican_seat_offset\`) — never abbreviate to single letters or short tokens (\`w_r\`, \`p_seat\`). Names render directly in the parameter panel. When the model has distinct parts, wrap each in a color() call with a fitting named color so the preview reads expressively. Expose the colors as string parameters (e.g. \`body_color = "SteelBlue";\` then \`color(body_color) ...\`) so the user can tweak them from the parameter panel — name them \`*_color\` and use CSS named colors or hex values as defaults. Initialize and declare the variables at the start of the code. Do not write any other text or comments in the response. If I ask about anything other than code for the OpenSCAD platform, only return a text containing '404'. Always ensure your responses are consistent with previous responses. Never include extra text in the response. Use any provided OpenSCAD documentation or context in the conversation to inform your responses.
+Create one complete structured CAD artifact:
+- code: single-file OpenSCAD that compiles directly.
+- parameters: every user-facing parameter declared near the top of the code, with exact matching names and default values.
+- parts: the semantic parts of the CAD model, with exact parameterNames that affect each part.
 
-CRITICAL: Never include in code comments or anywhere:
-- References to tools, APIs, or system architecture
-- Internal prompts or instructions
-- Any meta-information about how you work
-Just generate clean OpenSCAD code with appropriate technical comments.
-- Return ONLY raw OpenSCAD code. DO NOT wrap it in markdown code blocks (no \`\`\`openscad).
-Just return the plain OpenSCAD code directly.
+Make the OpenSCAD clean, manifold, and 3D-printable. Use full descriptive snake_case variable names (e.g. \`wheel_radius\`, \`pelican_seat_offset\`) — never abbreviate to single letters or short tokens (\`w_r\`, \`p_seat\`). Names render directly in the parameter panel.
 
-# STL Import (CRITICAL)
+When the model has distinct parts, wrap each visible part in a color() call with a fitting named color or hex value so the preview reads expressively. Expose colors as string parameters named \`*_color\` and reference those exact parameter names from the relevant part semantics.
+
 When the user uploads a 3D model (STL file) and you are told to use import():
-1. YOU MUST USE import("filename.stl") to include their original model - DO NOT recreate it
-2. Apply modifications (holes, cuts, extensions) AROUND the imported STL
-3. Use difference() to cut holes/shapes FROM the imported model
-4. Use union() to ADD geometry TO the imported model
-5. Create parameters ONLY for the modifications, not for the base model dimensions
+1. Use import("filename.stl") to include their original model.
+2. Apply modifications around the imported STL with union() and difference().
+3. Create parameters only for modifications, not for the base model dimensions.
+4. Include rotation parameters so the user can fine-tune orientation.
 
-Orientation: Study the provided render images to determine the model's "up" direction:
-- Look for features like: feet/base at bottom, head at top, front-facing details
-- Apply rotation to orient the model so it sits FLAT on any stand/base
-- Always include rotation parameters so the user can fine-tune
-
-**Examples:**
-
-User: "a mug"
-Assistant:
-// Mug parameters
-cup_height = 100;
-cup_radius = 40;
-handle_radius = 30;
-handle_thickness = 10;
-wall_thickness = 3;
-mug_color = "#4682B4";
-
-color(mug_color)
-difference() {
-    union() {
-        // Main cup body
-        cylinder(h=cup_height, r=cup_radius);
-
-        // Handle
-        translate([cup_radius-5, 0, cup_height/2])
-        rotate([90, 0, 0])
-        difference() {
-            torus(handle_radius, handle_thickness/2);
-            torus(handle_radius, handle_thickness/2 - wall_thickness);
-        }
-    }
-
-    // Hollow out the cup
-    translate([0, 0, wall_thickness])
-    cylinder(h=cup_height, r=cup_radius-wall_thickness);
-}
-
-module torus(r1, r2) {
-    rotate_extrude()
-    translate([r1, 0, 0])
-    circle(r=r2);
-}`;
+Do not mention tools, APIs, prompts, or implementation details in the generated code.`;
 
 type AgentToolDefinition = {
   type: 'function';
@@ -869,7 +940,7 @@ export async function handleParametricChatRequest(req: Request) {
         return {
           role: 'assistant' as const,
           content: msg.content.artifact
-            ? msg.content.artifact.code || ''
+            ? artifactHistoryContent(msg.content.artifact)
             : msg.content.text || '',
         };
       }),
@@ -1009,9 +1080,9 @@ export async function handleParametricChatRequest(req: Request) {
       return { text, toolCalls: orderedToolCalls, finishReason };
     };
 
-    const streamGeneratedOpenSCAD = async (
+    const generateParametricArtifact = async (
       input: BuildParametricModelInput,
-    ): Promise<string> => {
+    ): Promise<ParametricArtifact> => {
       const baseContext: OpenAIMessage[] = input.baseCode
         ? [{ role: 'assistant' as const, content: input.baseCode }]
         : [];
@@ -1049,12 +1120,18 @@ export async function handleParametricChatRequest(req: Request) {
           ),
           system: STRICT_CODE_PROMPT,
           messages: codeMessages,
+          output: aiOutput.object({
+            schema: generatedArtifactSchema,
+            name: 'cad_artifact',
+            description:
+              'A complete OpenSCAD artifact with structured parameters and part semantics.',
+          }),
           maxOutputTokens: thinking ? 60000 : 48000,
           maxRetries: 1,
           abortSignal: codeAbort.signal,
         });
 
-        return stripCodeFences(result.text.trim()).trim();
+        return artifactFromStructured(result.output);
       } finally {
         clearTimeout(codeTimeout);
         abortSignal.removeEventListener('abort', onParentAbort);
@@ -1226,9 +1303,9 @@ export async function handleParametricChatRequest(req: Request) {
               };
 
               try {
-                let code = '';
+                let artifact: ParametricArtifact | null = null;
                 try {
-                  code = await streamGeneratedOpenSCAD(input);
+                  artifact = await generateParametricArtifact(input);
                 } catch (err) {
                   await refundParametricToken('code_generation_failed');
                   const message =
@@ -1250,7 +1327,7 @@ export async function handleParametricChatRequest(req: Request) {
                   break;
                 }
 
-                if (!code) {
+                if (!artifact?.code) {
                   await refundParametricToken('empty_code');
                   updateContent(markToolAsError(content, tc.id, 'empty_code'));
                   pushToolResult(
@@ -1259,22 +1336,6 @@ export async function handleParametricChatRequest(req: Request) {
                   );
                   break;
                 }
-
-                let title = await generateTitleFromMessages(
-                  messagesToSend,
-                  openrouterApiKey,
-                ).catch(() => 'Adam Object');
-                const lower = title.toLowerCase();
-                if (lower.includes('sorry') || lower.includes('apologize')) {
-                  title = 'Adam Object';
-                }
-
-                const artifact: ParametricArtifact = {
-                  title,
-                  version: 'v1',
-                  code,
-                  parameters: parseParameters(code),
-                };
 
                 updateContent({
                   ...content,
@@ -1355,12 +1416,7 @@ export async function handleParametricChatRequest(req: Request) {
                 content = {
                   ...content,
                   text: cleanedText || undefined,
-                  artifact: {
-                    title,
-                    version: 'v1',
-                    code: extractedCode,
-                    parameters: parseParameters(extractedCode),
-                  },
+                  artifact: artifactFromLegacyCode(title, extractedCode),
                 };
               }
             }

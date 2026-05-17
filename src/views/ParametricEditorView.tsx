@@ -131,6 +131,7 @@ export function ParametricEditorView() {
         text: message.content.text ?? '',
         model: message.content.model ?? 'fast',
         artifact: {
+          ...message.content.artifact,
           title: message.content.artifact?.title ?? '',
           version: message.content.artifact?.version ?? '',
           code: newCode,
