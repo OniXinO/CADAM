@@ -269,12 +269,18 @@ function isCreativeChatBody(value: unknown): value is CreativeChatBody {
   );
 }
 
-// Helper function to streamline controller.enqueue calls
+// Helper to stream updated assistant message rows.
+// Silently noop if the client disconnected and the controller is closed.
 function streamMessage(
   controller: ReadableStreamDefaultController,
   message: Message,
 ) {
-  controller.enqueue(new TextEncoder().encode(JSON.stringify(message) + '\n'));
+  const encoded = new TextEncoder().encode(JSON.stringify(message) + '\n');
+  try {
+    controller.enqueue(encoded);
+  } catch {
+    // Controller closed. Nothing more to do.
+  }
 }
 
 async function generateSuggestions(
