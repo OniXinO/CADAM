@@ -123,13 +123,18 @@ export function ParametricEditorView() {
       let newCode = message.content.artifact?.code ?? '';
       updatedParameters.forEach((param) => {
         if (param.name.length > 0) {
-          newCode = updateParameter(newCode, param);
+          newCode = updateParameter(
+            newCode,
+            param,
+            message.content.artifact?.cadBackend,
+          );
         }
       });
 
       const newContent: Content = {
         text: message.content.text ?? '',
         model: message.content.model ?? 'fast',
+        cadBackend: message.content.artifact?.cadBackend,
         artifact: {
           ...message.content.artifact,
           title: message.content.artifact?.title ?? '',
@@ -169,6 +174,7 @@ export function ParametricEditorView() {
       posthog.capture('message_sent', {
         type: 'parametric',
         model_name: conversation.settings?.model ?? 'none',
+        cad_backend: conversation.settings?.cadBackend ?? content.cadBackend,
         text: content.text ?? '',
         image_count: content.images?.length ?? 0,
         mesh_count: content.mesh ? 1 : 0,
@@ -176,7 +182,12 @@ export function ParametricEditorView() {
       });
       sendMessageMutation(content);
     },
-    [sendMessageMutation, conversation.id, conversation.settings?.model],
+    [
+      sendMessageMutation,
+      conversation.id,
+      conversation.settings?.cadBackend,
+      conversation.settings?.model,
+    ],
   );
 
   const fixError = useCallback(
@@ -184,11 +195,18 @@ export function ParametricEditorView() {
       const newContent: Content = {
         text: 'Fix with AI',
         error: error.stdErr.join('\n'),
+        cadBackend:
+          currentMessage?.content.artifact?.cadBackend ??
+          conversation.settings?.cadBackend,
       };
 
       sendMessage(newContent);
     },
-    [sendMessage],
+    [
+      currentMessage?.content.artifact?.cadBackend,
+      conversation.settings?.cadBackend,
+      sendMessage,
+    ],
   );
 
   return (

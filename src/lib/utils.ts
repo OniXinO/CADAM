@@ -1,6 +1,6 @@
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import { Message, Model, Parameter } from '@shared/types';
+import { CadBackend, Message, Model, Parameter } from '@shared/types';
 import { ModelConfig } from '../types/misc.ts';
 
 export function cn(...inputs: ClassValue[]) {
@@ -104,8 +104,23 @@ export function validateRedirectUrlServer(
   }
 }
 
-export function updateParameter(code: string, param: Parameter): string {
+export function updateParameter(
+  code: string,
+  param: Parameter,
+  cadBackend: CadBackend = 'openscad',
+): string {
   const escapedName = escapeRegExp(param.name);
+  if (cadBackend === 'build123d') {
+    const pythonRegex = new RegExp(
+      `^\\s*(${escapedName}\\s*=\\s*)[^#\\n]+(\\s*#.*)?$`,
+      'm',
+    );
+    return code.replace(
+      pythonRegex,
+      `$1${formatPythonParameterValue(param)}$2`,
+    );
+  }
+
   const regex = new RegExp(
     `^\\s*(${escapedName}\\s*=\\s*)[^;]+;([\\t\\f\\cK ]*\\/\\/[^\n]*)?`,
     'm',
@@ -144,6 +159,25 @@ export function updateParameter(code: string, param: Parameter): string {
       );
     default:
       return code;
+  }
+}
+
+function formatPythonParameterValue(param: Parameter): string {
+  switch (param.type) {
+    case 'string':
+      return JSON.stringify(param.value);
+    case 'boolean':
+      return param.value ? 'True' : 'False';
+    case 'string[]':
+    case 'number[]':
+      return JSON.stringify(param.value);
+    case 'boolean[]':
+      return `[${(param.value as boolean[])
+        .map((value) => (value ? 'True' : 'False'))
+        .join(', ')}]`;
+    case 'number':
+    default:
+      return String(param.value);
   }
 }
 

@@ -21,6 +21,7 @@ import { useProfile } from '@/services/profileService';
 import { useLayoutContext } from '@/contexts/LayoutContext';
 import { apiJson } from '@/services/api';
 import { z } from 'zod';
+import { getCadBackendPreference } from '@/utils/cadBackend';
 
 const titleResponseSchema = z.object({ title: z.string().optional() });
 
@@ -58,6 +59,7 @@ export function PromptView() {
   const [type, setType] = useState<'parametric' | 'creative'>('parametric');
 
   const [model, setModel] = useState<Model>('google/gemini-3.1-pro-preview');
+  const [cadBackend, setCadBackend] = useState(getCadBackendPreference);
 
   const handleTypeChange = (newType: 'parametric' | 'creative') => {
     setType(newType);
@@ -93,7 +95,7 @@ export function PromptView() {
       id: newConversationId,
       user_id: user?.id ?? '',
       type: type,
-      settings: { model: model },
+      settings: { model: model, cadBackend },
       current_message_leaf_id: null,
     },
   });
@@ -105,6 +107,16 @@ export function PromptView() {
       setIsLoaded(true);
     });
     return () => cancelAnimationFrame(frame);
+  }, []);
+
+  useEffect(() => {
+    const updateCadBackend = () => setCadBackend(getCadBackendPreference());
+    window.addEventListener('storage', updateCadBackend);
+    window.addEventListener('adam:cad-backend-changed', updateCadBackend);
+    return () => {
+      window.removeEventListener('storage', updateCadBackend);
+      window.removeEventListener('adam:cad-backend-changed', updateCadBackend);
+    };
   }, []);
 
   // Helper function to get time-based greeting (memoized for performance)
@@ -121,9 +133,12 @@ export function PromptView() {
 
   const { mutate: handleGenerate } = useMutation({
     mutationFn: async (content: Content) => {
+      const contentWithBackend: Content =
+        type === 'parametric' ? { ...content, cadBackend } : content;
       posthog.capture('new_conversation', {
         type: type,
         model_name: model,
+        cad_backend: type === 'parametric' ? cadBackend : undefined,
         text: (content.text ?? '').trim().slice(0, 100),
         image_count: content.images?.length ?? 0,
         mesh_count: content.mesh ? 1 : 0,
@@ -142,6 +157,7 @@ export function PromptView() {
             type: type,
             settings: {
               model: model,
+              ...(type === 'parametric' ? { cadBackend } : {}),
             },
           },
         ])
@@ -150,11 +166,11 @@ export function PromptView() {
 
       if (conversationError) throw conversationError;
 
-      sendMessage(content);
+      sendMessage(contentWithBackend);
 
       return {
         conversationId: conversation.id,
-        content: content,
+        content: contentWithBackend,
       };
     },
     onSuccess: (data) => {

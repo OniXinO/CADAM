@@ -1,6 +1,6 @@
 import { useOpenSCAD } from '@/hooks/useOpenSCAD';
 import { useCallback, useEffect, useState, useContext, useRef } from 'react';
-import { ThreeScene } from '@/components/viewer/ThreeScene';
+import { ColoredMeshPreview, ThreeScene } from '@/components/viewer/ThreeScene';
 import { STLLoader } from 'three/addons/loaders/STLLoader.js';
 import {
   BufferGeometry,
@@ -17,7 +17,7 @@ import OpenSCADError from '@/lib/OpenSCADError';
 import { cn } from '@/lib/utils';
 import { MeshFilesContext } from '@/contexts/MeshFilesContext';
 import { createDXFProjectionCode } from '@/utils/dxfUtils';
-import { DxfExporter } from '@/utils/downloadUtils';
+import { DxfExporter, exportBuild123dPreview } from '@/utils/downloadUtils';
 
 // Extract import() filenames from OpenSCAD code
 function extractImportFilenames(code: string): string[] {
@@ -41,6 +41,27 @@ function disposeGroup(group: Group) {
     if (Array.isArray(mat)) mat.forEach((m: Material) => m.dispose());
     else mat?.dispose();
   });
+}
+
+function disposeColoredMeshes(meshes: ColoredMeshPreview[] | null) {
+  meshes?.forEach((mesh) => mesh.geometry.dispose());
+}
+
+function compileErrorSummary(error?: OpenSCADError | Error): string | null {
+  if (!error) return null;
+  if (error.name === 'OpenSCADError' && 'stdErr' in error) {
+    const lines = Array.isArray(error.stdErr) ? error.stdErr : [];
+    const usefulLine = lines
+      .flatMap((entry) => entry.split('\n'))
+      .map((line) => line.trim())
+      .filter(
+        (line) =>
+          line && !line.startsWith('File "') && !line.startsWith('Traceback '),
+      )
+      .at(-1);
+    return usefulLine ?? error.message;
+  }
+  return error.message || null;
 }
 
 interface OpenSCADPreviewProps {
@@ -362,6 +383,152 @@ export function OpenSCADPreview({
   );
 }
 
+interface Build123dPreviewProps {
+  build123dCode: string | null;
+  color: string;
+  onOutputChange?: (output: Blob | undefined) => void;
+  fixError?: (error: OpenSCADError) => void;
+  isMobile?: boolean;
+  backgroundColor?: string;
+}
+
+export function Build123dPreview({
+  build123dCode,
+  color,
+  onOutputChange,
+  fixError,
+  isMobile,
+  backgroundColor,
+}: Build123dPreviewProps) {
+  const [isCompiling, setIsCompiling] = useState(false);
+  const [error, setError] = useState<OpenSCADError | null>(null);
+  const [coloredMeshes, setColoredMeshes] = useState<
+    ColoredMeshPreview[] | null
+  >(null);
+
+  useEffect(() => {
+    if (!build123dCode) return;
+
+    let cancelled = false;
+    setIsCompiling(true);
+    setError(null);
+
+    exportBuild123dPreview(build123dCode)
+      .then((preview) => {
+        if (cancelled) return;
+        const loader = new STLLoader();
+        const nextMeshes: ColoredMeshPreview[] = [];
+        const palette = [
+          '#F97316',
+          '#0EA5E9',
+          '#22C55E',
+          '#EAB308',
+          '#A855F7',
+          '#EF4444',
+          '#14B8A6',
+          '#94A3B8',
+        ];
+        const rootBinary = Uint8Array.from(atob(preview.rootStl), (char) =>
+          char.charCodeAt(0),
+        );
+        const parts =
+          preview.parts.length > 0
+            ? preview.parts
+            : [
+                {
+                  label: 'model',
+                  color: null,
+                  stl: preview.rootStl,
+                },
+              ];
+
+        for (const [index, part] of parts.entries()) {
+          const binary = Uint8Array.from(atob(part.stl), (char) =>
+            char.charCodeAt(0),
+          );
+          const geom = loader.parse(binary.buffer);
+          geom.computeVertexNormals();
+          const alpha = part.color?.[3];
+          const color = part.color
+            ? `rgb(${Math.round(part.color[0] * 255)}, ${Math.round(
+                part.color[1] * 255,
+              )}, ${Math.round(part.color[2] * 255)})`
+            : palette[index % palette.length];
+          nextMeshes.push({
+            id: `${index}-${part.label || 'part'}`,
+            name: part.label || `part_${index + 1}`,
+            geometry: geom,
+            color,
+            opacity: typeof alpha === 'number' ? alpha : undefined,
+          });
+        }
+
+        onOutputChange?.(
+          new Blob([rootBinary], {
+            type: 'model/stl',
+          }),
+        );
+        setColoredMeshes(nextMeshes);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        console.error('[build123d] Failed to export preview:', err);
+        onOutputChange?.(undefined);
+        setColoredMeshes(null);
+        const message =
+          err instanceof Error
+            ? err.message
+            : 'Adam could not compile this build123d model.';
+        setError(
+          new OpenSCADError('build123d export failed', build123dCode, [
+            message,
+          ]),
+        );
+      })
+      .finally(() => {
+        if (!cancelled) setIsCompiling(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [build123dCode, onOutputChange]);
+
+  useEffect(() => {
+    return () => disposeColoredMeshes(coloredMeshes);
+  }, [coloredMeshes]);
+
+  return (
+    <div className="h-full w-full bg-adam-neutral-700/50 shadow-lg backdrop-blur-sm transition-all duration-300 ease-in-out">
+      <div className="h-full w-full">
+        {coloredMeshes?.length ? (
+          <ThreeScene
+            geometry={null}
+            color={color}
+            coloredMeshes={coloredMeshes}
+            isMobile={isMobile}
+            backgroundColor={backgroundColor}
+          />
+        ) : error ? (
+          <div className="flex h-full items-center justify-center">
+            <FixWithAIButton error={error} fixError={fixError} />
+          </div>
+        ) : null}
+        {isCompiling && (
+          <div className="absolute inset-0 flex items-center justify-center rounded-lg bg-adam-neutral-700/30 backdrop-blur-sm">
+            <div className="flex flex-col items-center gap-3">
+              <Loader2 className="h-6 w-6 animate-spin text-adam-blue" />
+              <p className="text-xs font-medium text-adam-text-primary/70">
+                Compiling...
+              </p>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // Alias for backwards compatibility (ViewerSection imports OpenSCADViewer)
 export { OpenSCADPreview as OpenSCADViewer };
 
@@ -372,6 +539,8 @@ function FixWithAIButton({
   error?: OpenSCADError | Error;
   fixError?: (error: OpenSCADError) => void;
 }) {
+  const errorSummary = compileErrorSummary(error);
+
   return (
     <div className="flex h-full flex-col items-center justify-center gap-4 p-6">
       <div className="flex flex-col items-center gap-3">
@@ -386,6 +555,11 @@ function FixWithAIButton({
           <p className="mt-1 text-xs text-adam-text-primary/60">
             Adam encountered an error while compiling
           </p>
+          {errorSummary && (
+            <p className="mt-2 max-w-md break-words rounded-md bg-adam-neutral-900/50 px-3 py-2 text-left text-xs text-adam-text-primary/70">
+              {errorSummary}
+            </p>
+          )}
         </div>
       </div>
       {fixError && error && error.name === 'OpenSCADError' && (

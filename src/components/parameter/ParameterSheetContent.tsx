@@ -13,8 +13,10 @@ import { ParameterInput } from '@/components/parameter/ParameterInput';
 import { validateParameterValue } from '@/utils/parameterUtils';
 import { useCurrentMessage } from '@/contexts/CurrentMessageContext';
 import {
+  downloadBuild123dExport,
   downloadSTLFile,
   downloadOpenSCADFile,
+  downloadPythonFile,
   downloadDXFFile,
   DxfExporter,
 } from '@/utils/downloadUtils';
@@ -27,7 +29,7 @@ interface ParameterSheetContentProps {
   dxfExporter?: DxfExporter | null;
 }
 
-type DownloadFormat = 'stl' | 'scad' | 'dxf';
+type DownloadFormat = 'stl' | 'scad' | 'dxf' | 'py' | 'step' | 'brep';
 
 export function ParameterSheetContent({
   parameters,
@@ -39,6 +41,8 @@ export function ParameterSheetContent({
   const { toast } = useToast();
   const [selectedFormat, setSelectedFormat] = useState<DownloadFormat>('stl');
   const [isExporting, setIsExporting] = useState(false);
+  const artifact = currentMessage?.content.artifact;
+  const isBuild123d = artifact?.cadBackend === 'build123d';
 
   // Debounce timer for compilation
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -52,6 +56,22 @@ export function ParameterSheetContent({
       }
     };
   }, []);
+
+  useEffect(() => {
+    if (isBuild123d && selectedFormat === 'stl' && !currentOutput) {
+      setSelectedFormat('step');
+    } else if (
+      isBuild123d &&
+      !['step', 'brep', 'py', 'stl'].includes(selectedFormat)
+    ) {
+      setSelectedFormat('step');
+    } else if (
+      !isBuild123d &&
+      !['stl', 'scad', 'dxf'].includes(selectedFormat)
+    ) {
+      setSelectedFormat('stl');
+    }
+  }, [currentOutput, isBuild123d, selectedFormat]);
 
   // Debounced submit function
   const debouncedSubmit = useCallback(
@@ -95,8 +115,33 @@ export function ParameterSheetContent({
   };
 
   const handleDownloadOpenSCAD = () => {
-    if (!currentMessage?.content.artifact?.code) return;
-    downloadOpenSCADFile(currentMessage.content.artifact.code, currentMessage);
+    if (!artifact?.code) return;
+    downloadOpenSCADFile(artifact.code, currentMessage);
+  };
+
+  const handleDownloadPython = () => {
+    if (!artifact?.code) return;
+    downloadPythonFile(artifact.code, currentMessage);
+  };
+
+  const handleDownloadBuild123d = async (format: 'step' | 'brep') => {
+    if (!artifact?.code) return;
+    try {
+      setIsExporting(true);
+      await downloadBuild123dExport(artifact.code, format, currentMessage);
+    } catch (error) {
+      console.error(`[build123d] Failed to export ${format}:`, error);
+      toast({
+        title: `${format.toUpperCase()} export failed`,
+        description:
+          error instanceof Error
+            ? error.message
+            : `Adam could not export this model as ${format.toUpperCase()}.`,
+        variant: 'destructive',
+      });
+    } finally {
+      setIsExporting(false);
+    }
   };
 
   const handleDownloadDXF = async () => {
@@ -128,11 +173,17 @@ export function ParameterSheetContent({
     stl: handleDownloadSTL,
     scad: handleDownloadOpenSCAD,
     dxf: handleDownloadDXF,
+    py: handleDownloadPython,
+    step: () => handleDownloadBuild123d('step'),
+    brep: () => handleDownloadBuild123d('brep'),
   };
   const formatAvailable: Record<DownloadFormat, boolean> = {
     stl: !!currentOutput,
-    scad: !!currentMessage?.content.artifact?.code,
-    dxf: !!dxfExporter && !isExporting,
+    scad: !isBuild123d && !!artifact?.code,
+    dxf: !isBuild123d && !!dxfExporter && !isExporting,
+    py: isBuild123d && !!artifact?.code,
+    step: isBuild123d && !!artifact?.code && !isExporting,
+    brep: isBuild123d && !!artifact?.code && !isExporting,
   };
 
   const handleDownload = async () => {
@@ -191,26 +242,63 @@ export function ParameterSheetContent({
                   3D Printing
                 </span>
               </DropdownMenuItem>
-              <DropdownMenuItem
-                onClick={() => setSelectedFormat('scad')}
-                disabled={!formatAvailable.scad}
-                className="grid cursor-pointer grid-cols-3 text-adam-text-primary"
-              >
-                <span className="text-sm">.SCAD</span>
-                <span className="col-span-2 text-xs text-adam-text-primary/60">
-                  OpenSCAD Code
-                </span>
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                onClick={() => setSelectedFormat('dxf')}
-                disabled={!formatAvailable.dxf}
-                className="grid cursor-pointer grid-cols-3 text-adam-text-primary"
-              >
-                <span className="text-sm">.DXF</span>
-                <span className="col-span-2 text-xs text-adam-text-primary/60">
-                  2D Projection to the (x,y) plane
-                </span>
-              </DropdownMenuItem>
+              {isBuild123d ? (
+                <>
+                  <DropdownMenuItem
+                    onClick={() => setSelectedFormat('step')}
+                    disabled={!formatAvailable.step}
+                    className="grid cursor-pointer grid-cols-3 text-adam-text-primary"
+                  >
+                    <span className="text-sm">.STEP</span>
+                    <span className="col-span-2 text-xs text-adam-text-primary/60">
+                      CAD Exchange
+                    </span>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={() => setSelectedFormat('brep')}
+                    disabled={!formatAvailable.brep}
+                    className="grid cursor-pointer grid-cols-3 text-adam-text-primary"
+                  >
+                    <span className="text-sm">.BREP</span>
+                    <span className="col-span-2 text-xs text-adam-text-primary/60">
+                      Boundary Representation
+                    </span>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={() => setSelectedFormat('py')}
+                    disabled={!formatAvailable.py}
+                    className="grid cursor-pointer grid-cols-3 text-adam-text-primary"
+                  >
+                    <span className="text-sm">.PY</span>
+                    <span className="col-span-2 text-xs text-adam-text-primary/60">
+                      build123d Source
+                    </span>
+                  </DropdownMenuItem>
+                </>
+              ) : (
+                <>
+                  <DropdownMenuItem
+                    onClick={() => setSelectedFormat('scad')}
+                    disabled={!formatAvailable.scad}
+                    className="grid cursor-pointer grid-cols-3 text-adam-text-primary"
+                  >
+                    <span className="text-sm">.SCAD</span>
+                    <span className="col-span-2 text-xs text-adam-text-primary/60">
+                      OpenSCAD Code
+                    </span>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={() => setSelectedFormat('dxf')}
+                    disabled={!formatAvailable.dxf}
+                    className="grid cursor-pointer grid-cols-3 text-adam-text-primary"
+                  >
+                    <span className="text-sm">.DXF</span>
+                    <span className="col-span-2 text-xs text-adam-text-primary/60">
+                      2D Projection to the (x,y) plane
+                    </span>
+                  </DropdownMenuItem>
+                </>
+              )}
             </DropdownMenuContent>
           </DropdownMenu>
         </div>

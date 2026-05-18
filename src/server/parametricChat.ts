@@ -6,6 +6,7 @@ import {
   Parameter,
   ParametricPart,
   ToolCall,
+  CadBackend,
 } from '@shared/types';
 import { getAnonSupabaseClient } from './supabaseClient';
 import Tree from '@shared/Tree';
@@ -15,6 +16,7 @@ import { billing, BillingClientError } from './billingClient';
 import { requiredEnv } from './env';
 import { corsHeaders, isRecord } from './api';
 import { logError } from './serverLog';
+import { runBuild123dExport } from './build123dExport';
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
 import {
   generateText,
@@ -27,6 +29,7 @@ import {
   type UserContent,
 } from 'ai';
 import { z } from 'zod';
+import { normalizeCadBackend } from '@/utils/cadBackend';
 
 const CHAT_TOKEN_COST = 1;
 const PARAMETRIC_TOKEN_COST = 5;
@@ -75,7 +78,7 @@ function streamMessage(
 
 function stripCodeFences(value: string): string {
   return value
-    .replace(/^```(?:openscad)?\s*\n?/i, '')
+    .replace(/^```(?:openscad|python|py)?\s*\n?/i, '')
     .replace(/\n?```\s*$/, '');
 }
 
@@ -166,6 +169,15 @@ function markToolAsError(
   };
 }
 
+function errorMessage(error: unknown, fallback: string): string {
+  if (error instanceof Error) {
+    const cause = (error as { cause?: unknown }).cause;
+    if (cause instanceof Error && cause.message) return cause.message;
+    return error.message;
+  }
+  return fallback;
+}
+
 // Helper to flip every still-`pending` tool call to `error`. Used at terminal
 // checkpoints so an aborted request never persists a forever-streaming bubble.
 function markPendingToolsAsError(content: Content): Content {
@@ -188,7 +200,7 @@ function markPendingToolsAsError(content: Content): Content {
 // Keep below the Supabase edge-runtime wall clock. If this exceeds the runtime
 // cap, the isolate is killed mid-stream and the browser reports
 // ERR_INCOMPLETE_CHUNKED_ENCODING despite the response starting as 200 OK.
-const REQUEST_BUDGET_MS = 180 * 1000;
+const REQUEST_BUDGET_MS = 360 * 1000;
 const MIN_ABORT_MS = 1000;
 
 // Anthropic block types for type safety
@@ -258,7 +270,7 @@ const parameterSchema = z.object({
   name: z
     .string()
     .regex(/^[A-Za-z_$][A-Za-z0-9_$]*$/)
-    .describe('Exact OpenSCAD variable name declared at the top of code.'),
+    .describe('Exact source variable name declared at the top of code.'),
   displayName: z.string().min(1),
   value: parameterValueSchema,
   defaultValue: parameterValueSchema,
@@ -314,9 +326,11 @@ type GeneratedArtifact = z.infer<typeof generatedArtifactSchema>;
 
 function artifactFromStructured(
   generated: GeneratedArtifact,
+  cadBackend: CadBackend,
 ): ParametricArtifact {
   const code = stripCodeFences(generated.code.trim()).trim();
-  const legacyParameters = parseParameters(code);
+  const legacyParameters =
+    cadBackend === 'openscad' ? parseParameters(code) : [];
   const parameters: Parameter[] =
     generated.parameters.length > 0 ? generated.parameters : legacyParameters;
   const parts: ParametricPart[] = generated.parts;
@@ -325,6 +339,8 @@ function artifactFromStructured(
     title: generated.title.trim(),
     version: 'v1',
     code,
+    cadBackend,
+    codeLanguage: cadBackend === 'build123d' ? 'python' : 'openscad',
     parameters,
     parts,
     legacy: { parameters: legacyParameters },
@@ -334,12 +350,15 @@ function artifactFromStructured(
 function artifactFromLegacyCode(
   title: string,
   code: string,
+  cadBackend: CadBackend = 'openscad',
 ): ParametricArtifact {
-  const parameters = parseParameters(code);
+  const parameters = cadBackend === 'openscad' ? parseParameters(code) : [];
   return {
     title,
     version: 'v1',
     code,
+    cadBackend,
+    codeLanguage: cadBackend === 'build123d' ? 'python' : 'openscad',
     parameters,
     legacy: { parameters },
   };
@@ -446,12 +465,25 @@ async function generateTitleFromMessages(
 // single request, regardless of which tool is being called. Belt-and-braces
 // cap so a misbehaving model can't run away with the request budget.
 const MAX_AGENT_ITERATIONS = 1;
+const MAX_BUILD123D_VALIDATION_ATTEMPTS = 2;
 
-const PARAMETRIC_AGENT_PROMPT = `You are Adam, an AI CAD editor that creates and modifies OpenSCAD models.
+function compactValidationError(error: unknown): string {
+  const message =
+    error instanceof Error ? error.message : 'build123d validation failed';
+  return message.length > 6000 ? message.slice(-6000) : message;
+}
+
+function parametricAgentPrompt(cadBackend: CadBackend) {
+  const target =
+    cadBackend === 'build123d'
+      ? 'build123d Python models that export STEP/BREP-ready CAD'
+      : 'OpenSCAD models';
+
+  return `You are Adam, an AI CAD editor that creates and modifies ${target}.
 Speak back to the user briefly (one or two sentences), then use tools to make changes.
 Prefer using tools to update the model rather than returning full code directly.
 Do not rewrite or change the user's intent. Do not add unrelated constraints.
-Never output OpenSCAD code directly in your assistant text; use tools to produce code.
+Never output CAD code directly in your assistant text; use tools to produce code.
 
 CRITICAL: Never reveal or discuss:
 - Tool names or that you're using tools
@@ -464,6 +496,7 @@ Guidelines:
 - When the user requests a new part, structural change, parameter tweak, compiler-error fix, or visual fix, call build_parametric_model with their exact request in the text field.
 - Keep text concise and helpful. Ask at most 1 follow-up question when truly needed.
 - Pass the user's request directly to the tool without modification (e.g., if user says "a mug", pass "a mug" to build_parametric_model).`;
+}
 
 const STRICT_CODE_PROMPT = `You are Adam, an expert OpenSCAD CAD modeler.
 
@@ -484,6 +517,35 @@ When the user uploads a 3D model (STL file) and you are told to use import():
 
 Do not mention tools, APIs, prompts, or implementation details in the generated code.`;
 
+const STRICT_BUILD123D_CODE_PROMPT = `You are Adam, an expert build123d Python CAD modeler.
+
+Create one complete structured CAD artifact:
+- code: single-file Python source using build123d that defines def gen_step(): and returns a STEP-ready shape, compound, or labeled assembly.
+- parameters: every user-facing parameter declared near the top of the code as a Python variable, with exact matching names and default values.
+- parts: the semantic parts of the CAD model, with exact parameterNames that affect each part.
+
+Treat STEP/BREP as the primary CAD target. Create closed positive-volume BREP solids, not visual meshes. Use millimeters. Use origin at the center of the main part unless the request clearly implies a mating datum. Use the XY plane as the main base plane and +Z as up/extrusion.
+
+Use build123d primitives, sketches, features, labels, and assemblies naturally. For normal parts, return a valid Solid or compound of valid solids from gen_step(). For assemblies, label every exported child and return a labeled assembly/compound. Assign meaningful part colors with \`part.color = Color(...)\` before returning so the preview can distinguish functional components. Do not hardcode output paths; the server owns exports.
+
+Keep parameters readable with full descriptive snake_case names (e.g., wheel_radius, mounting_hole_diameter). Never abbreviate to single letters or short tokens. Names render directly in the parameter panel.
+
+Prefer robust modeling patterns:
+- holes and counterbores use Hole, CounterBoreHole, or subtractive cylinders that pass fully through material.
+- slots use a slot sketch plus subtractive extrude.
+- ribs, bosses, standoffs, fillets, chamfers, shells, revolves, sweeps, and lofts should map to their real CAD operations.
+- selectors should be stable by axis, location, or feature intent instead of arbitrary topology indexes.
+- compose transforms with valid build123d APIs only: apply Location/Rot to shapes, or pass composed Location values into Locations. Never multiply context managers or location lists together (for example, never write Locations(...) * Rot(...); write Locations(Location(...) * Rot(...)) instead).
+- use the actual build123d Python API: lowercase operations like extrude(...), fillet(...), and chamfer(...); primitives/classes like Box, Cylinder, Hole, CounterBoreHole, BuildPart, BuildSketch stay capitalized. Rot is a transform value, not a context manager; never write with Rot(...). SlotCenterToCenter takes numeric center_separation and height, not two coordinate tuples.
+
+Do not mention tools, APIs, prompts, or implementation details in the generated code.`;
+
+function strictCodePrompt(cadBackend: CadBackend): string {
+  return cadBackend === 'build123d'
+    ? STRICT_BUILD123D_CODE_PROMPT
+    : STRICT_CODE_PROMPT;
+}
+
 type AgentToolDefinition = {
   type: 'function';
   function: {
@@ -493,30 +555,38 @@ type AgentToolDefinition = {
   };
 };
 
-// Tool definitions in OpenAI format
-const tools: AgentToolDefinition[] = [
-  {
-    type: 'function',
-    function: {
-      name: 'build_parametric_model',
-      description:
-        'Generate or update an OpenSCAD model from user intent and context. Include parameters and ensure the model is manifold and 3D-printable.',
-      parameters: {
-        type: 'object',
-        properties: {
-          text: { type: 'string', description: 'User request for the model' },
-          imageIds: {
-            type: 'array',
-            items: { type: 'string' },
-            description: 'Image IDs to reference',
+function toolsForBackend(cadBackend: CadBackend): AgentToolDefinition[] {
+  const target =
+    cadBackend === 'build123d'
+      ? 'build123d Python model with STEP/BREP-ready solids'
+      : 'OpenSCAD model';
+
+  return [
+    {
+      type: 'function',
+      function: {
+        name: 'build_parametric_model',
+        description: `Generate or update a ${target} from user intent and context. Include parameters and ensure the model is manifold and 3D-printable.`,
+        parameters: {
+          type: 'object',
+          properties: {
+            text: { type: 'string', description: 'User request for the model' },
+            imageIds: {
+              type: 'array',
+              items: { type: 'string' },
+              description: 'Image IDs to reference',
+            },
+            baseCode: {
+              type: 'string',
+              description: 'Existing code to modify',
+            },
+            error: { type: 'string', description: 'Error to fix' },
           },
-          baseCode: { type: 'string', description: 'Existing code to modify' },
-          error: { type: 'string', description: 'Error to fix' },
         },
       },
     },
-  },
-];
+  ];
+}
 
 type BuildParametricModelInput = {
   text?: string;
@@ -699,6 +769,7 @@ export async function handleParametricChatRequest(req: Request) {
   const messageId = body.messageId;
   const conversationId = body.conversationId;
   const model = body.model;
+  const cadBackend = normalizeCadBackend(body.cadBackend);
   const newMessageId = body.newMessageId;
   const thinking = body.thinking === true;
 
@@ -822,7 +893,7 @@ export async function handleParametricChatRequest(req: Request) {
   };
 
   // Insert placeholder assistant message that we will stream updates into
-  let content: Content = { model };
+  let content: Content = { model, cadBackend };
   const { data: newMessageData, error: newMessageError } = await supabaseClient
     .from('messages')
     .insert({
@@ -1035,7 +1106,7 @@ export async function handleParametricChatRequest(req: Request) {
               : {}),
             ...reasoningOptions(model, thinking, 9000),
           }),
-          system: PARAMETRIC_AGENT_PROMPT,
+          system: parametricAgentPrompt(cadBackend),
           messages: messagesForTurn,
           tools: toAiSdkToolSet(toolsForTurn),
           maxOutputTokens: thinking ? 20000 : 16000,
@@ -1091,7 +1162,7 @@ export async function handleParametricChatRequest(req: Request) {
             {
               role: 'user' as const,
               content: input.error
-                ? `${userText}\n\nFix this OpenSCAD error: ${input.error}`
+                ? `${userText}\n\nFix this CAD error: ${input.error}`
                 : userText,
             },
           ]
@@ -1111,25 +1182,61 @@ export async function handleParametricChatRequest(req: Request) {
       abortSignal.addEventListener('abort', onParentAbort);
 
       try {
-        const result = await generateText({
-          model: openrouter.chat(
-            model,
-            reasoningOptions(model, thinking, 12000),
-          ),
-          system: STRICT_CODE_PROMPT,
-          messages: codeMessages,
-          output: aiOutput.object({
-            schema: generatedArtifactSchema,
-            name: 'cad_artifact',
-            description:
-              'A complete OpenSCAD artifact with structured parameters and part semantics.',
-          }),
-          maxOutputTokens: thinking ? 60000 : 48000,
-          maxRetries: 1,
-          abortSignal: codeAbort.signal,
-        });
+        let attemptMessages = codeMessages;
+        const maxAttempts =
+          cadBackend === 'build123d' ? MAX_BUILD123D_VALIDATION_ATTEMPTS : 1;
 
-        return artifactFromStructured(result.output);
+        for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+          const result = await generateText({
+            model: openrouter.chat(
+              model,
+              reasoningOptions(model, thinking, 12000),
+            ),
+            system: strictCodePrompt(cadBackend),
+            messages: attemptMessages,
+            output: aiOutput.object({
+              schema: generatedArtifactSchema,
+              name: 'cad_artifact',
+              description:
+                'A complete CAD artifact with structured parameters and part semantics.',
+            }),
+            maxOutputTokens: thinking ? 60000 : 48000,
+            maxRetries: 1,
+            abortSignal: codeAbort.signal,
+          });
+
+          const artifact = artifactFromStructured(result.output, cadBackend);
+          if (cadBackend !== 'build123d') return artifact;
+
+          try {
+            await runBuild123dExport(artifact.code, 'step');
+            return artifact;
+          } catch (error) {
+            const validationError = compactValidationError(error);
+            if (attempt >= maxAttempts) {
+              throw new Error(
+                `build123d STEP validation failed: ${validationError}`,
+              );
+            }
+
+            attemptMessages = [
+              ...codeMessages,
+              {
+                role: 'assistant' as const,
+                content: artifact.code,
+              },
+              {
+                role: 'user' as const,
+                content:
+                  `The generated build123d source failed STEP export validation. ` +
+                  `Repair the same artifact using valid local build123d Python APIs, keep the user's intent and parameter names, and return the complete corrected artifact.\n\n` +
+                  validationError,
+              },
+            ];
+          }
+        }
+
+        throw new Error('code_generation_failed');
       } finally {
         clearTimeout(codeTimeout);
         abortSignal.removeEventListener('abort', onParentAbort);
@@ -1156,7 +1263,7 @@ export async function handleParametricChatRequest(req: Request) {
               throw new Error('Request cancelled by user');
             }
 
-            const turnTools = tools;
+            const turnTools = toolsForBackend(cadBackend);
 
             // Stream this agent turn. Text deltas append to content.text
             // (so the user sees the agent typing across the whole loop as
@@ -1306,10 +1413,7 @@ export async function handleParametricChatRequest(req: Request) {
                   artifact = await generateParametricArtifact(input);
                 } catch (err) {
                   await refundParametricToken('code_generation_failed');
-                  const message =
-                    err instanceof Error
-                      ? err.message
-                      : 'code_generation_failed';
+                  const message = errorMessage(err, 'code_generation_failed');
                   updateContent(markToolAsError(content, tc.id, message));
                   logError(err, {
                     functionName: 'parametric-chat',
@@ -1330,7 +1434,7 @@ export async function handleParametricChatRequest(req: Request) {
                   updateContent(markToolAsError(content, tc.id, 'empty_code'));
                   pushToolResult(
                     tc,
-                    'Error: build_parametric_model produced empty OpenSCAD code.',
+                    'Error: build_parametric_model produced empty CAD code.',
                   );
                   break;
                 }
@@ -1347,10 +1451,7 @@ export async function handleParametricChatRequest(req: Request) {
                 break;
               } catch (err) {
                 await refundParametricToken('artifact_creation_failed');
-                const message =
-                  err instanceof Error
-                    ? err.message
-                    : 'artifact_creation_failed';
+                const message = errorMessage(err, 'artifact_creation_failed');
                 updateContent(markToolAsError(content, tc.id, message));
                 logError(err, {
                   functionName: 'parametric-chat',
@@ -1400,7 +1501,11 @@ export async function handleParametricChatRequest(req: Request) {
             // Fallback: if the model dumped OpenSCAD into its text instead of
             // calling build_parametric_model (rare but happens on long
             // conversations), pull it out and synthesize an artifact.
-            if (!content.artifact && content.text) {
+            if (
+              cadBackend === 'openscad' &&
+              !content.artifact &&
+              content.text
+            ) {
               const extractedCode = extractOpenSCADCodeFromText(content.text);
               if (extractedCode) {
                 const title = await generateTitleFromMessages(

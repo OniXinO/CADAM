@@ -174,9 +174,13 @@ export async function formatUserMessage(
   }
 
   if (message.content.error) {
+    const target =
+      message.content.cadBackend === 'build123d'
+        ? 'build123d Python CAD'
+        : 'OpenSCAD';
     parts.push({
       type: 'text',
-      text: `The OpenSCAD code generated has failed to compile and has given the following error, fix any syntax, logic, parameter, library, or other issues: ${message.content.error}`,
+      text: `The ${target} code generated has failed to compile and has given the following error, fix any syntax, logic, parameter, library, or other issues: ${message.content.error}`,
     });
   }
 

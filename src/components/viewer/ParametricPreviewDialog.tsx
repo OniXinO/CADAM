@@ -7,7 +7,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { ImageGallery } from '@/components/viewer/ImageGallery';
-import { OpenSCADPreview } from './OpenSCADViewer';
+import { Build123dPreview, OpenSCADPreview } from './OpenSCADViewer';
 import OpenSCADError from '@/lib/OpenSCADError';
 import {
   Sheet,
@@ -49,6 +49,12 @@ export function ParametricPreviewDialog({
   useEffect(() => {
     setOpen(!!currentMessage);
   }, [currentMessage]);
+
+  useEffect(() => {
+    if (currentMessage?.content.artifact?.cadBackend === 'build123d') {
+      onDxfExportChange?.(null);
+    }
+  }, [currentMessage?.content.artifact?.cadBackend, onDxfExportChange]);
 
   const handleOpenChange = () => {
     if (open) {
@@ -101,6 +107,8 @@ export function ParametricPreviewDialog({
   if (!currentMessage) {
     return null;
   }
+  const isBuild123d =
+    currentMessage.content.artifact?.cadBackend === 'build123d';
 
   return (
     <>
@@ -159,15 +167,26 @@ export function ParametricPreviewDialog({
               <div className="mx-auto flex h-full max-w-xl flex-col items-center pb-6">
                 <div className="h-[40dvh] min-h-[40dvh] w-full px-4">
                   <div className="h-full w-full overflow-hidden rounded-xl">
-                    <OpenSCADPreview
-                      scadCode={currentMessage.content.artifact.code}
-                      color="#F8248A"
-                      onOutputChange={onOutputChange}
-                      onDxfExportChange={onDxfExportChange}
-                      fixError={fixError}
-                      isMobile={true}
-                      backgroundColor="#212121"
-                    />
+                    {isBuild123d ? (
+                      <Build123dPreview
+                        build123dCode={currentMessage.content.artifact.code}
+                        color="#F8248A"
+                        onOutputChange={onOutputChange}
+                        fixError={fixError}
+                        isMobile={true}
+                        backgroundColor="#212121"
+                      />
+                    ) : (
+                      <OpenSCADPreview
+                        scadCode={currentMessage.content.artifact.code}
+                        color="#F8248A"
+                        onOutputChange={onOutputChange}
+                        onDxfExportChange={onDxfExportChange}
+                        fixError={fixError}
+                        isMobile={true}
+                        backgroundColor="#212121"
+                      />
+                    )}
                   </div>
                 </div>
                 <div className="w-full px-4">

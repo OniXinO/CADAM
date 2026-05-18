@@ -4,6 +4,7 @@ class OpenSCADError extends Error {
 
   constructor(message: string, code: string, stdErr: string[]) {
     super(message);
+    this.name = 'OpenSCADError';
     this.code = code;
     this.stdErr = stdErr;
   }

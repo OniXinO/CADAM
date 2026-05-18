@@ -95,6 +95,15 @@ npm run dev
 - Node.js ^20.19.0 or >=22.12.0, with npm 10+
 - Supabase CLI
 - ngrok (for local webhook development)
+- For local-only build123d development: Python 3 with `build123d` installed
+
+  ```bash
+  python3 -m pip install build123d
+  ```
+
+Production build123d exports must run through the isolated exporter service in
+`services/build123d-exporter`. Do not run LLM-generated Python inside the main
+web server in production.
 
 ## 🔧 Setting Up Environment Variables
 
@@ -123,7 +132,49 @@ npm run dev
   ADAM_URL="<Adam URL or dev URL>" # Checkout and portal redirect target
   WEBHOOK_BASE_URL="<Public TanStack App URL>" # Your app URL for /cadam/api callbacks
   NGROK_URL="<NGROK URL>" # Optional local Supabase Storage tunnel for provider-readable signed URLs
+  BUILD123D_EXPORT_URL="" # Production exporter service origin
+  BUILD123D_EXPORT_TOKEN="<Shared exporter bearer token>"
+  BUILD123D_EXPORT_TIMEOUT_MS="45000"
+  BUILD123D_MAX_CODE_LENGTH="200000"
+  BUILD123D_MAX_OUTPUT_BYTES="26214400"
+  BUILD123D_MAX_PREVIEW_PARTS="64"
+  BUILD123D_ALLOW_LOCAL_PYTHON="1" # Local dev only
   ```
+
+### build123d Export Service
+
+CADAM's `/api/build123d-export` endpoint validates the signed-in user, then:
+
+- calls `BUILD123D_EXPORT_URL/export` when that env var is set;
+- otherwise allows local `python3` only for `ENVIRONMENT=local`,
+  `ENVIRONMENT=development`, `ENVIRONMENT=test`, or
+  `BUILD123D_ALLOW_LOCAL_PYTHON=1`;
+- fails loudly in production if no exporter service is configured.
+
+Run the isolated exporter locally with:
+
+```bash
+docker build --platform linux/amd64 -t cadam-build123d-exporter services/build123d-exporter
+docker run --rm \
+  -p 8080:8080 \
+  --cpus=2 \
+  --memory=2g \
+  -e BUILD123D_EXPORT_TOKEN=dev-build123d-token \
+  cadam-build123d-exporter
+```
+
+Then set:
+
+```bash
+BUILD123D_EXPORT_URL="http://127.0.0.1:8080"
+BUILD123D_EXPORT_TOKEN="dev-build123d-token"
+```
+
+For production, deploy the same container behind HTTPS with CPU, memory, timeout,
+temporary filesystem, and outbound-network limits. The exporter process also
+blocks Python socket creation before user code loads. It receives only generated
+build123d source and export options; it should not receive CADAM database,
+billing, Supabase, OpenRouter, or provider secrets.
 
 ## 🌐 Setting Up ngrok for Local Development
 

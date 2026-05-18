@@ -18,6 +18,12 @@ import { useProfile, useUpdateProfile } from '@/services/profileService';
 import { AvatarUpdateDialog } from '@/components/auth/AvatarUpdateDialog';
 import { useTokenPacks } from '@/hooks/useTokenPacks';
 import { PLAN_DISPLAY_NAMES } from '@/config/plan-features';
+import {
+  getCadBackendPreference,
+  setCadBackendPreference,
+} from '@/utils/cadBackend';
+import { CadBackendToggle } from '@/components/CadBackendToggle';
+import { CadBackend } from '@shared/types';
 
 function formatPeriodEnd(iso: string | null | undefined): string | null {
   if (!iso) return null;
@@ -46,6 +52,7 @@ export default function SettingsView() {
   const { toast } = useToast();
   const [newName, setNewName] = useState(profile?.full_name || '');
   const [editingName, setEditingName] = useState(false);
+  const [cadBackend, setCadBackend] = useState(getCadBackendPreference);
   const nameInputRef = useRef<HTMLInputElement>(null);
   const { data: tokenPacks = [] } = useTokenPacks();
   const {
@@ -63,6 +70,16 @@ export default function SettingsView() {
   useEffect(() => {
     setNewName(profile?.full_name || '');
   }, [profile?.full_name]);
+
+  useEffect(() => {
+    const updateCadBackend = () => setCadBackend(getCadBackendPreference());
+    window.addEventListener('storage', updateCadBackend);
+    window.addEventListener('adam:cad-backend-changed', updateCadBackend);
+    return () => {
+      window.removeEventListener('storage', updateCadBackend);
+      window.removeEventListener('adam:cad-backend-changed', updateCadBackend);
+    };
+  }, []);
 
   const { mutate: handleManageSubscription, isPending: isManageLoading } =
     useManageSubscription();
@@ -113,6 +130,17 @@ export default function SettingsView() {
         },
       },
     );
+  };
+
+  const handleCadBackendChange = (nextBackend: CadBackend) => {
+    setCadBackend(nextBackend);
+    setCadBackendPreference(nextBackend);
+    toast({
+      title: 'Success',
+      description: `CAD generation set to ${
+        nextBackend === 'build123d' ? 'build123d' : 'OpenSCAD'
+      }`,
+    });
   };
 
   const { mutate: handleResetPassword, isPending: isResetLoading } =
@@ -271,6 +299,26 @@ export default function SettingsView() {
                 className="mt-0.5"
                 checked={profile?.notifications_enabled ?? false}
                 onCheckedChange={handleUpdateNotifications}
+              />
+            </div>
+          </section>
+
+          {/* CAD generation */}
+          <section className="rounded-xl border border-adam-neutral-800 bg-adam-background-2 p-6">
+            <h2 className="mb-5 text-sm font-medium text-adam-neutral-50">
+              CAD generation
+            </h2>
+
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+              <div className="min-w-0 flex-1">
+                <div className="text-sm text-adam-neutral-50">Backend</div>
+                <div className="mt-0.5 text-xs leading-relaxed text-adam-neutral-200">
+                  Choose OpenSCAD or build123d for new parametric generations.
+                </div>
+              </div>
+              <CadBackendToggle
+                value={cadBackend}
+                onChange={handleCadBackendChange}
               />
             </div>
           </section>

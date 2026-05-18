@@ -19,6 +19,15 @@ interface ThreeSceneProps {
   isMobile?: boolean;
   backgroundColor?: string;
   coloredGroup?: THREE.Group | null;
+  coloredMeshes?: ColoredMeshPreview[] | null;
+}
+
+export interface ColoredMeshPreview {
+  id: string;
+  name: string;
+  geometry: THREE.BufferGeometry;
+  color: string;
+  opacity?: number;
 }
 
 export function ThreeScene({
@@ -27,6 +36,7 @@ export function ThreeScene({
   isMobile = false,
   backgroundColor = '#3B3B3B',
   coloredGroup,
+  coloredMeshes,
 }: ThreeSceneProps) {
   const [isOrthographic, setIsOrthographic] = useState(true);
 
@@ -42,6 +52,19 @@ export function ThreeScene({
     if (box.isEmpty()) return new THREE.Vector3();
     return box.getCenter(new THREE.Vector3()).negate();
   }, [coloredGroup]);
+
+  const meshCenterOffset = useMemo(() => {
+    if (!coloredMeshes?.length) return null;
+    const box = new THREE.Box3();
+    for (const mesh of coloredMeshes) {
+      mesh.geometry.computeBoundingBox();
+      if (mesh.geometry.boundingBox) {
+        box.union(mesh.geometry.boundingBox);
+      }
+    }
+    if (box.isEmpty()) return new THREE.Vector3();
+    return box.getCenter(new THREE.Vector3()).negate();
+  }, [coloredMeshes]);
 
   return (
     <div className="relative h-full w-full overflow-hidden">
@@ -73,7 +96,25 @@ export function ThreeScene({
           <directionalLight position={[-5, 5, -5]} intensity={0.2} />
           <directionalLight position={[0, 5, 0]} intensity={0.2} />
           <directionalLight position={[-5, -5, -5]} intensity={0.6} />
-          {coloredGroup && groupCenterOffset ? (
+          {coloredMeshes?.length && meshCenterOffset ? (
+            <group
+              rotation={[-Math.PI / 2, 0, 0]}
+              position={meshCenterOffset.toArray()}
+            >
+              {coloredMeshes.map((mesh) => (
+                <mesh key={mesh.id} name={mesh.name} geometry={mesh.geometry}>
+                  <meshStandardMaterial
+                    color={mesh.color}
+                    metalness={0.35}
+                    roughness={0.4}
+                    envMapIntensity={0.35}
+                    transparent={mesh.opacity !== undefined && mesh.opacity < 1}
+                    opacity={mesh.opacity ?? 1}
+                  />
+                </mesh>
+              ))}
+            </group>
+          ) : coloredGroup && groupCenterOffset ? (
             <group rotation={[-Math.PI / 2, 0, 0]}>
               <primitive
                 object={coloredGroup}

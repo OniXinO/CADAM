@@ -1,6 +1,12 @@
 import { useConversation } from '@/contexts/ConversationContext';
 import { supabase } from '@/lib/supabase';
-import { Content, Conversation, Message, Model } from '@shared/types';
+import {
+  CadBackend,
+  Content,
+  Conversation,
+  Message,
+  Model,
+} from '@shared/types';
 import { HistoryConversation } from '../types/misc.ts';
 import {
   QueryClient,
@@ -11,6 +17,7 @@ import {
 } from '@tanstack/react-query';
 import * as Sentry from '@sentry/react';
 import { apiUrl } from '@/services/api';
+import { getCadBackendPreference } from '@/utils/cadBackend';
 
 function messageSentConversationUpdate(
   newMessage: Message,
@@ -370,10 +377,12 @@ export function useParametricChatMutation({
       model,
       messageId,
       conversationId,
+      cadBackend,
     }: {
       model: Model;
       messageId: string;
       conversationId: string;
+      cadBackend?: CadBackend;
     }) => {
       const newMessageId = crypto.randomUUID();
       // Start streaming request
@@ -389,6 +398,7 @@ export function useParametricChatMutation({
           conversationId,
           messageId,
           model,
+          cadBackend: cadBackend ?? getCadBackendPreference(),
           newMessageId,
         }),
       });
@@ -540,6 +550,7 @@ export function useSendContentMutation({
           model: content.model ?? conversation.settings?.model ?? 'fast',
           messageId: userMessage.id,
           conversationId: conversation.id,
+          cadBackend: content.cadBackend,
         });
       }
     },
@@ -639,6 +650,7 @@ export function useEditMessageMutation({
           model: conversation.settings?.model ?? 'fast',
           messageId: userMessage.id,
           conversationId: conversation.id,
+          cadBackend: updatedMessage.content.cadBackend,
         });
       }
     },

@@ -1,6 +1,7 @@
 import { Database } from './database.ts';
 export type Model = string;
 export type CreativeModel = 'quality' | 'fast' | 'ultra';
+export type CadBackend = 'openscad' | 'build123d';
 
 export type Prompt = {
   text?: string;
@@ -64,12 +65,15 @@ export type Content = {
   polygonCount?: number;
   // File format preference for quad topology models
   preferredFormat?: 'glb' | 'fbx';
+  cadBackend?: CadBackend;
 };
 
 export type ParametricArtifact = {
   title: string;
   version: string;
   code: string;
+  cadBackend?: CadBackend;
+  codeLanguage?: 'openscad' | 'python';
   parameters: Parameter[];
   parts?: ParametricPart[];
   legacy?: {
@@ -123,6 +127,7 @@ export type GenerationStatus = Database['public']['Enums']['generation-status'];
 
 export type ConversationSettings = {
   model?: Model;
+  cadBackend?: CadBackend;
 } | null;
 
 export type Profile = Database['public']['Tables']['profiles']['Row'];

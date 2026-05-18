@@ -26,6 +26,7 @@ import { Route as ApiMeshRouteImport } from './routes/api/mesh'
 import { Route as ApiFalWebhookRouteImport } from './routes/api/fal-webhook'
 import { Route as ApiDeleteUserRouteImport } from './routes/api/delete-user'
 import { Route as ApiCreativeChatRouteImport } from './routes/api/creative-chat'
+import { Route as ApiBuild123dExportRouteImport } from './routes/api/build123d-export'
 import { Route as ApiBillingStatusRouteImport } from './routes/api/billing-status'
 import { Route as ApiBillingProductsRouteImport } from './routes/api/billing-products'
 import { Route as ApiBillingPortalRouteImport } from './routes/api/billing-portal'
@@ -123,6 +124,11 @@ const ApiCreativeChatRoute = ApiCreativeChatRouteImport.update({
   path: '/api/creative-chat',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiBuild123dExportRoute = ApiBuild123dExportRouteImport.update({
+  id: '/api/build123d-export',
+  path: '/api/build123d-export',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiBillingStatusRoute = ApiBillingStatusRouteImport.update({
   id: '/api/billing-status',
   path: '/api/billing-status',
@@ -198,6 +204,7 @@ export interface FileRoutesByFullPath {
   '/api/billing-portal': typeof ApiBillingPortalRoute
   '/api/billing-products': typeof ApiBillingProductsRoute
   '/api/billing-status': typeof ApiBillingStatusRoute
+  '/api/build123d-export': typeof ApiBuild123dExportRoute
   '/api/creative-chat': typeof ApiCreativeChatRoute
   '/api/delete-user': typeof ApiDeleteUserRoute
   '/api/fal-webhook': typeof ApiFalWebhookRoute
@@ -227,6 +234,7 @@ export interface FileRoutesByTo {
   '/api/billing-portal': typeof ApiBillingPortalRoute
   '/api/billing-products': typeof ApiBillingProductsRoute
   '/api/billing-status': typeof ApiBillingStatusRoute
+  '/api/build123d-export': typeof ApiBuild123dExportRoute
   '/api/creative-chat': typeof ApiCreativeChatRoute
   '/api/delete-user': typeof ApiDeleteUserRoute
   '/api/fal-webhook': typeof ApiFalWebhookRoute
@@ -258,6 +266,7 @@ export interface FileRoutesById {
   '/api/billing-portal': typeof ApiBillingPortalRoute
   '/api/billing-products': typeof ApiBillingProductsRoute
   '/api/billing-status': typeof ApiBillingStatusRoute
+  '/api/build123d-export': typeof ApiBuild123dExportRoute
   '/api/creative-chat': typeof ApiCreativeChatRoute
   '/api/delete-user': typeof ApiDeleteUserRoute
   '/api/fal-webhook': typeof ApiFalWebhookRoute
@@ -290,6 +299,7 @@ export interface FileRouteTypes {
     | '/api/billing-portal'
     | '/api/billing-products'
     | '/api/billing-status'
+    | '/api/build123d-export'
     | '/api/creative-chat'
     | '/api/delete-user'
     | '/api/fal-webhook'
@@ -319,6 +329,7 @@ export interface FileRouteTypes {
     | '/api/billing-portal'
     | '/api/billing-products'
     | '/api/billing-status'
+    | '/api/build123d-export'
     | '/api/creative-chat'
     | '/api/delete-user'
     | '/api/fal-webhook'
@@ -349,6 +360,7 @@ export interface FileRouteTypes {
     | '/api/billing-portal'
     | '/api/billing-products'
     | '/api/billing-status'
+    | '/api/build123d-export'
     | '/api/creative-chat'
     | '/api/delete-user'
     | '/api/fal-webhook'
@@ -379,6 +391,7 @@ export interface RootRouteChildren {
   ApiBillingPortalRoute: typeof ApiBillingPortalRoute
   ApiBillingProductsRoute: typeof ApiBillingProductsRoute
   ApiBillingStatusRoute: typeof ApiBillingStatusRoute
+  ApiBuild123dExportRoute: typeof ApiBuild123dExportRoute
   ApiCreativeChatRoute: typeof ApiCreativeChatRoute
   ApiDeleteUserRoute: typeof ApiDeleteUserRoute
   ApiFalWebhookRoute: typeof ApiFalWebhookRoute
@@ -508,6 +521,13 @@ declare module '@tanstack/react-router' {
       path: '/api/creative-chat'
       fullPath: '/api/creative-chat'
       preLoaderRoute: typeof ApiCreativeChatRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/build123d-export': {
+      id: '/api/build123d-export'
+      path: '/api/build123d-export'
+      fullPath: '/api/build123d-export'
+      preLoaderRoute: typeof ApiBuild123dExportRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/billing-status': {
@@ -646,6 +666,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiBillingPortalRoute: ApiBillingPortalRoute,
   ApiBillingProductsRoute: ApiBillingProductsRoute,
   ApiBillingStatusRoute: ApiBillingStatusRoute,
+  ApiBuild123dExportRoute: ApiBuild123dExportRoute,
   ApiCreativeChatRoute: ApiCreativeChatRoute,
   ApiDeleteUserRoute: ApiDeleteUserRoute,
   ApiFalWebhookRoute: ApiFalWebhookRoute,
