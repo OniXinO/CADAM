@@ -213,6 +213,14 @@ $$;
 -- Backfill any legacy rows that still carry their payload in `content`.
 -- Idempotent: only touches rows where `parts` is still the default empty
 -- array AND `content` has data to convert, so a re-run is a no-op.
+--
+-- The prior single-UPDATE form timed out under Supabase's 2-minute
+-- statement_timeout: the `parts` column was just added with DEFAULT '[]',
+-- so every row matches the filter, and a seq scan + per-row plpgsql
+-- jsonb work doesn't fit in the window. SET LOCAL lifts the cap for this
+-- migration only — it expires automatically at COMMIT and does not leak.
+SET LOCAL statement_timeout = 0;
+
 UPDATE public.messages m
 SET parts = public._content_to_parts_v1(m.id, m.role, m.content, c.user_id, c.id),
     metadata = public._content_to_metadata_v1(m.content)

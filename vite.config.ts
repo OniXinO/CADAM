@@ -1,5 +1,6 @@
 import { sentryVitePlugin } from '@sentry/vite-plugin';
 import { tanstackStart } from '@tanstack/react-start/plugin/vite';
+import { nitro } from 'nitro/vite';
 import fs from 'node:fs';
 import path from 'path';
 import react from '@vitejs/plugin-react';
@@ -51,6 +52,10 @@ export default defineConfig({
         enabled: true,
         maskPath: normalizedAppBase,
       },
+    }),
+    nitro({
+      baseURL: normalizedAppBase,
+      inlineDynamicImports: true,
     }),
     react(),
     sentryVitePlugin({
