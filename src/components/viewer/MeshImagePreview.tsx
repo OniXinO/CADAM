@@ -1,9 +1,17 @@
 import { useQuery } from '@tanstack/react-query';
-import { Box, Frown, HeartCrack } from 'lucide-react';
+import { Frown, HeartCrack } from 'lucide-react';
 
 import { generatePreview } from '@/utils/meshUtils';
 import { useMeshData } from '@/hooks/useMeshData';
 
+/**
+ * Pure visual: renders the mesh thumbnail (or an icon-only placeholder for
+ * loading/missing/failure states). Status text and titles are owned by the
+ * parent component (MeshToolBlock surfaces them in its header;
+ * MeshContextChip surfaces filename + filetype next to the thumbnail).
+ * Don't reintroduce a "3D Object" label here — it duplicated MeshToolBlock's
+ * own title and rendered twice in the message bubble.
+ */
 export function MeshImagePreview({ meshId }: { meshId: string }) {
   const {
     data: { data: meshData, isLoading: isMeshDataLoading },
@@ -26,51 +34,29 @@ export function MeshImagePreview({ meshId }: { meshId: string }) {
 
   if (!isMeshDataLoading && !meshData) {
     return (
-      <div className="flex h-10 w-full items-center justify-between rounded-lg bg-adam-neutral-950 px-3">
-        <div className="flex h-full items-center justify-center gap-2">
-          <Box className="h-4 w-4 text-white" />
-          <span className="font-base text-sm text-white">
-            3D Object Data not found
-          </span>
-        </div>
-        <Frown className="h-4 w-4 text-white" />
+      <div className="flex aspect-square w-full items-center justify-center rounded-lg bg-adam-neutral-950">
+        <Frown className="h-6 w-6 text-white" />
       </div>
     );
   }
 
   if (meshData?.status === 'failure') {
     return (
-      <div className="flex h-10 w-full items-center justify-between rounded-lg bg-adam-neutral-950 px-3">
-        <div className="flex h-full items-center justify-center gap-2">
-          <Box className="h-4 w-4 text-white" />
-          <span className="font-base text-sm text-white">
-            3D Object failed to generate
-          </span>
-        </div>
-        <HeartCrack className="h-4 w-4 text-white" />
+      <div className="flex aspect-square w-full items-center justify-center rounded-lg bg-adam-neutral-950">
+        <HeartCrack className="h-6 w-6 text-white" />
       </div>
     );
   }
 
   return (
-    <div className="overflow-hidden rounded-lg">
-      <div
-        className={`relative aspect-square w-full bg-adam-neutral-950 ${
-          meshPreview ? '' : 'animate-pulse'
-        }`}
-      >
-        {meshPreview ? (
-          <img
-            src={meshPreview}
-            alt=""
-            className="h-full w-full object-cover"
-          />
-        ) : null}
-      </div>
-      <div className="flex h-10 w-full items-center gap-2 bg-black/80 px-3">
-        <Box className="h-4 w-4 text-white" />
-        <span className="font-base text-sm text-white">3D Object</span>
-      </div>
+    <div
+      className={`relative aspect-square w-full overflow-hidden rounded-lg bg-adam-neutral-950 ${
+        meshPreview ? '' : 'animate-pulse'
+      }`}
+    >
+      {meshPreview ? (
+        <img src={meshPreview} alt="" className="h-full w-full object-cover" />
+      ) : null}
     </div>
   );
 }
