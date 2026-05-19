@@ -264,11 +264,11 @@ export const PARAMETRIC_MODELS: ModelConfig[] = [
     supportsVision: true,
   },
   {
-    id: 'moonshotai/kimi-k2.6',
-    name: 'Kimi K2.6',
+    id: 'google/gemini-3.5-flash',
+    name: 'Gemini 3.5 Flash',
     description:
-      'Moonshot multimodal model with configurable reasoning, vision, and native tool use',
-    provider: 'MoonshotAI',
+      'High-efficiency Google multimodal model with fast coding and reasoning',
+    provider: 'Google',
     supportsTools: true,
     supportsThinking: true,
     supportsVision: true,
