@@ -227,7 +227,17 @@ export function ChatSession({
             existing.type === 'tool-build_parametric_model' &&
             existing.toolCallId === toolCall.toolCallId
           ) {
-            return replacement;
+            // Carry forward `callProviderMetadata` from the model-emitted
+            // tool-call (Gemini 3 stashes its `thoughtSignature` there).
+            // Without it the next server-side turn echoes the functionCall
+            // back to Gemini without a signature and Gemini rejects the
+            // request with "Function call is missing a thought_signature".
+            return existing.callProviderMetadata
+              ? {
+                  ...replacement,
+                  callProviderMetadata: existing.callProviderMetadata,
+                }
+              : replacement;
           }
           if (
             (existing.type === 'reasoning' || existing.type === 'text') &&
