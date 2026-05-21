@@ -1,6 +1,8 @@
 import { ChatTitle } from '@/components/chat/ChatTitle';
 import { ChatSession } from '@/components/chat/ChatSession';
+import { CreateIcon } from '@/components/icons/ui/CreateIcon';
 import { ParameterSection } from '@/components/parameter/ParameterSection';
+import { ParameterSheetContent } from '@/components/parameter/ParameterSheetContent';
 import { Button } from '@/components/ui/button';
 import {
   Popover,
@@ -179,6 +181,7 @@ function ConversationEditor() {
     useConversation();
   const { user, billing } = useAuth();
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const totalTokens = billing?.tokens.total ?? 0;
 
   // ── Per-conversation UI state ───────────────────────────────────────────
@@ -192,6 +195,7 @@ function ConversationEditor() {
   const [parameters, setParameters] = useState<Parameter[]>([]);
   const [currentOutput, setCurrentOutput] = useState<Blob | undefined>();
   const [dxfExporter, setDxfExporter] = useState<DxfExporter | null>(null);
+  const [mobilePreviewVersion, setMobilePreviewVersion] = useState(0);
   // Streaming flag surfaced from <ChatSession>. While true, the preview
   // pane swaps to the bouncing loader instead of mounting OpenSCAD —
   // matches the legacy ParametricPreviewSection behavior.
@@ -431,6 +435,7 @@ function ConversationEditor() {
       setCurrentOutput(undefined);
       setDxfExporter(() => null);
       setActivePreview({ type: 'artifact', messageId, artifact });
+      setMobilePreviewVersion((version) => version + 1);
     },
     [],
   );
@@ -438,6 +443,7 @@ function ConversationEditor() {
     setCurrentOutput(undefined);
     setDxfExporter(() => null);
     setActivePreview({ type: 'mesh', messageId, meshId });
+    setMobilePreviewVersion((version) => version + 1);
   }, []);
 
   const changeParameters = useCallback(
@@ -496,6 +502,14 @@ function ConversationEditor() {
   return (
     <ConversationView
       hasParameters={hasArtifact}
+      mobilePreviewKey={
+        sharePreview
+          ? sharePreview.type === 'artifact'
+            ? `artifact:${sharePreview.messageId}`
+            : `mesh:${sharePreview.messageId}:${sharePreview.meshId}`
+          : null
+      }
+      mobilePreviewVersion={mobilePreviewVersion}
       chatPanelSlot={
         <>
           {/* `pl-12` reserves space for the rotated "Chat" expand button
@@ -518,7 +532,7 @@ function ConversationEditor() {
                 />
               </div>
             </div>
-            <div className="flex items-center gap-3">
+            <div className="hidden items-center gap-3 md:flex">
               <Popover>
                 <PopoverTrigger asChild>
                   <Button
@@ -550,6 +564,19 @@ function ConversationEditor() {
                   />
                 </PopoverContent>
               </Popover>
+            </div>
+            <div className="flex items-center gap-3 md:hidden">
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 bg-transparent p-0 hover:bg-transparent"
+                onClick={() => {
+                  navigate({ to: '/' });
+                }}
+                aria-label="New Creation"
+              >
+                <CreateIcon className="h-5 w-5 text-adam-text-primary" />
+              </Button>
             </div>
           </div>
 
@@ -594,6 +621,28 @@ function ConversationEditor() {
           )}
         </div>
       }
+      mobilePreviewSlot={
+        <div className="flex h-full w-full items-center justify-center bg-adam-bg-secondary-dark">
+          {isChatStreaming ? (
+            <Loader message="Generating model" />
+          ) : activePreview?.type === 'artifact' ? (
+            <OpenSCADPreview
+              scadCode={activePreview.artifact.code}
+              color="#00A6FF"
+              onOutputChange={setCurrentOutput}
+              onDxfExportChange={handleDxfExporterChange}
+              isMobile={true}
+              backgroundColor="#212121"
+            />
+          ) : activePreview?.type === 'mesh' ? (
+            <MeshPreview meshId={activePreview.meshId} />
+          ) : (
+            <div className="text-sm text-adam-text-secondary">
+              Send a message to start creating
+            </div>
+          )}
+        </div>
+      }
       parametersSlot={
         <div className="relative h-full">
           <ParameterSection
@@ -608,6 +657,19 @@ function ConversationEditor() {
             }
           />
         </div>
+      }
+      mobileParametersSlot={
+        <ParameterSheetContent
+          parameters={parameters}
+          onParameterChange={changeParameters}
+          currentOutput={currentOutput}
+          dxfExporter={dxfExporter}
+          code={
+            activePreview?.type === 'artifact'
+              ? activePreview.artifact.code
+              : undefined
+          }
+        />
       }
     />
   );

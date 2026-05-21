@@ -1,6 +1,7 @@
 import { ChatTitle } from '@/components/chat/ChatTitle';
 import { MessageBubble } from '@/components/chat/MessageBubble';
 import { ParameterSection } from '@/components/parameter/ParameterSection';
+import { ParameterSheetContent } from '@/components/parameter/ParameterSheetContent';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { MeshPreview } from '@/components/viewer/MeshPreview';
 import { OpenSCADPreview } from '@/components/viewer/OpenSCADViewer';
@@ -138,6 +139,7 @@ function ConversationShare({ conversation, messages }: ConversationShareProps) {
   const [activePreview, setActivePreview] = useState<ActivePreview>(null);
   const [parameters, setParameters] = useState<Parameter[]>([]);
   const [currentOutput, setCurrentOutput] = useState<Blob | undefined>();
+  const [mobilePreviewVersion, setMobilePreviewVersion] = useState(0);
   const baseCodeRef = useRef<string | null>(null);
 
   // Auto-switch the preview pane to the latest artifact / mesh in the
@@ -161,6 +163,7 @@ function ConversationShare({ conversation, messages }: ConversationShareProps) {
         messageId: latest.messageId,
         artifact: latest.artifact,
       });
+      setMobilePreviewVersion((version) => version + 1);
     } else {
       setCurrentOutput(undefined);
       setActivePreview({
@@ -168,6 +171,7 @@ function ConversationShare({ conversation, messages }: ConversationShareProps) {
         messageId: latest.messageId,
         meshId: latest.meshId,
       });
+      setMobilePreviewVersion((version) => version + 1);
     }
   }, [branch]);
 
@@ -177,12 +181,14 @@ function ConversationShare({ conversation, messages }: ConversationShareProps) {
       setParameters(parseParameters(artifact.code));
       setCurrentOutput(undefined);
       setActivePreview({ type: 'artifact', messageId, artifact });
+      setMobilePreviewVersion((version) => version + 1);
     },
     [],
   );
   const handleViewMesh = useCallback((meshId: string, messageId: string) => {
     setCurrentOutput(undefined);
     setActivePreview({ type: 'mesh', messageId, meshId });
+    setMobilePreviewVersion((version) => version + 1);
   }, []);
 
   const changeParameters = useCallback(
@@ -210,6 +216,14 @@ function ConversationShare({ conversation, messages }: ConversationShareProps) {
   return (
     <ConversationView
       hasParameters={hasArtifact}
+      mobilePreviewKey={
+        activePreview
+          ? activePreview.type === 'artifact'
+            ? `artifact:${activePreview.messageId}`
+            : `mesh:${activePreview.messageId}:${activePreview.meshId}`
+          : null
+      }
+      mobilePreviewVersion={mobilePreviewVersion}
       chatPanelSlot={
         <>
           <div className="flex w-full items-center justify-between bg-transparent p-3 pl-12">
@@ -229,8 +243,9 @@ function ConversationShare({ conversation, messages }: ConversationShareProps) {
             </div>
           </div>
 
-          <ScrollArea className="min-h-0 flex-1 p-4">
-            <div className="mx-auto flex max-w-3xl flex-col gap-4">
+          <ScrollArea className="relative w-full max-w-xl flex-1 self-center px-2 py-0 md:min-h-0 md:max-w-none md:p-4">
+            <div className="pointer-events-none sticky left-0 top-0 z-50 mr-4 h-3 bg-gradient-to-b from-adam-bg-secondary-dark/90 to-transparent md:hidden" />
+            <div className="mx-auto flex max-w-3xl flex-col gap-4 pb-6 md:pb-0">
               {branch.map((node) => (
                 <MessageBubble
                   key={node.id}
@@ -264,6 +279,25 @@ function ConversationShare({ conversation, messages }: ConversationShareProps) {
           )}
         </div>
       }
+      mobilePreviewSlot={
+        <div className="flex h-full w-full items-center justify-center bg-adam-bg-secondary-dark">
+          {activePreview?.type === 'artifact' ? (
+            <OpenSCADPreview
+              scadCode={activePreview.artifact.code}
+              color="#00A6FF"
+              onOutputChange={setCurrentOutput}
+              isMobile={true}
+              backgroundColor="#212121"
+            />
+          ) : activePreview?.type === 'mesh' ? (
+            <MeshPreview meshId={activePreview.meshId} />
+          ) : (
+            <div className="text-sm text-adam-text-secondary">
+              Nothing to preview yet
+            </div>
+          )}
+        </div>
+      }
       parametersSlot={
         <div className="relative h-full">
           <ParameterSection
@@ -278,6 +312,19 @@ function ConversationShare({ conversation, messages }: ConversationShareProps) {
             }
           />
         </div>
+      }
+      mobileParametersSlot={
+        <ParameterSheetContent
+          parameters={parameters}
+          onParameterChange={changeParameters}
+          currentOutput={currentOutput}
+          dxfExporter={null}
+          code={
+            activePreview?.type === 'artifact'
+              ? activePreview.artifact.code
+              : undefined
+          }
+        />
       }
     />
   );
