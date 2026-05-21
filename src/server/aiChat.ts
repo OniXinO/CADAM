@@ -23,7 +23,7 @@ import type { ProviderOptions } from '@ai-sdk/provider-utils';
 import { z } from 'zod';
 import { billing, BillingClientError } from './billingClient';
 import { corsHeaders, isRecord } from './api';
-import { env, requiredEnv } from './env';
+import { requiredEnv } from './env';
 import { logError } from './serverLog';
 import { handleMeshRequest } from './mesh';
 import { getAnonSupabaseClient } from './supabaseClient';
@@ -249,31 +249,21 @@ function providerFor(modelId: string): ChatProvider {
 
 type AnthropicProvider = ReturnType<typeof createAnthropic>;
 type GoogleProvider = ReturnType<typeof createGoogleGenerativeAI>;
-type OpenRouterProvider = ReturnType<typeof createOpenRouter>;
 
 type ChatProviders = {
-  anthropic: () => AnthropicProvider;
-  google: () => GoogleProvider;
-  openrouter: () => OpenRouterProvider;
+  anthropic: AnthropicProvider;
+  google: GoogleProvider;
+  /** Lazy — only initialized if a non-Anthropic / non-Google model is used. */
+  openrouter: () => ReturnType<typeof createOpenRouter>;
 };
 
 function createChatProviders(): ChatProviders {
-  let anthropic: AnthropicProvider | undefined;
-  let google: GoogleProvider | undefined;
-  let openrouter: OpenRouterProvider | undefined;
+  let openrouter: ReturnType<typeof createOpenRouter> | undefined;
   return {
-    anthropic: () => {
-      anthropic ??= createAnthropic({
-        apiKey: requiredEnv('ANTHROPIC_API_KEY'),
-      });
-      return anthropic;
-    },
-    google: () => {
-      google ??= createGoogleGenerativeAI({
-        apiKey: requiredEnv('GOOGLE_API_KEY'),
-      });
-      return google;
-    },
+    anthropic: createAnthropic({ apiKey: requiredEnv('ANTHROPIC_API_KEY') }),
+    google: createGoogleGenerativeAI({
+      apiKey: requiredEnv('GOOGLE_API_KEY'),
+    }),
     openrouter: () => {
       openrouter ??= createOpenRouter({
         apiKey: requiredEnv('OPENROUTER_API_KEY'),
@@ -301,7 +291,7 @@ function buildChatModel(
     // OpenRouter alias uses dots ("claude-haiku-4.5"). Normalize both.
     const id = modelId.slice('anthropic/'.length).replace(/\./g, '-');
     return {
-      model: providers.anthropic()(id),
+      model: providers.anthropic(id),
       providerOptions: thinking
         ? {
             anthropic: {
@@ -316,20 +306,9 @@ function buildChatModel(
   }
 
   if (modelId.startsWith('google/')) {
-    if (!env('GOOGLE_API_KEY') && env('OPENROUTER_API_KEY')) {
-      return {
-        model: providers.openrouter().chat(modelId, {
-          ...(thinking
-            ? { reasoning: { max_tokens: THINKING_BUDGET_TOKENS } }
-            : {}),
-          usage: { include: true },
-        }),
-      };
-    }
-
     const id = modelId.slice('google/'.length);
     return {
-      model: providers.google()(id),
+      model: providers.google(id),
       // Gemini 3 Pro (and most current Google reasoning models) always
       // think internally — `thinkingBudget` only controls how MUCH, not
       // whether. `includeThoughts` is what actually surfaces those
@@ -1012,7 +991,7 @@ export async function handleAiChatRequest(req: Request) {
       if (isFirstUserTurn) {
         void emitConversationTitle({
           writer,
-          anthropic: providers.anthropic(),
+          anthropic: providers.anthropic,
           supabaseClient,
           conversation,
           firstMessage: branchMessages[0],
@@ -1129,7 +1108,7 @@ export async function handleAiChatRequest(req: Request) {
               // tradeoff for getting pills delivered.
               await emitConversationSuggestions({
                 writer,
-                anthropic: providers.anthropic(),
+                anthropic: providers.anthropic,
                 supabaseClient,
                 conversation,
                 branch: [
