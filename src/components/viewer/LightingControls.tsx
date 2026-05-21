@@ -14,13 +14,13 @@ import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import {
   DEFAULT_BRIGHTNESS,
-  DEFAULT_BRIGHTNESS_UPSCALED,
   DEFAULT_ROUGHNESS,
   DEFAULT_NORMAL_INTENSITY,
   getModelDefaultBrightness,
+  isCreativeModel,
   shouldShowNormalIntensity,
 } from '@/constants/meshConstants';
-import { CreativeModel, Model } from '@shared/types';
+import { Model } from '@shared/types';
 import posthog from 'posthog-js';
 
 interface LightingControlsProps {
@@ -29,7 +29,6 @@ interface LightingControlsProps {
   normalIntensity: number;
   polygonCount?: number;
   modelQuality?: Model;
-  isUpscaled?: boolean;
   onBrightnessChange: (value: number) => void;
   onRoughnessChange: (value: number) => void;
   onNormalIntensityChange: (value: number) => void;
@@ -41,7 +40,6 @@ export function LightingControls({
   normalIntensity,
   polygonCount,
   modelQuality,
-  isUpscaled,
   onBrightnessChange,
   onRoughnessChange,
   onNormalIntensityChange,
@@ -49,17 +47,16 @@ export function LightingControls({
   const [isOpen, setIsOpen] = useState(
     localStorage.getItem('lightingControlsOpen') !== 'false',
   );
+  const creativeModel =
+    modelQuality && isCreativeModel(modelQuality) ? modelQuality : null;
 
   // Use centralized model configuration
-  const showNormalIntensityControl = modelQuality
-    ? shouldShowNormalIntensity(modelQuality as CreativeModel)
+  const showNormalIntensityControl = creativeModel
+    ? shouldShowNormalIntensity(creativeModel)
     : false;
-  // Upscaled models need higher brightness to show color correctly
-  const defaultBrightness = isUpscaled
-    ? DEFAULT_BRIGHTNESS_UPSCALED
-    : modelQuality
-      ? getModelDefaultBrightness(modelQuality as CreativeModel)
-      : DEFAULT_BRIGHTNESS;
+  const defaultBrightness = creativeModel
+    ? getModelDefaultBrightness(creativeModel)
+    : DEFAULT_BRIGHTNESS;
 
   // Check if values have changed from defaults
   const brightnessChanged = brightness !== defaultBrightness;

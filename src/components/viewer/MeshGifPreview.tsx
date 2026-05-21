@@ -32,18 +32,20 @@ const fragmentShader = quantizeFragmentShader;
 export function MeshGifPreview({
   ref,
   meshId,
+  externalGltf,
   setIsGenerating,
   setProgress,
   setReadyToDownload,
 }: {
   ref: React.RefObject<{ downloadGIF: () => Promise<void> } | null>;
-  meshId: string;
+  meshId?: string;
+  externalGltf?: GLTF | null;
   setIsGenerating: (isGenerating: boolean) => void;
   setProgress: (progress: number) => void;
   setReadyToDownload: (readyToDownload: boolean) => void;
 }) {
   const { conversation } = useConversation();
-  const [gltf, setGltf] = useState<GLTF | null>(null);
+  const [gltf, setGltf] = useState<GLTF | null>(externalGltf ?? null);
   const [canvas, setCanvas] = useState<HTMLCanvasElement | null>(null);
   const logoImage = useMemo(() => {
     const img = new Image();
@@ -113,17 +115,22 @@ export function MeshGifPreview({
   }, [cleanupThreeJS]);
 
   useEffect(() => {
+    if (externalGltf !== undefined) {
+      setGltf(externalGltf);
+      return;
+    }
     setGltf(null);
-  }, [meshId]);
+  }, [meshId, externalGltf]);
 
   const {
     data: { data: meshData, isLoading: isMeshDataLoading },
     blob: { data: mesh, isLoading: isMeshLoading },
   } = useMeshData({
-    id: meshId,
+    id: meshId ?? '',
   });
 
   useEffect(() => {
+    if (externalGltf) return; // skip blob load when caller provided gltf directly
     const loadMesh = async (meshBlob: Blob) => {
       try {
         const fileType = meshData?.file_type || 'glb';
@@ -289,7 +296,7 @@ export function MeshGifPreview({
     if (mesh && meshData) {
       loadMesh(mesh);
     }
-  }, [mesh, meshData]);
+  }, [mesh, meshData, externalGltf]);
 
   const renderer = useMemo(() => {
     if (!canvas) {
@@ -305,7 +312,12 @@ export function MeshGifPreview({
       canvas: canvas,
     });
 
-    renderer.setSize(canvas.clientWidth, canvas.clientWidth / 1.618);
+    // Size to the canvas's actual layout box instead of forcing a 1.618
+    // ratio — when the wrapper is, say, h-56 × ~262px the old math made a
+    // 262×162 buffer and left a 62px black bar below.
+    const width = canvas.clientWidth || 1;
+    const height = canvas.clientHeight || width;
+    renderer.setSize(width, height, false);
     renderer.setClearColor(0xffffff, 1);
     rendererRef.current = renderer;
 
@@ -318,11 +330,19 @@ export function MeshGifPreview({
 
     const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 1000);
     camera.position.set(0, 0, 3);
-    camera.aspect = 1.618;
-    camera.updateProjectionMatrix();
     cameraRef.current = camera;
     return camera;
   }, []);
+
+  // Keep the camera aspect matched to the canvas. Runs whenever the
+  // renderer (and therefore canvas dimensions) settles.
+  useEffect(() => {
+    if (!canvas || !camera) return;
+    const width = canvas.clientWidth || 1;
+    const height = canvas.clientHeight || width;
+    camera.aspect = width / height;
+    camera.updateProjectionMatrix();
+  }, [canvas, camera, renderer]);
 
   // Add effect to adjust camera so the mesh is fully in view
   useEffect(() => {
@@ -399,6 +419,16 @@ export function MeshGifPreview({
       0.04,
     ).texture;
 
+    // `RoomEnvironment` alone lights Tripo GLBs (full PBR maps) but leaves a
+    // plain `MeshStandardMaterial` — the OpenSCAD path — rendering black. Add
+    // an ambient + key directional pair so both surfaces show up. The render
+    // loop already preserves `DirectionalLight` children when it swaps the
+    // model in, so these survive each render() pass.
+    renderScene.add(new THREE.AmbientLight(0xffffff, 0.8));
+    const keyLight = new THREE.DirectionalLight(0xffffff, 1.2);
+    keyLight.position.set(5, 5, 5);
+    renderScene.add(keyLight);
+
     return renderScene;
   }, [renderer]);
 
@@ -410,14 +440,11 @@ export function MeshGifPreview({
 
       const scene = gltf.scene;
 
-      // Remove previous scene from render scene
-      renderScene.children.forEach((child) => {
-        if (
-          child !==
-          renderScene.children.find((c) => c.type === 'DirectionalLight')
-        ) {
-          renderScene.remove(child);
-        }
+      // Strip the previous model out before adding the new one. Lights set
+      // up in `renderScene` (ambient + key directional) stay across frames
+      // — only `Object3D` children that aren't lights get removed.
+      [...renderScene.children].forEach((child) => {
+        if (!(child instanceof THREE.Light)) renderScene.remove(child);
       });
 
       renderScene.add(scene);
@@ -646,17 +673,13 @@ export function MeshGifPreview({
     });
   }, [gltf, renderer]);
 
-  if (isMeshDataLoading || isMeshLoading) {
-    return (
-      <div className="flex h-full w-full items-center justify-center">
-        <Loader2 className="h-10 w-10 animate-spin" />
-      </div>
-    );
-  }
-
-  if (!meshData || !mesh) {
-    return null;
-  }
+  // Show a spinner whenever we don't yet have anything to draw — the
+  // meshId fetch path covers Tripo GLB downloads, and `!gltf` covers the
+  // OpenSCAD compile path where render() stays a no-op until the caller
+  // hands us a gltf via externalGltf. Without this the canvas just sits
+  // there as a transparent rectangle showing the dark wrapper through.
+  const meshLoading = !!meshId && (isMeshDataLoading || isMeshLoading);
+  const showLoader = !gltf && (meshLoading || !meshId);
 
   return (
     <div className="flex h-full w-full flex-col items-center justify-center gap-2">
@@ -671,6 +694,11 @@ export function MeshGifPreview({
           alt="ADAM logo"
           className="pointer-events-none absolute bottom-3 right-3 w-[15%] select-none"
         />
+        {showLoader ? (
+          <div className="absolute inset-0 flex items-center justify-center">
+            <Loader2 className="h-10 w-10 animate-spin" />
+          </div>
+        ) : null}
       </div>
     </div>
   );

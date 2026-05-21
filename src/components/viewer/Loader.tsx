@@ -53,19 +53,6 @@ const Loader = ({ message }: Props) => {
       }, VERB_ROTATE_MS);
     }, INITIAL_MESSAGE_MS);
 
-    // CHANGE TAB TITLE
-    document.title = 'Loading model.';
-
-    const titleInterval = setInterval(() => {
-      if (document.title === 'Loading model.') {
-        document.title = 'Loading model..';
-      } else if (document.title === 'Loading model..') {
-        document.title = 'Loading model...';
-      } else {
-        document.title = 'Loading model.';
-      }
-    }, 300);
-
     // ANIMATE LAST TWO DOTS WITH DELAYS AND INTERVALS
     const interval = setInterval(() => {
       dot2.current?.classList.toggle('opacity-0');
@@ -83,11 +70,9 @@ const Loader = ({ message }: Props) => {
       clearTimeout(initialTimeout);
       clearTimeout(startRotateTimeout);
       if (rotateInterval) clearInterval(rotateInterval);
-      clearInterval(titleInterval);
       clearInterval(interval);
       fadeTimeouts.current.forEach(clearTimeout);
       fadeTimeouts.current = [];
-      document.title = 'Adam';
     };
   }, []);
 

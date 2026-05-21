@@ -5,15 +5,8 @@ import {
   PerspectiveCamera,
 } from '@react-three/drei';
 import { Canvas } from '@react-three/fiber';
-import { ViewGizmo } from './ViewGizmo';
-import {
-  Download,
-  Frown,
-  HeartCrack,
-  Loader2,
-  ChevronDown,
-} from 'lucide-react';
-import { useCallback, useEffect, useMemo, useState, useRef } from 'react';
+import { Download, Frown, HeartCrack, ChevronDown } from 'lucide-react';
+import { Suspense, useCallback, useEffect, useState, useRef } from 'react';
 import * as THREE from 'three';
 import { GLTF, GLTFLoader, GLTFParser } from 'three-stdlib';
 import { STLLoader } from 'three/addons/loaders/STLLoader.js';
@@ -21,7 +14,8 @@ import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
 import { Button } from '@/components/ui/button';
 
-import { CreativeLoadingBar } from './CreativeLoadingBar';
+import { GlbPreview } from './GlbPreview';
+import { useGlbPreview } from '@/hooks/useGlbPreview';
 import { LightingControls } from './LightingControls';
 
 import posthog from 'posthog-js';
@@ -29,17 +23,17 @@ import { useIsMobile } from '@/hooks/useIsMobile';
 import { cn } from '@/lib/utils';
 import { useMeshData } from '@/hooks/useMeshData';
 import { DownloadMenu } from './DownloadMenu';
+import { ViewGizmo } from './ViewGizmo';
 import { WireframeIcon } from '@/components/icons/ui/WireframeIcon';
 
 // Default values for material controls
 import {
   DEFAULT_BRIGHTNESS,
-  DEFAULT_BRIGHTNESS_UPSCALED,
   DEFAULT_ROUGHNESS,
   DEFAULT_NORMAL_INTENSITY,
   getModelDefaultBrightness,
+  isCreativeModel,
 } from '@/constants/meshConstants';
-import { CreativeModel } from '@shared/types';
 
 /**
  * ModelWithControls - Renders a 3D model with adjustable material properties.
@@ -61,7 +55,6 @@ function ModelWithControls({
   normalIntensity,
   showTexture,
   wireframe,
-  isUpscaled = false,
 }: {
   gltf: GLTF;
   brightness: number;
@@ -69,7 +62,6 @@ function ModelWithControls({
   normalIntensity: number;
   showTexture: boolean;
   wireframe: boolean;
-  isUpscaled?: boolean;
 }) {
   // Reference to the scene to update materials
   const modelRef = useRef<THREE.Group>(null);
@@ -181,7 +173,7 @@ function ModelWithControls({
                 original.map !== null && original.map !== undefined;
               const hasVertexColors = original.vertexColors === true;
 
-              // In textureless mode for models with baked base colors (like upscaled models),
+              // In textureless mode for models with baked base colors,
               // use neutral gray as the base instead of original color
               const useGrayBase =
                 !showTexture && !hasTextureMap && !hasVertexColors;
@@ -209,10 +201,7 @@ function ModelWithControls({
             // Apply to emissive property if it exists (affects brightness)
             if ('emissive' in mat && original.emissive) {
               const emissiveMat = mat as THREE.MeshStandardMaterial;
-              // Use brightness for emissive intensity
-              // Upscaled models with textures need much stronger emissive to appear correctly lit
-              const baseIntensity = Math.max(0, (actualBrightness - 1) * 0.2);
-              const intensity = isUpscaled ? baseIntensity * 3 : baseIntensity;
+              const intensity = Math.max(0, (actualBrightness - 1) * 0.2);
               emissiveMat.emissive.setRGB(intensity, intensity, intensity);
             }
           }
@@ -282,7 +271,6 @@ function ModelWithControls({
     showTexture,
     wireframe,
     originalMaterials,
-    isUpscaled,
   ]);
 
   // When component mounts, store original material properties including PBR maps
@@ -475,28 +463,14 @@ export function MeshPreview({ meshId }: { meshId: string }) {
     id: meshId,
   });
 
-  // Detect upscaled models (need special lighting treatment)
-  const isUpscaled = useMemo(
-    () =>
-      !!(
-        meshData?.prompt &&
-        typeof meshData.prompt === 'object' &&
-        'upscaledFrom' in meshData.prompt &&
-        meshData.prompt.upscaledFrom
-      ),
-    [meshData?.prompt],
-  );
-
   // Reset material states when meshId changes
   useEffect(() => {
     // Reset to defaults when switching between messages
     setViewMode('textured');
-    // Set brightness based on model configuration
-    // Upscaled models need higher brightness to show color correctly
-    const modelBrightness = isUpscaled
-      ? DEFAULT_BRIGHTNESS_UPSCALED
-      : meshData?.prompt.model
-        ? getModelDefaultBrightness(meshData.prompt.model as CreativeModel)
+    const promptModel = meshData?.prompt.model;
+    const modelBrightness =
+      promptModel && isCreativeModel(promptModel)
+        ? getModelDefaultBrightness(promptModel)
         : DEFAULT_BRIGHTNESS;
     setBrightness(modelBrightness);
     setRoughness(DEFAULT_ROUGHNESS);
@@ -511,7 +485,7 @@ export function MeshPreview({ meshId }: { meshId: string }) {
       metallic: false,
       ao: false,
     });
-  }, [meshId, isUpscaled, meshData?.prompt.model]);
+  }, [meshId, meshData?.prompt.model]);
 
   useEffect(() => {
     const loadMesh = async (meshBlob: Blob) => {
@@ -751,28 +725,12 @@ export function MeshPreview({ meshId }: { meshId: string }) {
       meshId,
     });
   };
-
-  if (meshData && meshData.status === 'pending') {
-    return (
-      <div className="flex h-full w-full items-center justify-center p-4">
-        <CreativeLoadingBar
-          startTime={new Date(meshData.created_at).getTime()}
-          modelType="mesh"
-          modelName={
-            (meshData?.prompt.model ?? undefined) as CreativeModel | undefined
-          }
-          meshId={meshId}
-        />
-      </div>
-    );
-  }
-
-  if (isMeshDataLoading || isMeshLoading) {
-    return (
-      <div className="flex h-full w-full items-center justify-center">
-        <Loader2 className="h-10 w-10 animate-spin" />
-      </div>
-    );
+  if (
+    isMeshDataLoading ||
+    isMeshLoading ||
+    (meshData && meshData.status === 'pending')
+  ) {
+    return <MeshPreviewPending meshId={meshId} />;
   }
 
   if (!meshData) {
@@ -810,45 +768,51 @@ export function MeshPreview({ meshId }: { meshId: string }) {
           isMobile && 'aspect-square overflow-hidden rounded-lg bg-[#3B3B3B]',
         )}
       >
-        <Canvas
-          gl={{ toneMapping: THREE.NoToneMapping }}
-          style={{
-            width: '100%',
-            height: '100%',
-            touchAction: 'none',
-          }}
-        >
-          <color attach="background" args={['#3B3B3B']} />
-          <PerspectiveCamera
-            makeDefault
-            position={[-1, 1, 1]}
-            fov={45}
-            near={0.1}
-            far={1000}
-            zoom={0.4}
-          />
-          <Environment preset="city" />
-          <Stage
-            environment={null}
-            intensity={brightness / 50}
-            adjustCamera={false}
+        {/* Local Suspense boundary — r3f's <Canvas> rethrows suspension
+            upward when <Environment preset="city" /> or any other asset
+            loader is in flight. Without this boundary the suspension
+            unwinds to <Await> in TanStack's StartClient and tears down
+            the entire app. */}
+        <Suspense fallback={<div className="h-full w-full bg-[#3B3B3B]" />}>
+          <Canvas
+            gl={{ toneMapping: THREE.NoToneMapping }}
+            style={{
+              width: '100%',
+              height: '100%',
+              touchAction: 'none',
+            }}
           >
-            <ambientLight intensity={brightness / 100} />
-            {gltf && (
-              <ModelWithControls
-                gltf={gltf}
-                brightness={brightness}
-                roughness={roughness}
-                normalIntensity={normalIntensity}
-                showTexture={showTexture}
-                wireframe={wireframe}
-                isUpscaled={isUpscaled}
-              />
-            )}
-          </Stage>
-          <OrbitControls makeDefault />
-          {!isMobile && <ViewGizmo alignment="top-left" margin={[80, 65]} />}
-        </Canvas>
+            <color attach="background" args={['#3B3B3B']} />
+            <PerspectiveCamera
+              makeDefault
+              position={[-1, 1, 1]}
+              fov={45}
+              near={0.1}
+              far={1000}
+              zoom={0.4}
+            />
+            <Environment preset="city" />
+            <Stage
+              environment={null}
+              intensity={brightness / 50}
+              adjustCamera={false}
+            >
+              <ambientLight intensity={brightness / 100} />
+              {gltf && (
+                <ModelWithControls
+                  gltf={gltf}
+                  brightness={brightness}
+                  roughness={roughness}
+                  normalIntensity={normalIntensity}
+                  showTexture={showTexture}
+                  wireframe={wireframe}
+                />
+              )}
+            </Stage>
+            <OrbitControls makeDefault />
+            {!isMobile && <ViewGizmo alignment="top-left" margin={[80, 65]} />}
+          </Canvas>
+        </Suspense>
       </div>
 
       {/* Bottom center controls for view mode */}
@@ -899,7 +863,6 @@ export function MeshPreview({ meshId }: { meshId: string }) {
           normalIntensity={normalIntensity}
           polygonCount={polygonCount}
           modelQuality={meshData?.prompt.model}
-          isUpscaled={isUpscaled}
           onBrightnessChange={setBrightness}
           onRoughnessChange={setRoughness}
           onNormalIntensityChange={setNormalIntensity}
@@ -955,6 +918,17 @@ export function MeshPreview({ meshId }: { meshId: string }) {
           </DownloadMenu>
         </div>
       )}
+    </div>
+  );
+}
+
+function MeshPreviewPending({ meshId }: { meshId: string }) {
+  const { data: previewBlob } = useGlbPreview({ id: meshId });
+  return (
+    <div className="flex h-full w-full items-center justify-center bg-[#3B3B3B]">
+      <div className="h-full w-full">
+        <GlbPreview glbBlob={previewBlob ?? undefined} />
+      </div>
     </div>
   );
 }

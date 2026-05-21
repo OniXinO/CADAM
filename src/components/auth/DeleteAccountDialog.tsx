@@ -14,6 +14,7 @@ import * as Sentry from '@sentry/react';
 import { useToast } from '@/hooks/use-toast';
 import { useMutation } from '@tanstack/react-query';
 import posthog from 'posthog-js';
+import { apiJson } from '@/services/api';
 
 type CancellationFeedback =
   | 'customer_service'
@@ -41,11 +42,10 @@ export const DeleteAccountDialog = ({
       posthog.capture('delete_account_called', {
         reason: selectedReason,
       });
-      const { error } = await supabase.functions.invoke('delete-user', {
+      await apiJson('delete-user', {
         method: 'POST',
-        body: { reason: selectedReason },
+        body: JSON.stringify({ reason: selectedReason }),
       });
-      if (error) throw error;
     },
     onSuccess: () => {
       // Sign out locally and redirect after deletion

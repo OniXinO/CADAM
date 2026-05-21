@@ -1,4 +1,4 @@
-import { CreativeModel } from '@shared/types';
+import { CreativeModel, Model } from '@shared/types';
 
 // Mesh generation constants
 
@@ -26,7 +26,6 @@ export const POLYGON_COUNTS = {
 export const MATERIAL_DEFAULTS = {
   BRIGHTNESS: 50 as number,
   BRIGHTNESS_TEXTURELESS: 100 as number,
-  BRIGHTNESS_UPSCALED: 50 as number, // Upscaled models use standard brightness
   ROUGHNESS: 100 as number,
   NORMAL_INTENSITY: 0 as number,
 };
@@ -84,6 +83,16 @@ export const MODEL_CONFIGS: Record<CreativeModel, ModelConfig> = {
   },
 };
 
+const CREATIVE_MODEL_LOOKUP: Record<CreativeModel, true> = {
+  fast: true,
+  quality: true,
+  ultra: true,
+};
+
+export const isCreativeModel = (model: Model): model is CreativeModel => {
+  return Object.prototype.hasOwnProperty.call(CREATIVE_MODEL_LOOKUP, model);
+};
+
 // Helper functions for model configuration
 export const getModelConfig = (model: CreativeModel): ModelConfig => {
   return MODEL_CONFIGS[model];
@@ -118,7 +127,5 @@ export const getMaxPolygonCount = (
 
 // Legacy exports for backward compatibility
 export const DEFAULT_BRIGHTNESS = MATERIAL_DEFAULTS.BRIGHTNESS;
-export const DEFAULT_BRIGHTNESS_UPSCALED =
-  MATERIAL_DEFAULTS.BRIGHTNESS_UPSCALED;
 export const DEFAULT_ROUGHNESS = MATERIAL_DEFAULTS.ROUGHNESS;
 export const DEFAULT_NORMAL_INTENSITY = MATERIAL_DEFAULTS.NORMAL_INTENSITY;
