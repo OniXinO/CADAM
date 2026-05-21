@@ -28,13 +28,17 @@ function subscribe(listener: () => void) {
   };
 }
 
+function subscribeDisabled() {
+  return () => {};
+}
+
 function getSnapshot() {
   return currentVerb;
 }
 
 export function useSharedSpinnerVerb(enabled = true) {
   return useSyncExternalStore(
-    (listener) => (enabled ? subscribe(listener) : () => {}),
+    enabled ? subscribe : subscribeDisabled,
     getSnapshot,
     getSnapshot,
   );

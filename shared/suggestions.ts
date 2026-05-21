@@ -22,8 +22,13 @@ export function normalizeConversationSuggestions(
     .map((suggestion) => suggestion.trim())
     .filter(Boolean);
 
-  const accepted = trimmedSuggestions.filter(
-    (suggestion) => countSuggestionWords(suggestion) <= MAX_SUGGESTION_WORDS,
+  const accepted = Array.from(
+    new Set(
+      trimmedSuggestions.filter(
+        (suggestion) =>
+          countSuggestionWords(suggestion) <= MAX_SUGGESTION_WORDS,
+      ),
+    ),
   );
 
   if (accepted.length >= maxSuggestions) {

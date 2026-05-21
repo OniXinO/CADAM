@@ -4,13 +4,13 @@ import adamLoading from '@/assets/adam-loading.json';
 import { useSharedSpinnerVerb } from '@/hooks/useSharedSpinnerVerb';
 
 type Props = {
-  message?: string;
+  showLoadingText?: boolean;
 };
 
-const Loader = ({ message }: Props) => {
+const Loader = ({ showLoadingText = false }: Props) => {
   const dot2 = useRef<HTMLSpanElement>(null);
   const dot3 = useRef<HTMLSpanElement>(null);
-  const sharedVerb = useSharedSpinnerVerb();
+  const sharedVerb = useSharedSpinnerVerb(showLoadingText);
   const { View: loadingAnimation } = useLottie(
     {
       animationData: adamLoading,
@@ -38,7 +38,7 @@ const Loader = ({ message }: Props) => {
   return (
     <div className="flex flex-col items-center justify-center">
       <div className="relative h-32 w-32">{loadingAnimation}</div>
-      {message && (
+      {showLoadingText && (
         <p className="mt-4 text-base text-adam-text-primary">
           {sharedVerb}
           <span>.</span>

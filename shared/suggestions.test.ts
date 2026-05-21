@@ -36,6 +36,18 @@ describe('suggestion word limits', () => {
     );
   });
 
+  it('deduplicates accepted suggestions before filling slots', () => {
+    assert.deepEqual(
+      normalizeConversationSuggestions([
+        'add fillets',
+        'add fillets',
+        'add screw holes',
+        'increase wall thickness',
+      ]),
+      ['add fillets', 'add screw holes', 'increase wall thickness'],
+    );
+  });
+
   it('truncates invalid suggestions only when needed to fill three slots', () => {
     assert.deepEqual(
       normalizeConversationSuggestions([
