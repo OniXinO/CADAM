@@ -100,7 +100,7 @@ function extractEntityPairs(pairs: DxfPair[]): DxfPair[] {
       continue;
     }
 
-    output.push(pair);
+    output.push(formatEntityCoordPair(pair));
   }
   return output;
 }
@@ -168,16 +168,55 @@ function convertLightweightPolylineToLines(
     converted.push(
       { code: '0', value: 'LINE' },
       { code: '8', value: layer },
-      { code: '10', value: start.x },
-      { code: '20', value: start.y },
+      { code: '10', value: formatCoordText(start.x) },
+      { code: '20', value: formatCoordText(start.y) },
       { code: '30', value: '0.0' },
-      { code: '11', value: end.x },
-      { code: '21', value: end.y },
+      { code: '11', value: formatCoordText(end.x) },
+      { code: '21', value: formatCoordText(end.y) },
       { code: '31', value: '0.0' },
     );
   }
 
   return { pairs: converted, nextIndex };
+}
+
+/**
+ * Normalizes entity coordinate values to plain decimal DXF fields while
+ * preserving non-coordinate and malformed values as emitted.
+ * @param pair DXF group-code pair
+ * @returns Pair with finite numeric coordinate values formatted plainly
+ */
+function formatEntityCoordPair(pair: DxfPair): DxfPair {
+  const codeNum = Number(pair.code);
+
+  if (!Number.isFinite(codeNum) || !isCoordinateCode(codeNum)) {
+    return pair;
+  }
+
+  return { code: pair.code, value: formatCoordText(pair.value) };
+}
+
+/**
+ * Formats finite numeric coordinate text and preserves anything else verbatim.
+ * @param value Raw DXF coordinate value
+ * @returns Plain decimal coordinate, or the original value if not numeric
+ */
+function formatCoordText(value: string): string {
+  const numericValue = Number(value);
+  return Number.isFinite(numericValue) ? formatCoord(numericValue) : value;
+}
+
+/**
+ * Checks whether a DXF group code carries an entity coordinate value.
+ * @param codeNum Numeric DXF group code
+ * @returns True when the group code is an X/Y/Z coordinate code
+ */
+function isCoordinateCode(codeNum: number): boolean {
+  return (
+    (codeNum >= 10 && codeNum <= 19) ||
+    (codeNum >= 20 && codeNum <= 29) ||
+    (codeNum >= 30 && codeNum <= 39)
+  );
 }
 
 /**
