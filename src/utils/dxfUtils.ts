@@ -229,7 +229,7 @@ function formatCoord(value: number): string {
 
 /**
  * Builds a complete AutoCAD R12 (AC1009) DXF from extracted entities.
- * Emits the four required sections — HEADER, TABLES, ENTITIES, plus the
+ * Emits the required sections — HEADER, TABLES, BLOCKS, ENTITIES, plus the
  * `EOF` marker — with the LAYER/LTYPE/STYLE tables AutoCAD demands.
  * @param entityPairs Entity pairs to embed in the ENTITIES section
  * @param extents Bounding box used for the HEADER extent variables
@@ -254,11 +254,11 @@ function buildR12Dxf(entityPairs: DxfPair[], extents: Extents): string {
     { code: '20', value: formatCoord(extents.maxY) },
     { code: '30', value: '0.0' },
     { code: '9', value: '$LIMMIN' },
-    { code: '10', value: formatCoord(extents.minX) },
-    { code: '20', value: formatCoord(extents.minY) },
+    { code: '10', value: '0.0' },
+    { code: '20', value: '0.0' },
     { code: '9', value: '$LIMMAX' },
-    { code: '10', value: formatCoord(extents.maxX) },
-    { code: '20', value: formatCoord(extents.maxY) },
+    { code: '10', value: '420.0' },
+    { code: '20', value: '297.0' },
     { code: '0', value: 'ENDSEC' },
   ];
 
@@ -302,6 +302,12 @@ function buildR12Dxf(entityPairs: DxfPair[], extents: Extents): string {
     { code: '0', value: 'ENDSEC' },
   ];
 
+  const blocks: DxfPair[] = [
+    { code: '0', value: 'SECTION' },
+    { code: '2', value: 'BLOCKS' },
+    { code: '0', value: 'ENDSEC' },
+  ];
+
   const entities: DxfPair[] = [
     { code: '0', value: 'SECTION' },
     { code: '2', value: 'ENTITIES' },
@@ -311,7 +317,7 @@ function buildR12Dxf(entityPairs: DxfPair[], extents: Extents): string {
 
   const eof: DxfPair[] = [{ code: '0', value: 'EOF' }];
 
-  return fromDxfPairs([...header, ...tables, ...entities, ...eof]);
+  return fromDxfPairs([...header, ...tables, ...blocks, ...entities, ...eof]);
 }
 
 /**
