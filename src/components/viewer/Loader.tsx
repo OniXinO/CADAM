@@ -1,22 +1,16 @@
 import { useLottie } from 'lottie-react';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import adamLoading from '@/assets/adam-loading.json';
-import { pickSpinnerVerb } from '@/constants/spinnerVerbs';
+import { useSharedSpinnerVerb } from '@/hooks/useSharedSpinnerVerb';
 
 type Props = {
   message?: string;
 };
 
-const INITIAL_MESSAGE_MS = 2000;
-const VERB_ROTATE_MS = 2800;
-// Must match `duration-200` on the <p> element in the JSX below.
-const FADE_MS = 200;
-
 const Loader = ({ message }: Props) => {
   const dot2 = useRef<HTMLSpanElement>(null);
   const dot3 = useRef<HTMLSpanElement>(null);
-  const loadingMessage = useRef<HTMLParagraphElement>(null);
-  const fadeTimeouts = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const sharedVerb = useSharedSpinnerVerb();
   const { View: loadingAnimation } = useLottie(
     {
       animationData: adamLoading,
@@ -25,34 +19,7 @@ const Loader = ({ message }: Props) => {
     { width: '100%', height: '100%' },
   );
 
-  const [changingMessage, setChangingMessage] = useState(message);
-
   useEffect(() => {
-    const swapMessage = (next: string) => {
-      if (!loadingMessage.current) {
-        setChangingMessage(next);
-        return;
-      }
-      loadingMessage.current.classList.add('opacity-0');
-      const fadeId = setTimeout(() => {
-        loadingMessage.current?.classList.remove('opacity-0');
-        setChangingMessage(next);
-      }, FADE_MS);
-      fadeTimeouts.current.push(fadeId);
-    };
-
-    // Kick off the whimsical verb rotation after the initial message.
-    const initialTimeout = setTimeout(() => {
-      swapMessage(pickSpinnerVerb());
-    }, INITIAL_MESSAGE_MS);
-
-    let rotateInterval: ReturnType<typeof setInterval> | undefined;
-    const startRotateTimeout = setTimeout(() => {
-      rotateInterval = setInterval(() => {
-        swapMessage(pickSpinnerVerb());
-      }, VERB_ROTATE_MS);
-    }, INITIAL_MESSAGE_MS);
-
     // ANIMATE LAST TWO DOTS WITH DELAYS AND INTERVALS
     const interval = setInterval(() => {
       dot2.current?.classList.toggle('opacity-0');
@@ -65,26 +32,15 @@ const Loader = ({ message }: Props) => {
       }, 600);
     }, 900);
 
-    // Cleanup intervals on unmount
-    return () => {
-      clearTimeout(initialTimeout);
-      clearTimeout(startRotateTimeout);
-      if (rotateInterval) clearInterval(rotateInterval);
-      clearInterval(interval);
-      fadeTimeouts.current.forEach(clearTimeout);
-      fadeTimeouts.current = [];
-    };
+    return () => clearInterval(interval);
   }, []);
 
   return (
     <div className="flex flex-col items-center justify-center">
       <div className="relative h-32 w-32">{loadingAnimation}</div>
       {message && (
-        <p
-          ref={loadingMessage}
-          className="mt-4 text-base text-adam-text-primary transition-opacity duration-200"
-        >
-          {changingMessage}
+        <p className="mt-4 text-base text-adam-text-primary">
+          {sharedVerb}
           <span>.</span>
           <span
             ref={dot2}

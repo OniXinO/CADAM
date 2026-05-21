@@ -78,9 +78,9 @@ export function PromptView() {
   const [images, setImages] = useState<MessageItem[]>([]);
   const [mesh, setMesh] = useState<MessageItem | null>(null);
 
-  const newConversationId = useMemo(() => {
-    return crypto.randomUUID();
-  }, []);
+  const [draftConversationId, setDraftConversationId] = useState(() =>
+    crypto.randomUUID(),
+  );
 
   const lowPrompts = useMemo(() => {
     if (isLoading) return false;
@@ -113,9 +113,10 @@ export function PromptView() {
     }
   }, []); // Empty dependency array means it only calculates once per page load
 
-  const { mutate: handleGenerate } = useMutation({
+  const { mutate: handleGenerate, isPending: isGenerating } = useMutation({
     mutationFn: async (parts: AppUIMessage['parts']) => {
       if (!user?.id) throw new Error('User must be authenticated');
+      const conversationId = draftConversationId;
 
       const text = parts
         .filter((p) => p.type === 'text')
@@ -134,7 +135,7 @@ export function PromptView() {
         text: text.trim().slice(0, 100),
         image_count: imageCount,
         mesh_count: meshCount,
-        conversation_id: newConversationId,
+        conversation_id: conversationId,
       });
 
       // Create conversation immediately with 'New Conversation'
@@ -142,7 +143,7 @@ export function PromptView() {
         .from('conversations')
         .insert([
           {
-            id: newConversationId,
+            id: conversationId,
             user_id: user.id,
             title: 'New Conversation',
             type: type,
@@ -220,6 +221,7 @@ export function PromptView() {
       navigate({ to: '/editor/$id', params: { id: data.conversationId } });
     },
     onError: (error) => {
+      setDraftConversationId(crypto.randomUUID());
       Sentry.captureException(error);
       toast({
         title: 'Error',
@@ -286,7 +288,7 @@ export function PromptView() {
                 <TextAreaChat
                   onSubmit={handleGenerate}
                   conversation={{
-                    id: newConversationId,
+                    id: draftConversationId,
                     user_id: user?.id ?? '',
                   }}
                   onFocus={() => {
@@ -297,7 +299,7 @@ export function PromptView() {
                   }}
                   placeholder="Start building with Adam..."
                   type={type}
-                  disabled={limitReached}
+                  disabled={limitReached || isGenerating}
                   model={model}
                   setModel={setModel}
                   showPromptGenerator={true}

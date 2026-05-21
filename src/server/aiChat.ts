@@ -3,6 +3,7 @@ import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
 import { chatTools, type AppUIMessage, type AppTools } from '@shared/chatAi';
 import { getParametricText } from '@shared/parametricParts';
+import { normalizeConversationSuggestions } from '@shared/suggestions';
 import type { Conversation, Message, MeshFileType, Model } from '@shared/types';
 import {
   convertToModelMessages,
@@ -22,7 +23,7 @@ import type { ProviderOptions } from '@ai-sdk/provider-utils';
 import { z } from 'zod';
 import { billing, BillingClientError } from './billingClient';
 import { corsHeaders, isRecord } from './api';
-import { requiredEnv } from './env';
+import { env, requiredEnv } from './env';
 import { logError } from './serverLog';
 import { handleMeshRequest } from './mesh';
 import { getAnonSupabaseClient } from './supabaseClient';
@@ -248,21 +249,31 @@ function providerFor(modelId: string): ChatProvider {
 
 type AnthropicProvider = ReturnType<typeof createAnthropic>;
 type GoogleProvider = ReturnType<typeof createGoogleGenerativeAI>;
+type OpenRouterProvider = ReturnType<typeof createOpenRouter>;
 
 type ChatProviders = {
-  anthropic: AnthropicProvider;
-  google: GoogleProvider;
-  /** Lazy — only initialized if a non-Anthropic / non-Google model is used. */
-  openrouter: () => ReturnType<typeof createOpenRouter>;
+  anthropic: () => AnthropicProvider;
+  google: () => GoogleProvider;
+  openrouter: () => OpenRouterProvider;
 };
 
 function createChatProviders(): ChatProviders {
-  let openrouter: ReturnType<typeof createOpenRouter> | undefined;
+  let anthropic: AnthropicProvider | undefined;
+  let google: GoogleProvider | undefined;
+  let openrouter: OpenRouterProvider | undefined;
   return {
-    anthropic: createAnthropic({ apiKey: requiredEnv('ANTHROPIC_API_KEY') }),
-    google: createGoogleGenerativeAI({
-      apiKey: requiredEnv('GOOGLE_API_KEY'),
-    }),
+    anthropic: () => {
+      anthropic ??= createAnthropic({
+        apiKey: requiredEnv('ANTHROPIC_API_KEY'),
+      });
+      return anthropic;
+    },
+    google: () => {
+      google ??= createGoogleGenerativeAI({
+        apiKey: requiredEnv('GOOGLE_API_KEY'),
+      });
+      return google;
+    },
     openrouter: () => {
       openrouter ??= createOpenRouter({
         apiKey: requiredEnv('OPENROUTER_API_KEY'),
@@ -290,7 +301,7 @@ function buildChatModel(
     // OpenRouter alias uses dots ("claude-haiku-4.5"). Normalize both.
     const id = modelId.slice('anthropic/'.length).replace(/\./g, '-');
     return {
-      model: providers.anthropic(id),
+      model: providers.anthropic()(id),
       providerOptions: thinking
         ? {
             anthropic: {
@@ -305,9 +316,20 @@ function buildChatModel(
   }
 
   if (modelId.startsWith('google/')) {
+    if (!env('GOOGLE_API_KEY') && env('OPENROUTER_API_KEY')) {
+      return {
+        model: providers.openrouter().chat(modelId, {
+          ...(thinking
+            ? { reasoning: { max_tokens: THINKING_BUDGET_TOKENS } }
+            : {}),
+          usage: { include: true },
+        }),
+      };
+    }
+
     const id = modelId.slice('google/'.length);
     return {
-      model: providers.google(id),
+      model: providers.google()(id),
       // Gemini 3 Pro (and most current Google reasoning models) always
       // think internally — `thinkingBudget` only controls how MUCH, not
       // whether. `includeThoughts` is what actually surfaces those
@@ -558,8 +580,8 @@ async function generateConversationSuggestions({
       model: anthropic('claude-haiku-4-5'),
       system:
         conversationType === 'creative'
-          ? 'Given a 3D mesh design conversation, return an array of exactly 3 follow-up prompts the user might want to send next. Each prompt is a single concise instruction (under 8 words), not a question. Return exactly 3 items — no more, no fewer.'
-          : 'Given a parametric CAD conversation, return an array of exactly 3 follow-up prompts the user might want to send next. Each prompt is a single concise instruction (under 8 words), not a question. Return exactly 3 items — no more, no fewer.',
+          ? 'Given a 3D mesh design conversation, return an array of exactly 3 follow-up prompts the user might want to send next. Each prompt is a concise instruction of 3 words or fewer, not a question. Return exactly 3 items — no more, no fewer.'
+          : 'Given a parametric CAD conversation, return an array of exactly 3 follow-up prompts the user might want to send next. Each prompt is a concise instruction of 3 words or fewer, not a question. Return exactly 3 items — no more, no fewer.',
       prompt: summary,
       output: Output.object({
         schema: z.object({
@@ -567,7 +589,7 @@ async function generateConversationSuggestions({
         }),
       }),
     });
-    return result.output.suggestions.slice(0, 3);
+    return normalizeConversationSuggestions(result.output.suggestions);
   } catch (error) {
     logError(error, {
       functionName: 'ai-chat',
@@ -990,7 +1012,7 @@ export async function handleAiChatRequest(req: Request) {
       if (isFirstUserTurn) {
         void emitConversationTitle({
           writer,
-          anthropic: providers.anthropic,
+          anthropic: providers.anthropic(),
           supabaseClient,
           conversation,
           firstMessage: branchMessages[0],
@@ -1107,7 +1129,7 @@ export async function handleAiChatRequest(req: Request) {
               // tradeoff for getting pills delivered.
               await emitConversationSuggestions({
                 writer,
-                anthropic: providers.anthropic,
+                anthropic: providers.anthropic(),
                 supabaseClient,
                 conversation,
                 branch: [
