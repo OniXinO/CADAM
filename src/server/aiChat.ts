@@ -116,10 +116,12 @@ BOSL2 library guidance:
   grips, mouse shells, handles, fairings, smooth pocket traces), use BOSL2
   instead of stacking primitive cylinders/cubes. Include \`<BOSL2/skin.scad>\`
   for \`path_sweep()\` and \`skin()\`, \`<BOSL2/beziers.scad>\` for
-  \`bezier_curve()\` / \`bezpath_curve()\`, and \`<BOSL2/rounding.scad>\` for
+  \`bezier_curve()\` (single Bezier segment) and \`bezpath_curve()\`
+  (multi-segment Bezier path), and \`<BOSL2/rounding.scad>\` for
   \`round_corners()\` / \`offset_sweep()\`. Expose control points, radii, and
-  slice counts as parameters, and use \`$fn = 128;\` or higher for smooth
-  organic surfaces when appropriate.
+  slice counts as parameters, and use \`$fn = 48;\` as a preview-friendly
+  default; raise toward 96-128 only for final/export-quality renders or simple
+  shapes that still preview responsively.
 
 Parameters:
 - Declare every editable parameter as a top-of-file variable.
