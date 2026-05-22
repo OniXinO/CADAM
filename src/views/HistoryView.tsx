@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
-import { AnimatePresence, motion } from 'framer-motion';
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
+import type { MotionProps } from 'framer-motion';
 import { MessageSquare, Plus, LayoutGrid, List } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Button } from '@/components/ui/button';
@@ -21,6 +22,20 @@ import { VisualCard } from '@/components/history/VisualCard';
 import { RenameDialogDrawer } from '@/components/history/RenameDialogDrawer';
 import { cn } from '@/lib/utils';
 
+const VIEW_TRANSITION_PROPS = {
+  initial: { opacity: 0, y: 10, filter: 'blur(2px)' },
+  animate: { opacity: 1, y: 0, filter: 'blur(0px)' },
+  exit: { opacity: 0, y: -8, filter: 'blur(2px)' },
+  transition: { duration: 0.22, ease: [0.22, 1, 0.36, 1] },
+} satisfies Pick<MotionProps, 'initial' | 'animate' | 'exit' | 'transition'>;
+
+const REDUCED_VIEW_TRANSITION_PROPS = {
+  initial: { opacity: 0 },
+  animate: { opacity: 1 },
+  exit: { opacity: 0 },
+  transition: { duration: 0 },
+} satisfies Pick<MotionProps, 'initial' | 'animate' | 'exit' | 'transition'>;
+
 export function HistoryView() {
   const [searchQuery, setSearchQuery] = useState('');
   const [viewMode, setViewMode] = useState<'list' | 'visual'>('list');
@@ -32,6 +47,7 @@ export function HistoryView() {
   const { user } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const shouldReduceMotion = useReducedMotion();
 
   const handleOpenChange = (open: boolean) => {
     setOpen(open);
@@ -287,6 +303,9 @@ export function HistoryView() {
   };
 
   const conversationGroups = groupConversationsByDate();
+  const viewTransitionProps = shouldReduceMotion
+    ? REDUCED_VIEW_TRANSITION_PROPS
+    : VIEW_TRANSITION_PROPS;
 
   return (
     <>
@@ -305,7 +324,8 @@ export function HistoryView() {
             >
               <span
                 className={cn(
-                  'pointer-events-none absolute inset-y-1 left-1 w-[calc(50%-0.25rem)] rounded-md bg-adam-neutral-950 shadow-[0_1px_10px_rgba(0,0,0,0.22)] transition-transform duration-300 ease-out',
+                  'pointer-events-none absolute inset-y-1 left-1 w-[calc(50%-0.25rem)] rounded-md bg-adam-neutral-950 shadow-[0_1px_10px_rgba(0,0,0,0.22)] transition-transform ease-out',
+                  shouldReduceMotion ? 'duration-0' : 'duration-300',
                   viewMode === 'visual' && 'translate-x-full',
                 )}
               />
@@ -395,10 +415,7 @@ export function HistoryView() {
                 {viewMode === 'visual' ? (
                   <motion.div
                     key="visual"
-                    initial={{ opacity: 0, y: 10, filter: 'blur(2px)' }}
-                    animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
-                    exit={{ opacity: 0, y: -8, filter: 'blur(2px)' }}
-                    transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+                    {...viewTransitionProps}
                     className="grid gap-6 py-4 pb-48 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4"
                   >
                     {filteredConversations.map((conversation) => (
@@ -423,10 +440,7 @@ export function HistoryView() {
                 ) : (
                   <motion.div
                     key="list"
-                    initial={{ opacity: 0, y: 10, filter: 'blur(2px)' }}
-                    animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
-                    exit={{ opacity: 0, y: -8, filter: 'blur(2px)' }}
-                    transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+                    {...viewTransitionProps}
                     className="space-y-8 py-4 pb-48"
                   >
                     {Object.entries(conversationGroups).map(([date, convs]) => {
