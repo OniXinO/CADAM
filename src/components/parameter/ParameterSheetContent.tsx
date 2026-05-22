@@ -41,6 +41,11 @@ export function ParameterSheetContent({
   const [isExporting, setIsExporting] = useState(false);
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingParametersRef = useRef<Parameter[] | null>(null);
+  const latestParametersRef = useRef(parameters);
+
+  useEffect(() => {
+    latestParametersRef.current = parameters;
+  }, [parameters]);
 
   useEffect(() => {
     return () => {
@@ -61,6 +66,7 @@ export function ParameterSheetContent({
       debounceTimerRef.current = setTimeout(() => {
         if (pendingParametersRef.current) {
           onParameterChange(pendingParametersRef.current);
+          latestParametersRef.current = pendingParametersRef.current;
           pendingParametersRef.current = null;
         }
       }, 200);
@@ -71,7 +77,9 @@ export function ParameterSheetContent({
   const handleCommit = (param: Parameter, value: Parameter['value']) => {
     const validatedValue = validateParameterValue(param, value);
     const updatedParam = { ...param, value: validatedValue };
-    const updatedParameters = parameters.map((p) =>
+    const baseParameters =
+      pendingParametersRef.current ?? latestParametersRef.current;
+    const updatedParameters = baseParameters.map((p) =>
       p.name === param.name ? updatedParam : p,
     );
 

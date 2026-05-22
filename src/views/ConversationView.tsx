@@ -212,7 +212,6 @@ export function ConversationView({
   const mobileSheetHeight = useMemo(() => {
     if (!isDraggingMobileSheet) return 'calc(100dvh - 56px)';
     if (mobileSheetDragDistance <= 0) return 'calc(100dvh - 56px)';
-    if (typeof window === 'undefined') return 'calc(100dvh - 56px)';
     return `${Math.max(56, window.innerHeight - 56 - mobileSheetDragDistance)}px`;
   }, [isDraggingMobileSheet, mobileSheetDragDistance]);
 
