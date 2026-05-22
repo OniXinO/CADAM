@@ -503,10 +503,10 @@ function ConversationEditor() {
     <ConversationView
       hasParameters={hasArtifact}
       mobilePreviewKey={
-        sharePreview
-          ? sharePreview.type === 'artifact'
-            ? `artifact:${sharePreview.messageId}`
-            : `mesh:${sharePreview.messageId}:${sharePreview.meshId}`
+        activePreview
+          ? activePreview.type === 'artifact'
+            ? `artifact:${activePreview.messageId}`
+            : `mesh:${activePreview.messageId}:${activePreview.meshId}`
           : null
       }
       mobilePreviewVersion={mobilePreviewVersion}

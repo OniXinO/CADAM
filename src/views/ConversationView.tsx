@@ -83,6 +83,8 @@ export function ConversationView({
   const [isDraggingMobileSheet, setIsDraggingMobileSheet] = useState(false);
   const [mobileSheetDragDistance, setMobileSheetDragDistance] = useState(0);
   const mobileSheetTouchStartYRef = useRef(0);
+  const isDraggingMobileSheetRef = useRef(false);
+  const didDragMobileSheetRef = useRef(false);
   const isTabletOrMobile = useMediaQuery('(max-width: 1024px)');
 
   const setContainerRef = useCallback((element: HTMLDivElement | null) => {
@@ -176,37 +178,51 @@ export function ConversationView({
     if (!open) {
       setMobileSheetDragDistance(0);
       setIsDraggingMobileSheet(false);
+      isDraggingMobileSheetRef.current = false;
+      didDragMobileSheetRef.current = false;
     }
   }, []);
 
   const handleMobileSheetTouchStart = useCallback((event: TouchEvent) => {
     mobileSheetTouchStartYRef.current = event.touches[0].clientY;
+    isDraggingMobileSheetRef.current = true;
+    didDragMobileSheetRef.current = false;
     setIsDraggingMobileSheet(true);
   }, []);
 
-  const handleMobileSheetTouchMove = useCallback(
-    (event: TouchEvent) => {
-      if (!isDraggingMobileSheet) return;
-      setMobileSheetDragDistance(
-        event.touches[0].clientY - mobileSheetTouchStartYRef.current,
-      );
-    },
-    [isDraggingMobileSheet],
-  );
+  const handleMobileSheetTouchMove = useCallback((event: TouchEvent) => {
+    if (!isDraggingMobileSheetRef.current) return;
+    const dragDistance =
+      event.touches[0].clientY - mobileSheetTouchStartYRef.current;
+    didDragMobileSheetRef.current ||= Math.abs(dragDistance) > 4;
+    setMobileSheetDragDistance(dragDistance);
+  }, []);
 
   const handleMobileSheetTouchEnd = useCallback(() => {
-    if (!isDraggingMobileSheet) return;
+    if (!isDraggingMobileSheetRef.current) return;
+    isDraggingMobileSheetRef.current = false;
     if (mobileSheetDragDistance >= MOBILE_SHEET_DISMISS_THRESHOLD) {
       handleMobilePreviewOpenChange(false);
       return;
     }
     setMobileSheetDragDistance(0);
     setIsDraggingMobileSheet(false);
-  }, [
-    handleMobilePreviewOpenChange,
-    isDraggingMobileSheet,
-    mobileSheetDragDistance,
-  ]);
+  }, [handleMobilePreviewOpenChange, mobileSheetDragDistance]);
+
+  const handleMobileSheetTouchCancel = useCallback(() => {
+    isDraggingMobileSheetRef.current = false;
+    didDragMobileSheetRef.current = false;
+    setMobileSheetDragDistance(0);
+    setIsDraggingMobileSheet(false);
+  }, []);
+
+  const handleMobileSheetHandleClick = useCallback(() => {
+    if (didDragMobileSheetRef.current) {
+      didDragMobileSheetRef.current = false;
+      return;
+    }
+    handleMobilePreviewOpenChange(false);
+  }, [handleMobilePreviewOpenChange]);
 
   const mobileSheetHeight = useMemo(() => {
     if (!isDraggingMobileSheet) return 'calc(100dvh - 56px)';
@@ -245,10 +261,12 @@ export function ConversationView({
               </SheetHeader>
               <button
                 type="button"
-                aria-label="Drag down to close preview"
+                aria-label="Close preview"
                 onTouchStart={handleMobileSheetTouchStart}
                 onTouchMove={handleMobileSheetTouchMove}
                 onTouchEnd={handleMobileSheetTouchEnd}
+                onTouchCancel={handleMobileSheetTouchCancel}
+                onClick={handleMobileSheetHandleClick}
                 className="flex w-full justify-center rounded-sm opacity-70 transition-opacity hover:opacity-100"
               >
                 <svg
