@@ -122,9 +122,11 @@ function ChatReasoningBody({
         ref={scrollRootRef}
         className="w-full pr-3 [&_[data-radix-scroll-area-viewport]]:max-h-72"
       >
-        <Streamdown parseIncompleteMarkdown plugins={streamdownPlugins}>
-          {children}
-        </Streamdown>
+        <div className="chat-markdown min-w-0 max-w-full overflow-hidden">
+          <Streamdown parseIncompleteMarkdown plugins={streamdownPlugins}>
+            {children}
+          </Streamdown>
+        </div>
       </ScrollArea>
     </CollapsibleContent>
   );

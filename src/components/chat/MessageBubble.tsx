@@ -402,7 +402,7 @@ function AssistantBubble({
             return (
               <div
                 key={index}
-                className="rounded-lg bg-adam-neutral-800 px-3 py-2 text-sm text-adam-text-primary"
+                className="chat-markdown min-w-0 max-w-full overflow-hidden rounded-lg bg-adam-neutral-800 px-3 py-2 text-sm text-adam-text-primary"
               >
                 <Streamdown parseIncompleteMarkdown>{part.text}</Streamdown>
               </div>
@@ -512,6 +512,29 @@ function AssistantBubble({
                   </ScrollArea>
                 ) : null}
               </ToolBlock>
+            );
+          }
+
+          if (part.type === 'tool-answer_user') {
+            if (text) return null;
+            const answerMessage =
+              part.state === 'output-available'
+                ? part.output.message
+                : (part.state === 'input-streaming' ||
+                      part.state === 'input-available') &&
+                    part.input &&
+                    typeof (part.input as { message?: unknown }).message ===
+                      'string'
+                  ? (part.input as { message: string }).message
+                  : '';
+            if (!answerMessage.trim()) return null;
+            return (
+              <div
+                key={index}
+                className="chat-markdown min-w-0 max-w-full overflow-hidden rounded-lg bg-adam-neutral-800 px-3 py-2 text-sm text-adam-text-primary"
+              >
+                <Streamdown parseIncompleteMarkdown>{answerMessage}</Streamdown>
+              </div>
             );
           }
 

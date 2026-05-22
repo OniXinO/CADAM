@@ -27,12 +27,22 @@ export const parametricCompileOutputSchema = z.object({
   message: z.string(),
 });
 
+export const answerUserSchema = z.object({
+  message: z.string().min(1),
+});
+
 export const chatTools = {
   build_parametric_model: tool({
     description:
       'Create or update the complete OpenSCAD CAD artifact for the user.',
     inputSchema: parametricArtifactSchema,
     outputSchema: parametricCompileOutputSchema,
+  }),
+  answer_user: tool({
+    description:
+      'Reply normally when the user is not asking to create, update, or fix a CAD model.',
+    inputSchema: answerUserSchema,
+    outputSchema: answerUserSchema,
   }),
   create_mesh: tool({
     description:

@@ -158,6 +158,71 @@ input::placeholder {
     0px 1px 3px 0px rgba(255, 255, 255, 0.25) inset;
 }
 
+@layer components {
+  .chat-markdown {
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+
+  .chat-markdown :where(p, li, blockquote, h1, h2, h3, h4, h5, h6) {
+    max-width: 100%;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+
+  .chat-markdown :where(p) {
+    margin: 0.5rem 0;
+  }
+
+  .chat-markdown :where(p:first-child) {
+    margin-top: 0;
+  }
+
+  .chat-markdown :where(p:last-child) {
+    margin-bottom: 0;
+  }
+
+  .chat-markdown :where(code):not(pre code) {
+    max-width: 100%;
+    white-space: normal !important;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    border-radius: 0.35rem;
+    background: rgba(255, 255, 255, 0.08) !important;
+    color: #e8e8e8 !important;
+    padding: 0.1rem 0.3rem;
+  }
+
+  .chat-markdown :where(pre) {
+    max-width: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+    border-radius: 0.75rem;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(18, 18, 18, 0.92) !important;
+    color: #e8e8e8 !important;
+    padding: 0.75rem;
+    white-space: pre;
+  }
+
+  .chat-markdown :where(pre code) {
+    display: block;
+    min-width: max-content;
+    white-space: pre;
+    overflow-wrap: normal;
+    word-break: normal;
+    background: transparent !important;
+    color: inherit !important;
+    padding: 0;
+  }
+
+  .chat-markdown :where(table) {
+    display: block;
+    max-width: 100%;
+    overflow-x: auto;
+  }
+}
+
 @layer utilities {
   .pb-safe {
     padding-bottom: env(safe-area-inset-bottom);

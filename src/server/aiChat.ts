@@ -23,7 +23,7 @@ import type { ProviderOptions } from '@ai-sdk/provider-utils';
 import { z } from 'zod';
 import { billing, BillingClientError } from './billingClient';
 import { corsHeaders, isRecord } from './api';
-import { requiredEnv } from './env';
+import { env, requiredEnv } from './env';
 import { logError } from './serverLog';
 import { handleMeshRequest } from './mesh';
 import { getAnonSupabaseClient } from './supabaseClient';
@@ -81,7 +81,11 @@ const USD_PER_BILLING_TOKEN = 0.01;
 
 const PARAMETRIC_AGENT_PROMPT = `You are Adam, an AI CAD editor that creates and modifies OpenSCAD models. The user can see a live preview of the model on the right while you work.
 
-Use the build_parametric_model tool whenever the user asks for a CAD model, an edit to a CAD model, or a fix for OpenSCAD code. Speak back briefly (one or two sentences) and let the tool carry the change — never paste OpenSCAD into your reply text.
+On each user turn, choose exactly one path:
+- Use build_parametric_model whenever the user asks for a CAD model, an edit to a CAD model, or a fix for OpenSCAD code. Speak back briefly (one or two sentences) and let the tool carry the change — never paste OpenSCAD into your reply text.
+- Use answer_user only for greetings, thanks, app/capability questions, or informational questions that do not ask you to create or change a model.
+
+Never say you created, designed, generated, updated, or fixed a model unless you used build_parametric_model in that turn.
 
 Do not rewrite or change the user's intent. Do not add unrelated constraints. Pass the user's request through faithfully (e.g., if they say "a mug", make a mug, not an elaborate ceramic vessel).
 
@@ -251,19 +255,28 @@ type AnthropicProvider = ReturnType<typeof createAnthropic>;
 type GoogleProvider = ReturnType<typeof createGoogleGenerativeAI>;
 
 type ChatProviders = {
-  anthropic: AnthropicProvider;
-  google: GoogleProvider;
-  /** Lazy — only initialized if a non-Anthropic / non-Google model is used. */
+  anthropic: () => AnthropicProvider;
+  google: () => GoogleProvider;
   openrouter: () => ReturnType<typeof createOpenRouter>;
 };
 
 function createChatProviders(): ChatProviders {
+  let anthropic: AnthropicProvider | undefined;
+  let google: GoogleProvider | undefined;
   let openrouter: ReturnType<typeof createOpenRouter> | undefined;
   return {
-    anthropic: createAnthropic({ apiKey: requiredEnv('ANTHROPIC_API_KEY') }),
-    google: createGoogleGenerativeAI({
-      apiKey: requiredEnv('GOOGLE_API_KEY'),
-    }),
+    anthropic: () => {
+      anthropic ??= createAnthropic({
+        apiKey: requiredEnv('ANTHROPIC_API_KEY'),
+      });
+      return anthropic;
+    },
+    google: () => {
+      google ??= createGoogleGenerativeAI({
+        apiKey: requiredEnv('GOOGLE_API_KEY'),
+      });
+      return google;
+    },
     openrouter: () => {
       openrouter ??= createOpenRouter({
         apiKey: requiredEnv('OPENROUTER_API_KEY'),
@@ -291,7 +304,7 @@ function buildChatModel(
     // OpenRouter alias uses dots ("claude-haiku-4.5"). Normalize both.
     const id = modelId.slice('anthropic/'.length).replace(/\./g, '-');
     return {
-      model: providers.anthropic(id),
+      model: providers.anthropic()(id),
       providerOptions: thinking
         ? {
             anthropic: {
@@ -308,7 +321,7 @@ function buildChatModel(
   if (modelId.startsWith('google/')) {
     const id = modelId.slice('google/'.length);
     return {
-      model: providers.google(id),
+      model: providers.google()(id),
       // Gemini 3 Pro (and most current Google reasoning models) always
       // think internally — `thinkingBudget` only controls how MUCH, not
       // whether. `includeThoughts` is what actually surfaces those
@@ -697,6 +710,10 @@ function parametricTools({
         return { type: 'text' as const, value: output.message };
       },
     },
+    answer_user: {
+      ...chatTools.answer_user,
+      execute: async (input: AppTools['answer_user']['input']) => input,
+    },
   };
 }
 
@@ -820,10 +837,8 @@ export async function handleAiChatRequest(req: Request) {
 
   const leafMessageId = conversation.current_message_leaf_id;
 
-  // `createChatProviders` calls `requiredEnv(...)` eagerly — a missing
-  // ANTHROPIC_API_KEY / GOOGLE_API_KEY throws here, before we've started
-  // a stream. Catch + log so the failure mode is "503 with a clear
-  // server log" instead of "500 with no logs".
+  // Provider instances are lazy so a missing key only fails the selected
+  // provider. Keep this guarded anyway so setup errors return a clear 503.
   let providers: ChatProviders;
   try {
     providers = createChatProviders();
@@ -930,6 +945,16 @@ export async function handleAiChatRequest(req: Request) {
     system: systemPrompt(conversation),
     messages: modelMessages,
     tools,
+    prepareStep: ({ stepNumber }) =>
+      conversation.type === 'parametric' &&
+      leafRole === 'user' &&
+      stepNumber === 0
+        ? {
+            // Parametric user turns must take one structured path first:
+            // either create/update CAD or explicitly answer normally.
+            toolChoice: 'required',
+          }
+        : {},
     stopWhen: stepCountIs(5),
     maxOutputTokens: rawBody.thinking ? 20000 : 16000,
     abortSignal: req.signal,
@@ -988,10 +1013,10 @@ export async function handleAiChatRequest(req: Request) {
     execute: async ({ writer }) => {
       // Title (first user turn only) runs in parallel with the model
       // stream — fire-and-forget; the assistant doesn't wait on it.
-      if (isFirstUserTurn) {
+      if (isFirstUserTurn && env('ANTHROPIC_API_KEY')) {
         void emitConversationTitle({
           writer,
-          anthropic: providers.anthropic,
+          anthropic: providers.anthropic(),
           supabaseClient,
           conversation,
           firstMessage: branchMessages[0],
@@ -1094,7 +1119,7 @@ export async function handleAiChatRequest(req: Request) {
                 part.type.startsWith('tool-') &&
                 (part as { state?: string }).state === 'input-available',
             );
-            if (!hasPendingToolCall) {
+            if (!hasPendingToolCall && env('ANTHROPIC_API_KEY')) {
               // MUST be awaited (not `void`). `createUIMessageStream`
               // closes the SSE controller as soon as the merged stream
               // drains — and the merged stream resolves once this
@@ -1108,7 +1133,7 @@ export async function handleAiChatRequest(req: Request) {
               // tradeoff for getting pills delivered.
               await emitConversationSuggestions({
                 writer,
-                anthropic: providers.anthropic,
+                anthropic: providers.anthropic(),
                 supabaseClient,
                 conversation,
                 branch: [
