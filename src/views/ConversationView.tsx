@@ -243,7 +243,9 @@ export function ConversationView({
                   Preview and parameters for the selected model.
                 </SheetDescription>
               </SheetHeader>
-              <SheetPrimitive.Close
+              <button
+                type="button"
+                aria-label="Drag down to close preview"
                 onTouchStart={handleMobileSheetTouchStart}
                 onTouchMove={handleMobileSheetTouchMove}
                 onTouchEnd={handleMobileSheetTouchEnd}
@@ -264,7 +266,7 @@ export function ConversationView({
                     className="text-adam-neutral-400"
                   />
                 </svg>
-              </SheetPrimitive.Close>
+              </button>
               <div className="mx-auto flex h-full max-w-xl flex-col items-center pb-6">
                 <div
                   className={cn(

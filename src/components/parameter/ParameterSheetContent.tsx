@@ -136,8 +136,8 @@ export function ParameterSheetContent({
   const isAnyFormatAvailable = Object.values(formatAvailable).some(Boolean);
 
   return (
-    <>
-      <ScrollArea className="h-full w-full px-4">
+    <div className="flex h-full min-h-0 w-full flex-col">
+      <ScrollArea className="min-h-0 w-full flex-1 px-4">
         <div className="flex flex-col gap-6 pb-4 pt-2">
           {parameters.map((param) => (
             <ParameterInput
@@ -208,6 +208,6 @@ export function ParameterSheetContent({
           </DropdownMenu>
         </div>
       </div>
-    </>
+    </div>
   );
 }
