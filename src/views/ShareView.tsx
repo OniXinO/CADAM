@@ -226,7 +226,7 @@ function ConversationShare({ conversation, messages }: ConversationShareProps) {
       mobilePreviewVersion={mobilePreviewVersion}
       chatPanelSlot={
         <>
-          <div className="flex w-full items-center justify-between bg-transparent p-3 pl-12">
+          <div className="flex w-full items-center justify-between bg-transparent p-3 md:pl-12">
             <div className="min-w-0 flex-1">
               <ChatTitle
                 activeMeshId={
@@ -243,7 +243,7 @@ function ConversationShare({ conversation, messages }: ConversationShareProps) {
             </div>
           </div>
 
-          <ScrollArea className="relative w-full max-w-xl flex-1 self-center px-2 py-0 md:min-h-0 md:max-w-none md:p-4">
+          <ScrollArea className="relative w-full max-w-none flex-1 self-center px-3 py-0 md:min-h-0 md:p-4">
             <div className="pointer-events-none sticky left-0 top-0 z-50 h-3 bg-gradient-to-b from-adam-bg-secondary-dark/90 to-transparent md:hidden" />
             <div className="mx-auto flex max-w-3xl flex-col gap-4 pb-6 md:pb-0">
               {branch.map((node) => (

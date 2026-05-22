@@ -695,7 +695,7 @@ export function ChatSession({
   return (
     <>
       <ScrollArea
-        className="relative w-full max-w-xl flex-1 self-center px-2 py-0 md:min-h-0 md:max-w-none md:p-4"
+        className="relative w-full max-w-none flex-1 self-center px-3 py-0 md:min-h-0 md:p-4"
         ref={scrollRef}
       >
         <div className="pointer-events-none sticky left-0 top-0 z-50 h-3 bg-gradient-to-b from-adam-bg-secondary-dark/90 to-transparent md:hidden" />
@@ -736,7 +736,7 @@ export function ChatSession({
         </div>
       </ScrollArea>
 
-      <div className="w-full shrink-0 self-center px-4 pb-6 md:pb-4">
+      <div className="w-full shrink-0 self-center px-3 pb-[calc(1rem+env(safe-area-inset-bottom))] sm:px-4 md:pb-4">
         {/* Suggestions are conversation-level — the server writes them
             to `conversation.settings.suggestions` and emits a transient
             `data-suggestions-update` on each non-tool-call assistant
@@ -745,7 +745,7 @@ export function ChatSession({
             flight; the freshly-arrived pills replace the stale ones
             when streaming finishes. */}
         {!isLoading && (
-          <div className="mx-auto max-w-xl pt-1 md:max-w-3xl">
+          <div className="mx-auto max-w-3xl pt-1">
             <SuggestionPills
               suggestions={conversation.settings?.suggestions ?? []}
               onSelect={(suggestion) =>

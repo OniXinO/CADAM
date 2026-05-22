@@ -515,7 +515,7 @@ function ConversationEditor() {
           {/* `pl-12` reserves space for the rotated "Chat" expand button
               that sits in the left gutter when the chat panel is collapsed,
               so the title and share button don't get covered. */}
-          <div className="flex w-full items-center justify-between bg-transparent p-3 pl-12">
+          <div className="flex w-full items-center justify-between bg-transparent p-3 md:pl-12">
             <div className="flex min-w-0 flex-1 items-center space-x-2">
               <div className="min-w-0 flex-1">
                 <ChatTitle

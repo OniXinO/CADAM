@@ -285,7 +285,7 @@ export function ConversationView({
                   />
                 </svg>
               </button>
-              <div className="mx-auto flex h-full max-w-xl flex-col items-center pb-6">
+              <div className="mx-auto flex h-full w-full max-w-none flex-col items-center pb-6">
                 <div
                   className={cn(
                     'w-full px-4',
