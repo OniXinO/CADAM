@@ -32,6 +32,7 @@ const PANEL_SIZES = {
   PREVIEW: { DEFAULT: 45, MIN: 20 },
   PARAMETERS: { DEFAULT: 30, MIN: 320, MAX: 384 },
 } as const;
+const MOBILE_SHEET_DISMISS_THRESHOLD = 48;
 
 interface ConversationViewProps {
   chatPanelSlot: ReactNode;
@@ -173,10 +174,8 @@ export function ConversationView({
   const handleMobilePreviewOpenChange = useCallback((open: boolean) => {
     setIsMobilePreviewOpen(open);
     if (!open) {
-      window.setTimeout(() => {
-        setMobileSheetDragDistance(0);
-        setIsDraggingMobileSheet(false);
-      }, 150);
+      setMobileSheetDragDistance(0);
+      setIsDraggingMobileSheet(false);
     }
   }, []);
 
@@ -197,7 +196,7 @@ export function ConversationView({
 
   const handleMobileSheetTouchEnd = useCallback(() => {
     if (!isDraggingMobileSheet) return;
-    if (mobileSheetDragDistance > 0) {
+    if (mobileSheetDragDistance >= MOBILE_SHEET_DISMISS_THRESHOLD) {
       handleMobilePreviewOpenChange(false);
       return;
     }
