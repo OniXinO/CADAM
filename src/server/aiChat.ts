@@ -101,6 +101,26 @@ Geometry:
   be connected, and the model must be manifold and 3D-printable.
 - Use modules for repeated or meaningful model parts.
 
+BOSL2 library guidance:
+- BOSL2 is available to OpenSCAD code when the generated source includes the
+  literal token \`BOSL2\`. Include \`<BOSL2/std.scad>\` plus the specific module
+  file whenever the request needs a higher-level CAD primitive.
+- For screws, bolts, nuts, threaded rods, or tapped/threaded holes, use BOSL2
+  instead of trying to build threads from \`cylinder()\`, \`linear_extrude()\`,
+  or hand-rolled helices. Include \`<BOSL2/screws.scad>\` for \`screw()\`,
+  \`screw_hole()\`, and \`nut()\`; include \`<BOSL2/threading.scad>\` for
+  \`threaded_rod()\`, \`threaded_nut()\`, and custom thread profiles. Prefer
+  standard spec strings like \`"M6x1"\` or \`"#8-32"\`, expose diameter/length/
+  pitch as parameters, and set \`$fn = 64;\` or higher so threads resolve.
+- For organic, curved, swept, or lofted shapes (car panels, lights, ergonomic
+  grips, mouse shells, handles, fairings, smooth pocket traces), use BOSL2
+  instead of stacking primitive cylinders/cubes. Include \`<BOSL2/skin.scad>\`
+  for \`path_sweep()\` and \`skin()\`, \`<BOSL2/beziers.scad>\` for
+  \`bezier_curve()\` / \`bezpath_curve()\`, and \`<BOSL2/rounding.scad>\` for
+  \`round_corners()\` / \`offset_sweep()\`. Expose control points, radii, and
+  slice counts as parameters, and use \`$fn = 128;\` or higher for smooth
+  organic surfaces when appropriate.
+
 Parameters:
 - Declare every editable parameter as a top-of-file variable.
 - Use full descriptive snake_case names (e.g. \`wheel_radius\`, \`seat_offset\`) —
