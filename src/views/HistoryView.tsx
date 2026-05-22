@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
+import type { MotionProps } from 'framer-motion';
 import { MessageSquare, Plus, LayoutGrid, List } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Button } from '@/components/ui/button';
@@ -18,6 +20,21 @@ import { HistoryConversation } from '../types/misc.ts';
 import { ConversationCard } from '@/components/history/ConversationCard';
 import { VisualCard } from '@/components/history/VisualCard';
 import { RenameDialogDrawer } from '@/components/history/RenameDialogDrawer';
+import { cn } from '@/lib/utils';
+
+const VIEW_TRANSITION_PROPS = {
+  initial: { opacity: 0, y: 10, filter: 'blur(2px)' },
+  animate: { opacity: 1, y: 0, filter: 'blur(0px)' },
+  exit: { opacity: 0, y: -8, filter: 'blur(2px)' },
+  transition: { duration: 0.22, ease: [0.22, 1, 0.36, 1] },
+} satisfies Pick<MotionProps, 'initial' | 'animate' | 'exit' | 'transition'>;
+
+const REDUCED_VIEW_TRANSITION_PROPS = {
+  initial: { opacity: 0 },
+  animate: { opacity: 1 },
+  exit: { opacity: 0 },
+  transition: { duration: 0 },
+} satisfies Pick<MotionProps, 'initial' | 'animate' | 'exit' | 'transition'>;
 
 export function HistoryView() {
   const [searchQuery, setSearchQuery] = useState('');
@@ -30,6 +47,7 @@ export function HistoryView() {
   const { user } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const shouldReduceMotion = useReducedMotion();
 
   const handleOpenChange = (open: boolean) => {
     setOpen(open);
@@ -285,6 +303,9 @@ export function HistoryView() {
   };
 
   const conversationGroups = groupConversationsByDate();
+  const viewTransitionProps = shouldReduceMotion
+    ? REDUCED_VIEW_TRANSITION_PROPS
+    : VIEW_TRANSITION_PROPS;
 
   return (
     <>
@@ -299,17 +320,24 @@ export function HistoryView() {
             <div
               role="group"
               aria-label="View mode"
-              className="flex items-center gap-1 rounded-lg border border-adam-neutral-700 bg-adam-background-2 p-1"
+              className="relative grid grid-cols-2 items-center rounded-lg border border-adam-neutral-700 bg-adam-background-2 p-1"
             >
+              <span
+                className={cn(
+                  'pointer-events-none absolute inset-y-1 left-1 w-[calc(50%-0.25rem)] rounded-md bg-adam-neutral-950 shadow-[0_1px_10px_rgba(0,0,0,0.22)] transition-transform ease-out',
+                  shouldReduceMotion ? 'duration-0' : 'duration-300',
+                  viewMode === 'visual' && 'translate-x-full',
+                )}
+              />
               <Button
                 variant="ghost"
                 size="sm"
                 aria-pressed={viewMode === 'list'}
                 aria-label="List view"
                 onClick={() => setViewMode('list')}
-                className={`h-8 px-3 transition-colors duration-150 ${
+                className={`relative z-10 h-8 px-3 transition-colors duration-200 ${
                   viewMode === 'list'
-                    ? 'bg-adam-neutral-950 text-adam-neutral-50 hover:bg-adam-neutral-950 hover:text-adam-neutral-50'
+                    ? 'text-adam-neutral-50 hover:bg-transparent hover:text-adam-neutral-50'
                     : 'text-adam-neutral-400 hover:bg-adam-neutral-950/40 hover:text-adam-neutral-50'
                 }`}
               >
@@ -322,9 +350,9 @@ export function HistoryView() {
                 aria-pressed={viewMode === 'visual'}
                 aria-label="Visual view"
                 onClick={() => setViewMode('visual')}
-                className={`h-8 px-3 transition-colors duration-150 ${
+                className={`relative z-10 h-8 px-3 transition-colors duration-200 ${
                   viewMode === 'visual'
-                    ? 'bg-adam-neutral-950 text-adam-neutral-50 hover:bg-adam-neutral-950 hover:text-adam-neutral-50'
+                    ? 'text-adam-neutral-50 hover:bg-transparent hover:text-adam-neutral-50'
                     : 'text-adam-neutral-400 hover:bg-adam-neutral-950/40 hover:text-adam-neutral-50'
                 }`}
               >
@@ -382,75 +410,85 @@ export function HistoryView() {
                   </>
                 )}
               </div>
-            ) : viewMode === 'visual' ? (
-              // Visual Grid View
-              <div className="grid gap-6 py-4 pb-48 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
-                {filteredConversations.map((conversation) => (
-                  <VisualCard
-                    key={conversation.id}
-                    conversation={conversation}
-                    onDelete={(id) => deleteConversation.mutate(id)}
-                    onRename={(_id, title) => {
-                      setEditingConversation(conversation);
-                      setNewTitle(title);
-                      setOpen(true);
-                    }}
-                    onTogglePrivacy={(id, privacy) =>
-                      togglePrivacy.mutate({
-                        conversationId: id,
-                        newPrivacy: privacy,
-                      })
-                    }
-                  />
-                ))}
-              </div>
             ) : (
-              // List View (Original)
-              <div className="space-y-8 py-4 pb-48">
-                {Object.entries(conversationGroups).map(([date, convs]) => {
-                  let dateString;
-                  try {
-                    const [year, month, day] = date.split('-').map(Number);
-                    dateString = format(
-                      new Date(year, month - 1, day),
-                      'MMMM d, yyyy',
-                    );
-                  } catch (error) {
-                    Sentry.captureException(error, { extra: { date } });
-                  }
+              <AnimatePresence mode="wait" initial={false}>
+                {viewMode === 'visual' ? (
+                  <motion.div
+                    key="visual"
+                    {...viewTransitionProps}
+                    className="grid gap-6 py-4 pb-48 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4"
+                  >
+                    {filteredConversations.map((conversation) => (
+                      <VisualCard
+                        key={conversation.id}
+                        conversation={conversation}
+                        onDelete={(id) => deleteConversation.mutate(id)}
+                        onRename={(_id, title) => {
+                          setEditingConversation(conversation);
+                          setNewTitle(title);
+                          setOpen(true);
+                        }}
+                        onTogglePrivacy={(id, privacy) =>
+                          togglePrivacy.mutate({
+                            conversationId: id,
+                            newPrivacy: privacy,
+                          })
+                        }
+                      />
+                    ))}
+                  </motion.div>
+                ) : (
+                  <motion.div
+                    key="list"
+                    {...viewTransitionProps}
+                    className="space-y-8 py-4 pb-48"
+                  >
+                    {Object.entries(conversationGroups).map(([date, convs]) => {
+                      let dateString;
+                      try {
+                        const [year, month, day] = date.split('-').map(Number);
+                        dateString = format(
+                          new Date(year, month - 1, day),
+                          'MMMM d, yyyy',
+                        );
+                      } catch (error) {
+                        Sentry.captureException(error, { extra: { date } });
+                      }
 
-                  return (
-                    <div key={date} className="space-y-2">
-                      {dateString && (
-                        <h2 className="bg-adam-background-1 px-3 py-2 text-sm font-medium text-adam-neutral-100">
-                          {dateString}
-                        </h2>
-                      )}
-                      <div className="space-y-2">
-                        {convs.map((conversation) => (
-                          <ConversationCard
-                            key={conversation.id}
-                            conversation={conversation}
-                            onDelete={(id) => deleteConversation.mutate(id)}
-                            onRename={(_id, title) => {
-                              setEditingConversation(conversation);
-                              setNewTitle(title);
-                              setOpen(true);
-                            }}
-                            onTogglePrivacy={(id, privacy) =>
-                              togglePrivacy.mutate({
-                                conversationId: id,
-                                newPrivacy: privacy,
-                              })
-                            }
-                            isEditing={!!editingConversation}
-                          />
-                        ))}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
+                      return (
+                        <div key={date} className="space-y-2">
+                          {dateString && (
+                            <h2 className="bg-adam-background-1 px-3 py-2 text-sm font-medium text-adam-neutral-100">
+                              {dateString}
+                            </h2>
+                          )}
+                          <div className="space-y-2">
+                            {convs.map((conversation) => (
+                              <ConversationCard
+                                key={conversation.id}
+                                conversation={conversation}
+                                onDelete={(id) => deleteConversation.mutate(id)}
+                                onRename={(_id, title) => {
+                                  setEditingConversation(conversation);
+                                  setNewTitle(title);
+                                  setOpen(true);
+                                }}
+                                onTogglePrivacy={(id, privacy) =>
+                                  togglePrivacy.mutate({
+                                    conversationId: id,
+                                    newPrivacy: privacy,
+                                  })
+                                }
+                                isEditing={!!editingConversation}
+                              />
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </motion.div>
+                )}
+              </AnimatePresence>
             )}
           </div>
         </ScrollArea>
