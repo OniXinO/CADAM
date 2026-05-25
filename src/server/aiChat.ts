@@ -599,7 +599,7 @@ async function generateConversationSuggestions({
       prompt: summary,
       output: Output.object({
         schema: z.object({
-          suggestions: z.array(z.string().min(1).max(80)),
+          suggestions: z.array(z.string().min(1).max(80)).length(2),
         }),
       }),
     });
