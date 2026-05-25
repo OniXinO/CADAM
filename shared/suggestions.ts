@@ -1,5 +1,5 @@
 const MAX_SUGGESTION_WORDS = 3;
-const MAX_SUGGESTIONS = 3;
+const MAX_SUGGESTIONS = 2;
 
 export function countSuggestionWords(suggestion: string): number {
   const trimmed = suggestion.trim();

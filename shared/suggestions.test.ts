@@ -32,7 +32,7 @@ describe('suggestion word limits', () => {
         '  add screw holes  ',
         'increase wall thickness',
       ]),
-      ['add fillets', 'add screw holes', 'increase wall thickness'],
+      ['add fillets', 'add screw holes'],
     );
   });
 
@@ -44,18 +44,18 @@ describe('suggestion word limits', () => {
         'add screw holes',
         'increase wall thickness',
       ]),
-      ['add fillets', 'add screw holes', 'increase wall thickness'],
+      ['add fillets', 'add screw holes'],
     );
   });
 
-  it('truncates invalid suggestions only when needed to fill three slots', () => {
+  it('truncates invalid suggestions only when needed to fill two slots', () => {
     assert.deepEqual(
       normalizeConversationSuggestions([
         'add chamfers',
         'make the handle much larger',
         'add four mounting holes',
       ]),
-      ['add chamfers', 'make the handle', 'add four mounting'],
+      ['add chamfers', 'make the handle'],
     );
   });
 });

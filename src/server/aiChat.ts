@@ -561,7 +561,7 @@ async function generateConversationTitle({
 }
 
 /**
- * Produce ~3 short follow-up suggestions for the user's NEXT prompt, given
+ * Produce ~2 short follow-up suggestions for the user's NEXT prompt, given
  * the current branch. Used as transient `data-suggestions-update` parts —
  * the conversation-level pills below the input. Suggestions are
  * conversation-scoped (not per-message) because that's how they appear in
@@ -594,8 +594,8 @@ async function generateConversationSuggestions({
       model: anthropic('claude-haiku-4-5'),
       system:
         conversationType === 'creative'
-          ? 'Given a 3D mesh design conversation, return an array of exactly 3 follow-up prompts the user might want to send next. Each prompt is a concise instruction of 3 words or fewer, not a question. Return exactly 3 items — no more, no fewer.'
-          : 'Given a parametric CAD conversation, return an array of exactly 3 follow-up prompts the user might want to send next. Each prompt is a concise instruction of 3 words or fewer, not a question. Return exactly 3 items — no more, no fewer.',
+          ? 'Given a 3D mesh design conversation, return an array of exactly 2 follow-up prompts the user might want to send next. Each prompt is a concise instruction of 3 words or fewer, not a question. Return exactly 2 items — no more, no fewer.'
+          : 'Given a parametric CAD conversation, return an array of exactly 2 follow-up prompts the user might want to send next. Each prompt is a concise instruction of 3 words or fewer, not a question. Return exactly 2 items — no more, no fewer.',
       prompt: summary,
       output: Output.object({
         schema: z.object({
