@@ -255,13 +255,6 @@ export function ChatSession({
       // subsequent send because the server can't continue a
       // conversation with an unresolved tool call).
       const finishWithError = async (errorText: string) => {
-        chat.addToolOutput({
-          state: 'output-error',
-          tool: 'build_parametric_model',
-          toolCallId: toolCall.toolCallId,
-          errorText,
-        });
-        if (!assistant) return;
         const errorPart = {
           type: 'tool-build_parametric_model',
           toolCallId: toolCall.toolCallId,
@@ -270,12 +263,20 @@ export function ChatSession({
           errorText,
         } as AppUIMessage['parts'][number];
         const nextParts = buildNextParts(errorPart);
-        if (!nextParts) return;
-        try {
+
+        // `addToolOutput` immediately triggers the SDK's auto-continuation.
+        // Persist first so the server sees the matching tool result when it
+        // reloads the branch from the DB.
+        if (assistant && nextParts) {
           await onToolOutput(assistant.id, nextParts);
-        } catch (persistError) {
-          console.warn('Failed to persist tool error to DB:', persistError);
         }
+
+        chat.addToolOutput({
+          state: 'output-error',
+          tool: 'build_parametric_model',
+          toolCallId: toolCall.toolCallId,
+          errorText,
+        });
       };
 
       const input = isParametricArtifact(toolCall.input)
@@ -341,11 +342,7 @@ export function ChatSession({
         const nextParts = buildNextParts(successPart);
 
         if (nextParts && assistant) {
-          try {
-            await onToolOutput(assistant.id, nextParts);
-          } catch (persistError) {
-            console.warn('Failed to persist tool output to DB:', persistError);
-          }
+          await onToolOutput(assistant.id, nextParts);
         }
 
         chat.addToolOutput({

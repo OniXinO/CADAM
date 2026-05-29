@@ -459,6 +459,39 @@ function finalizeStreamingParts(
   });
 }
 
+function normalizeIncompleteToolCalls(
+  messages: AppUIMessage[],
+): AppUIMessage[] {
+  return messages.map((message) => {
+    if (message.role !== 'assistant') return message;
+
+    let dirty = false;
+    const parts = message.parts.map((part) => {
+      if (
+        part.type === 'tool-build_parametric_model' &&
+        part.state === 'input-available'
+      ) {
+        dirty = true;
+        return {
+          ...part,
+          state: 'output-error' as const,
+          errorText: 'Tool execution did not complete.',
+        };
+      }
+      if (
+        (part.type === 'reasoning' || part.type === 'text') &&
+        part.state === 'streaming'
+      ) {
+        dirty = true;
+        return { ...part, state: 'done' as const };
+      }
+      return part;
+    }) as AppUIMessage['parts'];
+
+    return dirty ? { ...message, parts } : message;
+  });
+}
+
 function messageRowToUIMessage(row: BranchMessageRow): AppUIMessage {
   return {
     id: row.id,
@@ -881,9 +914,10 @@ export async function handleAiChatRequest(req: Request) {
   // parallel with the model stream instead of blocking it. Only fires on
   // the very first user turn.
   const isFirstUserTurn = branchMessages.length === 1 && leafRole === 'user';
+  const modelBranchMessages = normalizeIncompleteToolCalls(branchMessages);
 
   const modelMessages = await convertToModelMessages<AppUIMessage>(
-    branchMessages,
+    modelBranchMessages,
     {
       tools,
       convertDataPart: (part) => {
@@ -1047,7 +1081,7 @@ export async function handleAiChatRequest(req: Request) {
 
       writer.merge(
         result.toUIMessageStream<AppUIMessage>({
-          originalMessages: branchMessages,
+          originalMessages: modelBranchMessages,
           generateMessageId: () => crypto.randomUUID(),
           onFinish: async ({ responseMessage, isContinuation }) => {
             const usage = await result.totalUsage;
@@ -1159,7 +1193,7 @@ export async function handleAiChatRequest(req: Request) {
                 supabaseClient,
                 conversation,
                 branch: [
-                  ...branchMessages,
+                  ...modelBranchMessages,
                   { ...responseMessage, parts: finalizedParts },
                 ],
               });
