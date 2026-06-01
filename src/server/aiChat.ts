@@ -21,6 +21,7 @@ import {
   type UIMessageStreamWriter,
 } from 'ai';
 import type { ProviderOptions } from '@ai-sdk/provider-utils';
+import imageType from 'image-type';
 import { z } from 'zod';
 import { billing, BillingClientError } from './billingClient';
 import { corsHeaders, isRecord } from './api';
@@ -669,6 +670,29 @@ function creativeTools({
   };
 }
 
+// The only image media types Anthropic (and our other providers) accept. We
+// gate `image-type`'s broader detection to this set so we never hand the model
+// a sniffed-but-unsupported mime (HEIC, AVIF, …) that it would reject anyway.
+const ACCEPTED_IMAGE_MEDIA_TYPES = new Set([
+  'image/png',
+  'image/jpeg',
+  'image/gif',
+  'image/webp',
+]);
+
+/**
+ * Sniff an image's real media type from its leading magic bytes. The stored
+ * object's content-type metadata is NOT trustworthy: uploads don't pin a
+ * content type and file parts hardcode a `.png` filename, so a JPEG routinely
+ * ends up labeled `image/png` in storage. Providers like Anthropic reject a
+ * declared-mime/actual-bytes mismatch ("specified image/png … appears to be
+ * image/jpeg"), so we derive the type from the bytes themselves.
+ */
+async function sniffImageMediaType(bytes: Uint8Array): Promise<string | null> {
+  const sniffed = (await imageType(bytes))?.mime;
+  return sniffed && ACCEPTED_IMAGE_MEDIA_TYPES.has(sniffed) ? sniffed : null;
+}
+
 async function downloadAsBase64(
   supabaseClient: SupabaseAnon,
   bucket: string,
@@ -685,9 +709,11 @@ async function downloadAsBase64(
   for (let index = 0; index < bytes.length; index += chunkSize) {
     binary += String.fromCharCode(...bytes.slice(index, index + chunkSize));
   }
-  // Report the stored object's real content type so callers don't mislabel
-  // e.g. a JPEG upload as PNG — some providers reject a mime/bytes mismatch.
-  return { base64: btoa(binary), mediaType: data.type || 'image/png' };
+  // Trust the bytes over the stored content type: the metadata mislabels
+  // JPEG/WebP uploads as PNG, and providers reject a mime/bytes mismatch.
+  const mediaType =
+    (await sniffImageMediaType(bytes)) ?? data.type ?? 'image/png';
+  return { base64: btoa(binary), mediaType };
 }
 
 function parametricTools({
