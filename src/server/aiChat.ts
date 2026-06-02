@@ -711,8 +711,11 @@ async function downloadAsBase64(
   }
   // Trust the bytes over the stored content type: the metadata mislabels
   // JPEG/WebP uploads as PNG, and providers reject a mime/bytes mismatch.
+  // `||` (not `??`) on purpose: a Blob with no Content-Type header reports
+  // `data.type` as `''`, which must fall through to the PNG default rather
+  // than emit an empty media type.
   const mediaType =
-    (await sniffImageMediaType(bytes)) ?? data.type ?? 'image/png';
+    (await sniffImageMediaType(bytes)) || data.type || 'image/png';
   return { base64: btoa(binary), mediaType };
 }
 
