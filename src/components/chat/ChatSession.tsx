@@ -268,7 +268,11 @@ export function ChatSession({
         // Persist first so the server sees the matching tool result when it
         // reloads the branch from the DB.
         if (assistant && nextParts) {
-          await onToolOutput(assistant.id, nextParts);
+          try {
+            await onToolOutput(assistant.id, nextParts);
+          } catch (persistError) {
+            console.warn('Failed to persist tool error to DB:', persistError);
+          }
         }
 
         chat.addToolOutput({
@@ -342,7 +346,11 @@ export function ChatSession({
         const nextParts = buildNextParts(successPart);
 
         if (nextParts && assistant) {
-          await onToolOutput(assistant.id, nextParts);
+          try {
+            await onToolOutput(assistant.id, nextParts);
+          } catch (persistError) {
+            console.warn('Failed to persist tool output to DB:', persistError);
+          }
         }
 
         chat.addToolOutput({
