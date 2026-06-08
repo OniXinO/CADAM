@@ -86,8 +86,7 @@ export function cleanAssistantText(text: string): string {
   const quoteEnd = draft.indexOf(quote, 1);
   if (quoteEnd === -1) return draft.slice(1).trim();
 
-  const finalText = draft.slice(quoteEnd + 1).trim();
-  return finalText || draft.slice(1, quoteEnd).trim();
+  return draft.slice(1, quoteEnd).trim();
 }
 
 export function getBuildParametricModelPart(parts: unknown) {

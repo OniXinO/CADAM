@@ -309,12 +309,13 @@ export function ChatSession({
               (response) => response.blob(),
             );
             const inspectionPath = `${user.id}/${conversation.id}/inspection-preview-${toolCall.toolCallId}`;
-            await supabase.storage
+            const { error: inspectionUploadError } = await supabase.storage
               .from('images')
               .upload(inspectionPath, inspectionBlob, {
                 contentType: 'image/png',
                 upsert: true,
               });
+            if (inspectionUploadError) throw inspectionUploadError;
             inspectionUploaded = true;
           }
         } catch (uploadError) {
@@ -337,12 +338,13 @@ export function ChatSession({
               (response) => response.blob(),
             );
             const previewPath = `${user.id}/${conversation.id}/preview-${toolCall.toolCallId}`;
-            await supabase.storage
+            const { error: thumbnailUploadError } = await supabase.storage
               .from('images')
               .upload(previewPath, thumbnailBlob, {
                 contentType: 'image/png',
                 upsert: true,
               });
+            if (thumbnailUploadError) throw thumbnailUploadError;
           }
         } catch (uploadError) {
           console.warn('Failed to upload OpenSCAD thumbnail:', uploadError);

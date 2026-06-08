@@ -423,7 +423,12 @@ export const generateInspectionPreview = async ({
   let scene: THREE.Scene | null = null;
 
   if (off) {
-    const group = buildColoredGroupFromOff(await off.text(), fallbackColor);
+    let group: THREE.Group | null = null;
+    try {
+      group = buildColoredGroupFromOff(await off.text(), fallbackColor);
+    } catch {
+      group = null;
+    }
     if (group) {
       const rotated = new THREE.Group();
       rotated.rotation.x = -Math.PI / 2;

@@ -88,6 +88,21 @@ function getStringField(value: unknown, key: string): string | undefined {
   return typeof field === 'string' ? field : undefined;
 }
 
+function answerUserMessageText(
+  part: ChatMessage['parts'][number],
+): string | undefined {
+  if (part.type !== 'tool-answer_user') return undefined;
+
+  const message =
+    part.state === 'output-available'
+      ? part.output.message
+      : part.state === 'input-streaming' || part.state === 'input-available'
+        ? getStringField(part.input, 'message')
+        : undefined;
+  const cleaned = message ? cleanAssistantText(message).trim() : '';
+  return cleaned || undefined;
+}
+
 /**
  * Renders a user-attached image by downloading it from the private `images`
  * bucket (via {@link useImageData}) rather than trusting the part's `url`.
@@ -427,22 +442,13 @@ function AssistantBubble({
         .join(''),
     [message.parts],
   );
+  const answerText = useMemo(
+    () => message.parts.map(answerUserMessageText).filter(Boolean).join(''),
+    [message.parts],
+  );
+  const copyText = answerText || text;
   const hasAnswerUserMessage = useMemo(
-    () =>
-      message.parts.some((part) => {
-        if (part.type !== 'tool-answer_user') return false;
-        if (part.state === 'output-available') {
-          return !!part.output.message.trim();
-        }
-        if (
-          (part.state === 'input-streaming' ||
-            part.state === 'input-available') &&
-          getStringField(part.input, 'message')?.trim()
-        ) {
-          return true;
-        }
-        return false;
-      }),
+    () => message.parts.some((part) => !!answerUserMessageText(part)?.trim()),
     [message.parts],
   );
   const branchIndex = message.siblings.findIndex((b) => b.id === message.id);
@@ -597,17 +603,7 @@ function AssistantBubble({
           }
 
           if (part.type === 'tool-answer_user') {
-            const partialAnswer =
-              part.state === 'input-streaming' ||
-              part.state === 'input-available'
-                ? getStringField(part.input, 'message')
-                : undefined;
-            const answerMessage =
-              part.state === 'output-available'
-                ? cleanAssistantText(part.output.message)
-                : partialAnswer
-                  ? cleanAssistantText(partialAnswer)
-                  : '';
+            const answerMessage = answerUserMessageText(part) ?? '';
             if (!answerMessage.trim()) return null;
             return (
               <div
@@ -685,14 +681,14 @@ function AssistantBubble({
               </div>
             )}
 
-            {text && (
+            {copyText && (
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button
                     variant="outline"
                     size="icon"
                     className="h-6 w-6 rounded-lg p-0"
-                    onClick={() => navigator.clipboard.writeText(text)}
+                    onClick={() => navigator.clipboard.writeText(copyText)}
                     aria-label="Copy"
                   >
                     <Copy className="h-3 w-3 text-adam-neutral-100" />

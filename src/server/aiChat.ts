@@ -288,7 +288,8 @@ function shouldUseLocalOpenRouter(modelId: string): boolean {
   return (
     env('ENVIRONMENT') === 'local' &&
     !!env('OPENROUTER_API_KEY') &&
-    (modelId.startsWith('anthropic/') || modelId.startsWith('google/'))
+    ((modelId.startsWith('anthropic/') && !env('ANTHROPIC_API_KEY')) ||
+      (modelId.startsWith('google/') && !env('GOOGLE_API_KEY')))
   );
 }
 
@@ -1088,7 +1089,6 @@ export async function handleAiChatRequest(req: Request) {
           ) ?? false;
       if (
         conversation.type === 'parametric' &&
-        leafRole === 'user' &&
         (stepNumber === 0 || previousStepCalledBuild)
       ) {
         // Parametric turns stay structured: first choose build vs answer;
