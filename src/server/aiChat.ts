@@ -300,17 +300,7 @@ const PARAMETRIC_THINKING_BUDGET_TOKENS = 1024;
 
 type ChatProvider = 'anthropic' | 'google' | 'openrouter';
 
-function shouldUseLocalOpenRouter(modelId: string): boolean {
-  return (
-    env('ENVIRONMENT') === 'local' &&
-    !!env('OPENROUTER_API_KEY') &&
-    ((modelId.startsWith('anthropic/') && !env('ANTHROPIC_API_KEY')) ||
-      (modelId.startsWith('google/') && !env('GOOGLE_API_KEY')))
-  );
-}
-
 function providerFor(modelId: string): ChatProvider {
-  if (shouldUseLocalOpenRouter(modelId)) return 'openrouter';
   if (modelId.startsWith('anthropic/')) return 'anthropic';
   if (modelId.startsWith('google/')) return 'google';
   return 'openrouter';
@@ -355,10 +345,9 @@ function createChatProviders(): ChatProviders {
  * Map a `<provider>/<model>` ID to a configured LanguageModel + the
  * provider-specific options the AI SDK expects at the streamText boundary.
  *
- * Anthropic and Google are hit directly via their respective AI SDK providers
- * unless local development is configured with only OpenRouter. Everything else
- * (OpenAI, MoonshotAI, …) keeps going through OpenRouter so we don't have to
- * wire a dedicated provider per vendor.
+ * Anthropic and Google are hit directly via their respective AI SDK providers.
+ * Everything else (OpenAI, MoonshotAI, …) keeps going through OpenRouter so we
+ * don't have to wire a dedicated provider per vendor.
  */
 function buildChatModel(
   modelId: string,
