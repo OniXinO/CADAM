@@ -1121,6 +1121,19 @@ export async function handleAiChatRequest(req: Request) {
     system: systemPrompt(conversation),
     messages: modelMessages,
     tools,
+    prepareStep: ({ stepNumber }) => {
+      if (
+        conversation.type === 'parametric' &&
+        leafRole === 'user' &&
+        stepNumber === 0
+      ) {
+        return {
+          activeTools: ['build_parametric_model' as never],
+          toolChoice: 'required' as const,
+        };
+      }
+      return {};
+    },
     stopWhen: stepCountIs(conversation.type === 'parametric' ? 60 : 5),
     maxOutputTokens: rawBody.thinking ? 20000 : 16000,
     abortSignal: req.signal,
