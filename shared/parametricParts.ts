@@ -123,6 +123,30 @@ export function replaceBuildParametricModelOutput(
   });
 }
 
+// OpenSCAD shape/transform/boolean/definition keywords plus `include`/`use`
+// statements. A model the WASM worker can actually render contains at least
+// one of these. Pure prose (an apology, a natural-language explanation, a
+// truncated reply) contains none — that's the empty-output case from #181.
+const OPENSCAD_TOKEN_PATTERN =
+  /\b(?:module|function|cube|cylinder|sphere|polyhedron|circle|square|polygon|text|union|difference|intersection|hull|minkowski|translate|rotate|scale|resize|mirror|multmatrix|color|offset|linear_extrude|rotate_extrude|projection|surface|import)\b|(?:^|\n)\s*(?:include|use)\s*</;
+
+/**
+ * True when `code` looks like something the OpenSCAD worker can render.
+ *
+ * Intentionally a cheap heuristic, not a parser: the model conveys geometry
+ * only through `build_parametric_model`'s `code` field, so "no SCAD" means
+ * either an empty string or a body with no OpenSCAD tokens at all. We don't
+ * try to validate syntax — a genuine compile error is surfaced separately by
+ * the viewer (`OpenSCADPreview`). This guards the prior silent path where
+ * empty/prose code compiled to nothing and the viewer showed a blank canvas.
+ */
+export function hasRenderableScadCode(code: unknown): boolean {
+  if (typeof code !== 'string') return false;
+  const trimmed = code.trim();
+  if (trimmed.length === 0) return false;
+  return OPENSCAD_TOKEN_PATTERN.test(trimmed);
+}
+
 export function isParametricArtifact(
   value: unknown,
 ): value is ParametricArtifact {
