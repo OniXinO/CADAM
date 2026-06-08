@@ -76,6 +76,53 @@ interface ChatSessionProps {
   onLoadingChange?: (isLoading: boolean) => void;
 }
 
+type ToolMessagePart = Extract<
+  AppUIMessage['parts'][number],
+  { state: string }
+>;
+
+function isToolMessagePart(
+  part: AppUIMessage['parts'][number],
+): part is ToolMessagePart {
+  return part.type.startsWith('tool-') && 'state' in part;
+}
+
+function lastAssistantMessageIsCompleteWithParametricBuild({
+  messages,
+}: {
+  messages: AppUIMessage[];
+}) {
+  const message = messages[messages.length - 1];
+  if (!message || message.role !== 'assistant') return false;
+  if (message.parts.some((part) => part.type === 'tool-answer_user')) {
+    return false;
+  }
+
+  const lastStepStartIndex = message.parts.reduce(
+    (lastIndex, part, index) =>
+      part.type === 'step-start' ? index : lastIndex,
+    -1,
+  );
+  const toolParts = message.parts
+    .slice(lastStepStartIndex + 1)
+    .filter(isToolMessagePart);
+
+  return (
+    toolParts.some((part) => part.type === 'tool-build_parametric_model') &&
+    !toolParts.some((part) => part.type === 'tool-answer_user') &&
+    toolParts.every(
+      (part) =>
+        part.state === 'output-available' || part.state === 'output-error',
+    )
+  );
+}
+
+function answerUserInput(input: unknown): { message: string } | null {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return null;
+  const message = (input as { message?: unknown }).message;
+  return typeof message === 'string' && message.trim() ? { message } : null;
+}
+
 /**
  * Owns the AI-SDK Chat lifecycle for a conversation. Everything that touches
  * `chat.sendMessage` / `chat.regenerate` / `chat.setMessages` /
@@ -179,7 +226,7 @@ export function ChatSession({
   // input completes. We compile the OpenSCAD locally, upload the preview,
   // persist the assistant's parts to DB (so the server reads the right
   // thing on auto-continuation), and only then call `chat.addToolOutput`
-  // which triggers `sendAutomaticallyWhen` → next stream.
+  // which lets `sendAutomaticallyWhen` continue the CAD build/review loop.
   // ───────────────────────────────────────────────────────────────────────
   const chatRef = useRef<ReturnType<typeof useCachedAiChat> | null>(null);
   // Latest `chat.messages` snapshot for use inside `onToolCall` (callbacks
@@ -196,7 +243,12 @@ export function ChatSession({
         input: unknown;
       };
     }) => {
-      if (toolCall.toolName !== 'build_parametric_model') return;
+      if (
+        toolCall.toolName !== 'build_parametric_model' &&
+        toolCall.toolName !== 'answer_user'
+      ) {
+        return;
+      }
       const chat = chatRef.current;
       if (!chat) return;
 
@@ -209,13 +261,69 @@ export function ChatSession({
             msg.role === 'assistant' &&
             msg.parts.some(
               (p) =>
-                p.type === 'tool-build_parametric_model' &&
+                p.type === `tool-${toolCall.toolName}` &&
+                'toolCallId' in p &&
                 p.toolCallId === toolCall.toolCallId,
             ),
         );
       const assistant =
         findAssistant(chat.messages as AppUIMessage[]) ??
         findAssistant(messagesRef.current);
+
+      if (toolCall.toolName === 'answer_user') {
+        const output = answerUserInput(toolCall.input);
+        if (!output) {
+          chat.addToolOutput({
+            state: 'output-error',
+            tool: 'answer_user',
+            toolCallId: toolCall.toolCallId,
+            errorText: 'answer_user input was missing a message.',
+          });
+          return;
+        }
+
+        const successPart = {
+          type: 'tool-answer_user',
+          toolCallId: toolCall.toolCallId,
+          state: 'output-available',
+          input: output,
+          output,
+        } as AppUIMessage['parts'][number];
+
+        if (assistant) {
+          const nextParts = assistant.parts.map((existing) => {
+            if (
+              existing.type === 'tool-answer_user' &&
+              existing.toolCallId === toolCall.toolCallId
+            ) {
+              return successPart;
+            }
+            if (
+              (existing.type === 'reasoning' || existing.type === 'text') &&
+              existing.state === 'streaming'
+            ) {
+              return { ...existing, state: 'done' as const };
+            }
+            return existing;
+          }) as AppUIMessage['parts'];
+
+          try {
+            await onToolOutput(assistant.id, nextParts);
+          } catch (persistError) {
+            console.warn(
+              'Failed to persist answer_user output to DB:',
+              persistError,
+            );
+          }
+        }
+
+        chat.addToolOutput({
+          tool: 'answer_user',
+          toolCallId: toolCall.toolCallId,
+          output,
+        });
+        return;
+      }
 
       // Build the next parts array for `assistant`, replacing the
       // matching tool part with `replacement` and normalising any
@@ -350,10 +458,17 @@ export function ChatSession({
           console.warn('Failed to upload OpenSCAD thumbnail:', uploadError);
         }
 
+        const inspectionViews: Array<
+          'ISO' | 'FRONT' | 'BACK' | 'LEFT' | 'RIGHT' | 'TOP' | 'BOTTOM'
+        > = ['ISO', 'FRONT', 'BACK', 'LEFT', 'RIGHT', 'TOP', 'BOTTOM'];
         const output = {
           status: 'success' as const,
+          inspection: {
+            views: inspectionViews,
+            imageAttached: inspectionUploaded,
+          },
           message: inspectionUploaded
-            ? 'Compilation successful. Inspect the multi-view render in this tool result against the user request from every visible angle. If anything is missing, wrong, too simple, disconnected, non-printable, hidden from some view, or visually unclear, call build_parametric_model again with a corrected complete OpenSCAD script. If all views satisfy the request, give a concise final response.'
+            ? 'Compilation successful. Inspect the multi-view render in this tool result against the user request from every visible angle. If any required feature is missing, wrong, too simple, disconnected, non-printable, hidden from some view, or visually unclear, call build_parametric_model again with a corrected complete OpenSCAD script. If all views satisfy the request, give a concise final response.'
             : 'Compilation successful, but the multi-view preview sheet was not available. Review the OpenSCAD you wrote against the user request. If anything is missing, wrong, too simple, disconnected, non-printable, or visually unclear, call build_parametric_model again with a corrected complete OpenSCAD script. If it satisfies the request, give a concise final response.',
         };
 
@@ -365,6 +480,10 @@ export function ChatSession({
           output,
         } as AppUIMessage['parts'][number];
         const nextParts = buildNextParts(successPart);
+
+        if (assistant) {
+          onViewArtifact(input, assistant.id);
+        }
 
         if (nextParts && assistant) {
           try {
@@ -385,7 +504,7 @@ export function ChatSession({
         );
       }
     },
-    [conversation.id, onToolOutput, user?.id],
+    [conversation.id, onToolOutput, onViewArtifact, user?.id],
   );
 
   // ───────────────────────────────────────────────────────────────────────
@@ -398,7 +517,10 @@ export function ChatSession({
     messages: initialBranch,
     transport,
     onToolCall: handleToolCall,
-    sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,
+    sendAutomaticallyWhen:
+      conversation.type === 'parametric'
+        ? lastAssistantMessageIsCompleteWithParametricBuild
+        : lastAssistantMessageIsCompleteWithToolCalls,
     // Out-of-band conversation-level signals (title + suggestions) arrive
     // here as transient data parts — they never land in `messages.parts`,
     // so we patch the conversation query cache directly. See
@@ -721,7 +843,7 @@ export function ChatSession({
   return (
     <>
       <ScrollArea
-        className="relative min-w-0 max-w-full flex-1 self-center overflow-x-hidden px-3 py-0 md:min-h-0 md:p-4 [&_[data-radix-scroll-area-viewport]]:overflow-x-hidden"
+        className="relative w-full min-w-0 max-w-full flex-1 self-center overflow-x-hidden px-3 py-0 md:min-h-0 md:p-4 [&_[data-radix-scroll-area-viewport]]:overflow-x-hidden"
         ref={scrollRef}
       >
         <div className="pointer-events-none sticky left-0 top-0 z-50 h-3 bg-gradient-to-b from-adam-bg-secondary-dark/90 to-transparent md:hidden" />

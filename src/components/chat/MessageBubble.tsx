@@ -236,7 +236,7 @@ function UserBubble({
     isEditing;
 
   return (
-    <div className="flex justify-start">
+    <div className="flex w-full min-w-0 max-w-full justify-start">
       <div className="mr-2 mt-1">
         <UserAvatar className="h-9 w-9 border border-adam-neutral-700 bg-adam-neutral-950 p-0" />
       </div>
@@ -433,14 +433,32 @@ function AssistantBubble({
   const modelOptions =
     conversation.type === 'creative' ? CREATIVE_MODELS : PARAMETRIC_MODELS;
   const [expandedTools, setExpandedTools] = useState<Set<number>>(new Set());
+  const lastParametricBuildIndex = useMemo(() => {
+    if (conversation.type !== 'parametric') return -1;
+    let buildIndex = -1;
+    message.parts.forEach((part, index) => {
+      if (part.type === 'tool-build_parametric_model') buildIndex = index;
+    });
+    return buildIndex;
+  }, [conversation.type, message.parts]);
 
   const text = useMemo(
     () =>
-      message.parts
-        .filter((p) => p.type === 'text')
-        .map((p) => cleanAssistantText(p.text))
-        .join(''),
-    [message.parts],
+      conversation.type === 'parametric' && lastParametricBuildIndex !== -1
+        ? ''
+        : message.parts
+            .filter(
+              (
+                p,
+              ): p is Extract<
+                (typeof message.parts)[number],
+                { type: 'text' }
+              > => p.type === 'text',
+            )
+            .map((p) => cleanAssistantText(p.text))
+            .filter((visibleText) => !!visibleText)
+            .join(''),
+    [conversation.type, message.parts, lastParametricBuildIndex],
   );
   const answerText = useMemo(
     () => message.parts.map(answerUserMessageText).filter(Boolean).join(''),
@@ -486,8 +504,16 @@ function AssistantBubble({
       <div className="flex min-w-0 max-w-[calc(100%-3rem)] flex-1 flex-col gap-2">
         {message.parts.map((part, index) => {
           if (part.type === 'text') {
+            if (
+              conversation.type === 'parametric' &&
+              lastParametricBuildIndex !== -1
+            ) {
+              return null;
+            }
             const visibleText = cleanAssistantText(part.text);
-            if (hasAnswerUserMessage || !visibleText) return null;
+            if (hasAnswerUserMessage || !visibleText) {
+              return null;
+            }
             return (
               <div
                 key={index}
@@ -513,16 +539,12 @@ function AssistantBubble({
           }
 
           if (part.type === 'tool-build_parametric_model') {
+            if (index !== lastParametricBuildIndex) return null;
             const artifact =
               part.state !== 'input-streaming' &&
               isParametricArtifact(part.input)
                 ? part.input
                 : undefined;
-            const outputMessage =
-              part.state === 'output-available'
-                ? part.output.message
-                : undefined;
-
             // While the model is mid-stream, render the SCAD code in a
             // typewriter-style block so the user sees something happening
             // (matches legacy AssistantMessage's StreamingCodeBlock branch).
@@ -549,7 +571,9 @@ function AssistantBubble({
             // generated client-side by `usePreview` — either way the
             // thumbnail keys off `toolCallId` and the artifact's `code`.
             const showThumbnail =
-              part.state === 'output-available' && !!artifact;
+              index === lastParametricBuildIndex &&
+              part.state === 'output-available' &&
+              !!artifact;
             return (
               <ToolBlock
                 key={index}
@@ -585,10 +609,6 @@ function AssistantBubble({
                 {part.state === 'output-error' ? (
                   <div className="border-b border-adam-neutral-700 p-3 text-xs text-red-300">
                     {part.errorText}
-                  </div>
-                ) : outputMessage ? (
-                  <div className="border-b border-adam-neutral-700 p-3 text-xs text-adam-neutral-300">
-                    {outputMessage}
                   </div>
                 ) : null}
                 {artifact?.code ? (

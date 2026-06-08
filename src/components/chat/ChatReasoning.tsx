@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Streamdown } from 'streamdown';
 import { cjk } from '@streamdown/cjk';
 import { code } from '@streamdown/code';
@@ -61,9 +61,17 @@ export function ChatReasoning({
   className,
 }: ChatReasoningProps) {
   const thinkingVerb = useSharedSpinnerVerb(isStreaming);
+  const [isDetailsOpen, setIsDetailsOpen] = useState(false);
+
+  useEffect(() => {
+    if (isStreaming) setIsDetailsOpen(false);
+  }, [isStreaming]);
 
   return (
     <Reasoning
+      defaultOpen={false}
+      open={isDetailsOpen}
+      onOpenChange={setIsDetailsOpen}
       isStreaming={isStreaming}
       className={cn('mb-0 mt-1 min-w-0 max-w-full overflow-hidden', className)}
     >
@@ -80,7 +88,9 @@ export function ChatReasoning({
           return <p>Thought for {duration} seconds</p>;
         }}
       />
-      <ChatReasoningBody isStreaming={isStreaming}>{text}</ChatReasoningBody>
+      {isDetailsOpen ? (
+        <ChatReasoningBody isStreaming={isStreaming}>{text}</ChatReasoningBody>
+      ) : null}
     </Reasoning>
   );
 }

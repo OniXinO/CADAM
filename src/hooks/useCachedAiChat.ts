@@ -12,6 +12,9 @@ type CallbackRefs = {
   onFinish: { current: ReactChatInit['onFinish'] };
   onData: { current: ReactChatInit['onData'] };
   onToolCall: { current: ReactChatInit['onToolCall'] };
+  sendAutomaticallyWhen: {
+    current: ReactChatInit['sendAutomaticallyWhen'];
+  };
 };
 
 const callbackRefs = new Map<string, CallbackRefs>();
@@ -24,6 +27,7 @@ function refsFor(id: string): CallbackRefs {
       onFinish: { current: undefined },
       onData: { current: undefined },
       onToolCall: { current: undefined },
+      sendAutomaticallyWhen: { current: undefined },
     };
     callbackRefs.set(id, refs);
   }
@@ -61,6 +65,7 @@ export function useCachedAiChat({
   onFinish,
   onData,
   onToolCall,
+  sendAutomaticallyWhen,
   ...rest
 }: CachedAiChatOptions) {
   const refs = refsFor(id);
@@ -74,6 +79,7 @@ export function useCachedAiChat({
     refs.onFinish.current = onFinish;
     refs.onData.current = onData;
     refs.onToolCall.current = onToolCall;
+    refs.sendAutomaticallyWhen.current = sendAutomaticallyWhen;
   });
 
   return useMemo(() => {
@@ -93,6 +99,8 @@ export function useCachedAiChat({
       onFinish: (ctx) => refs.onFinish.current?.(ctx),
       onData: (ctx) => refs.onData.current?.(ctx),
       onToolCall: (ctx) => refs.onToolCall.current?.(ctx),
+      sendAutomaticallyWhen: (ctx) =>
+        refs.sendAutomaticallyWhen.current?.(ctx) ?? false,
     });
 
     chatCache.set(id, chat);
@@ -109,8 +117,9 @@ export function createAndCacheAiChat(
     id: string;
   },
 ) {
-  const { id, ...rest } = options;
+  const { id, sendAutomaticallyWhen, ...rest } = options;
   const refs = refsFor(id);
+  refs.sendAutomaticallyWhen.current = sendAutomaticallyWhen;
   const chat = new Chat<AppUIMessage>({
     ...rest,
     id,
@@ -118,6 +127,8 @@ export function createAndCacheAiChat(
     onFinish: (ctx) => refs.onFinish.current?.(ctx),
     onData: (ctx) => refs.onData.current?.(ctx),
     onToolCall: (ctx) => refs.onToolCall.current?.(ctx),
+    sendAutomaticallyWhen: (ctx) =>
+      refs.sendAutomaticallyWhen.current?.(ctx) ?? false,
   });
 
   chatCache.set(id, chat);

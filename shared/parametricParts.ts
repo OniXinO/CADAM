@@ -64,6 +64,22 @@ export function getParametricText(parts: unknown): string {
 }
 
 export function cleanAssistantText(text: string): string {
+  text = text.replace(/!\[[^\]]*]\([^)]+\)/g, '');
+
+  const metadataLeak =
+    /(?:^|\n)\s*,?\s*(?:"?(?:viewpoint_state|zoom_info|title|version)"?\s*:)/i.exec(
+      text,
+    );
+  if (metadataLeak) {
+    const before = text.slice(0, metadataLeak.index);
+    const leaked = text.slice(metadataLeak.index);
+    const proseStart =
+      /\b(?:Done|Here(?:'s| is)?|This|I(?:'ve| created| updated| made| added| fixed)|The model)\b/i.exec(
+        leaked,
+      );
+    text = before + (proseStart ? leaked.slice(proseStart.index) : '');
+  }
+
   const attachmentLeak =
     /(?:^|\n)[^\n{}]*(?:alt=media|preview sheet attached automatically)[^\n{}]*[})]?\s*/i.exec(
       text,
@@ -73,6 +89,11 @@ export function cleanAssistantText(text: string): string {
       text.slice(0, attachmentLeak.index) +
       text.slice(attachmentLeak.index + attachmentLeak[0].length);
   }
+
+  text = text.replace(
+    /(?:^|\n)\s*[^{}\n]*(?:\.png|\.jpe?g|\.webp|\.gif)[^{}\n]*[})]?\s*/gi,
+    '\n',
+  );
 
   const marker = /Drafting final message:\s*/i.exec(text);
   if (!marker) return text;

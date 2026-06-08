@@ -12,7 +12,6 @@ import {
   createUIMessageStream,
   createUIMessageStreamResponse,
   generateText,
-  hasToolCall,
   Output,
   smoothStream,
   stepCountIs,
@@ -84,9 +83,7 @@ const USD_PER_BILLING_TOKEN = 0.01;
 
 const PARAMETRIC_AGENT_PROMPT = `You are Adam, an agentic AI CAD editor that creates and modifies OpenSCAD models. The user can see a live preview of the model on the right while you work.
 
-Start each user turn by choosing exactly one path:
-- Use build_parametric_model whenever the user asks for a CAD model, an edit to a CAD model, or a fix for OpenSCAD code. Speak back briefly (one or two sentences) and let the tool carry the change — never paste OpenSCAD into your reply text.
-- Use answer_user for greetings, thanks, app/capability questions, informational questions that do not ask you to create or change a model, and the final user-facing message after a CAD build succeeds.
+Use build_parametric_model whenever the user asks for a CAD model, an edit to a CAD model, or a fix for OpenSCAD code. The tool input is the model shown to the user, so do not paste OpenSCAD into normal reply text. Use answer_user for final user-facing text and for normal non-CAD replies.
 
 Never say you created, designed, generated, updated, or fixed a model unless you used build_parametric_model in that turn.
 
@@ -107,9 +104,27 @@ through write → multi-view screenshot inspection → rewrite until the model i
 good or you hit the turn limit. Do not stop after the first successful compile
 unless the preview sheet shows that the model satisfies the request from every
 view. When all views satisfy the request, call answer_user with the concise
-final response instead of writing normal assistant text.
+final response.
 
-Final responses must be only the short user-facing message. Do not include
+Iteration rule:
+- After every build_parametric_model call, silently inspect the returned views
+  before speaking to the user.
+- If any view shows missing, wrong, disconnected, non-printable, too-simple,
+  hidden, or visually unclear geometry, call build_parametric_model again with
+  a corrected complete OpenSCAD script.
+- If the views show the model satisfies the user's request from every required
+  angle, call answer_user with the final text.
+- Do not finalize just because OpenSCAD compiled. Finalize only because the
+  views look right.
+
+Multi-feature checklist before stopping:
+- Phone case → hollow phone pocket, wrap-over lip, camera cutout, charging-port
+  opening, side button cutouts, printable wall thickness, all cuts visible.
+- Mug → body, hollow interior, rim, base, handle, printable wall thickness.
+- Vehicle / character / prop → recognizable silhouette, main appendages or
+  components, surface details, colors, no disconnected floating parts.
+
+answer_user.message must be only the short user-facing message. Do not include
 analysis, draft notes, screenshot observations, storage URLs, filenames,
 attachment labels, or phrases like "preview sheet attached automatically".
 After a successful build, speak in past tense (for example, "Done — I made...")
@@ -281,6 +296,7 @@ function jsonResponse(body: unknown, status: number) {
 }
 
 const THINKING_BUDGET_TOKENS = 9000;
+const PARAMETRIC_THINKING_BUDGET_TOKENS = 1024;
 
 type ChatProvider = 'anthropic' | 'google' | 'openrouter';
 
@@ -348,12 +364,15 @@ function buildChatModel(
   modelId: string,
   providers: ChatProviders,
   thinking: boolean,
+  thinkingBudget: number = THINKING_BUDGET_TOKENS,
 ): { model: LanguageModel; providerOptions?: ProviderOptions } {
+  const isCappedThinking = thinkingBudget !== THINKING_BUDGET_TOKENS;
+
   if (providerFor(modelId) === 'openrouter') {
     return {
       model: providers.openrouter().chat(modelId, {
-        ...(thinking
-          ? { reasoning: { max_tokens: THINKING_BUDGET_TOKENS } }
+        ...(thinking || isCappedThinking
+          ? { reasoning: { max_tokens: thinkingBudget } }
           : {}),
         usage: { include: true },
       }),
@@ -364,18 +383,30 @@ function buildChatModel(
     // Anthropic's API uses dashes everywhere ("claude-haiku-4-5"), while the
     // OpenRouter alias uses dots ("claude-haiku-4.5"). Normalize both.
     const id = modelId.slice('anthropic/'.length).replace(/\./g, '-');
+    const adaptiveThinking = usesAdaptiveAnthropicThinking(id);
     return {
       model: providers.anthropic()(id),
-      providerOptions: thinking
-        ? {
-            anthropic: {
-              thinking: {
-                type: 'enabled',
-                budgetTokens: THINKING_BUDGET_TOKENS,
+      providerOptions:
+        thinking || isCappedThinking
+          ? {
+              anthropic: {
+                ...(adaptiveThinking
+                  ? {
+                      thinking: {
+                        type: 'adaptive' as const,
+                        display: 'summarized' as const,
+                      },
+                      effort: isCappedThinking ? 'low' : 'high',
+                    }
+                  : {
+                      thinking: {
+                        type: 'enabled' as const,
+                        budgetTokens: thinkingBudget,
+                      },
+                    }),
               },
-            },
-          }
-        : undefined,
+            }
+          : undefined,
     };
   }
 
@@ -383,18 +414,11 @@ function buildChatModel(
     const id = modelId.slice('google/'.length);
     return {
       model: providers.google()(id),
-      // Gemini 3 Pro (and most current Google reasoning models) always
-      // think internally — `thinkingBudget` only controls how MUCH, not
-      // whether. `includeThoughts` is what actually surfaces those
-      // thoughts in the stream as `reasoning-delta` parts. So we always
-      // ask for thoughts; the user's "thinking" toggle just bumps the
-      // budget. Without this, Google streams look as if the model isn't
-      // reasoning at all even though it is.
       providerOptions: {
         google: {
           thinkingConfig: {
             includeThoughts: true,
-            ...(thinking ? { thinkingBudget: THINKING_BUDGET_TOKENS } : {}),
+            ...(thinking || isCappedThinking ? { thinkingBudget } : {}),
           },
         },
       },
@@ -402,6 +426,11 @@ function buildChatModel(
   }
 
   throw new Error(`Unsupported chat model ${modelId}`);
+}
+
+function usesAdaptiveAnthropicThinking(modelId: string) {
+  const match = /^claude-(?:opus|sonnet)-4-(\d+)/.exec(modelId);
+  return match ? Number(match[1]) >= 6 : false;
 }
 
 function priceFor(modelId: string) {
@@ -498,6 +527,17 @@ function finalizeStreamingParts(
     }
     return part;
   });
+}
+
+function dropTextFromParametricBuildMessage(
+  parts: AppUIMessage['parts'],
+): AppUIMessage['parts'] {
+  const hasBuild = parts.some(
+    (part) => part.type === 'tool-build_parametric_model',
+  );
+  if (!hasBuild) return parts;
+
+  return parts.filter((part) => part.type !== 'text') as AppUIMessage['parts'];
 }
 
 function messageRowToUIMessage(row: BranchMessageRow): AppUIMessage {
@@ -785,12 +825,16 @@ function parametricTools({
           'images',
           previewPathForToolCall(toolCallId),
         );
+        const views =
+          output.inspection?.views.join(', ') ??
+          'ISO, FRONT, BACK, LEFT, RIGHT, TOP, BOTTOM';
+        const text = `${output.message}\nRendered inspection views: ${views}.\nMulti-view inspection image attached: ${downloaded ? 'yes' : 'no'}.`;
 
         if (downloaded) {
           return {
             type: 'content' as const,
             value: [
-              { type: 'text' as const, text: output.message },
+              { type: 'text' as const, text },
               {
                 type: 'image-data' as const,
                 data: downloaded.base64,
@@ -800,13 +844,10 @@ function parametricTools({
           };
         }
 
-        return { type: 'text' as const, value: output.message };
+        return { type: 'text' as const, value: text };
       },
     },
-    answer_user: {
-      ...chatTools.answer_user,
-      execute: async (input: AppTools['answer_user']['input']) => input,
-    },
+    answer_user: chatTools.answer_user,
   };
 }
 
@@ -1033,6 +1074,13 @@ export async function handleAiChatRequest(req: Request) {
   // not the one the user requested.
   const actualModelId = chatModel(conversation, rawBody.model);
   const resolvedProvider = providerFor(actualModelId);
+  const baseLogContext = {
+    userId: user.id,
+    conversationId: conversation.id,
+    modelId: actualModelId,
+    requestedModelId: rawBody.model,
+    provider: resolvedProvider,
+  };
 
   let chatLanguageModel: LanguageModel;
   let chatProviderOptions: ProviderOptions | undefined;
@@ -1041,6 +1089,9 @@ export async function handleAiChatRequest(req: Request) {
       actualModelId,
       providers,
       rawBody.thinking ?? false,
+      conversation.type === 'parametric'
+        ? PARAMETRIC_THINKING_BUDGET_TOKENS
+        : THINKING_BUDGET_TOKENS,
     );
     chatLanguageModel = built.model;
     chatProviderOptions = built.providerOptions;
@@ -1051,9 +1102,8 @@ export async function handleAiChatRequest(req: Request) {
       userId: user.id,
       conversationId: conversation.id,
       additionalContext: {
+        ...baseLogContext,
         operation: 'build_chat_model',
-        modelId: actualModelId,
-        provider: resolvedProvider,
       },
     });
     return jsonResponse(
@@ -1062,15 +1112,8 @@ export async function handleAiChatRequest(req: Request) {
     );
   }
 
-  // Common context attached to every error we log out of this request —
-  // makes it trivial to tell "Anthropic rejected the model ID" apart from
-  // "Google rate-limited us" apart from "OpenRouter returned 502" in logs.
   const logContext = {
-    userId: user.id,
-    conversationId: conversation.id,
-    modelId: actualModelId,
-    requestedModelId: rawBody.model,
-    provider: resolvedProvider,
+    ...baseLogContext,
     thinking: rawBody.thinking ?? false,
   };
 
@@ -1080,26 +1123,7 @@ export async function handleAiChatRequest(req: Request) {
     system: systemPrompt(conversation),
     messages: modelMessages,
     tools,
-    prepareStep: ({ stepNumber, steps }) => {
-      const previousStepCalledBuild =
-        steps
-          .at(-1)
-          ?.toolCalls.some(
-            (toolCall) => toolCall.toolName === 'build_parametric_model',
-          ) ?? false;
-      if (
-        conversation.type === 'parametric' &&
-        (stepNumber === 0 || previousStepCalledBuild)
-      ) {
-        // Parametric turns stay structured: first choose build vs answer;
-        // after each build, choose revise vs final answer_user.
-        return {
-          toolChoice: 'required' as const,
-        };
-      }
-      return {};
-    },
-    stopWhen: [stepCountIs(5), hasToolCall('answer_user')],
+    stopWhen: stepCountIs(conversation.type === 'parametric' ? 60 : 5),
     maxOutputTokens: rawBody.thinking ? 20000 : 16000,
     abortSignal: req.signal,
     // Decouple our render cadence from the provider's native chunking.
@@ -1144,10 +1168,10 @@ export async function handleAiChatRequest(req: Request) {
       logError(error, {
         functionName: 'ai-chat',
         statusCode: 500,
-        userId: logContext.userId,
-        conversationId: logContext.conversationId,
+        userId: baseLogContext.userId,
+        conversationId: baseLogContext.conversationId,
         additionalContext: {
-          ...logContext,
+          ...baseLogContext,
           operation: 'ui_message_stream',
         },
       });
@@ -1204,9 +1228,13 @@ export async function handleAiChatRequest(req: Request) {
               });
             }
 
-            const finalizedParts = finalizeStreamingParts(
-              responseMessage.parts,
-            );
+            const finalizedParts =
+              conversation.type === 'parametric'
+                ? dropTextFromParametricBuildMessage(
+                    finalizeStreamingParts(responseMessage.parts),
+                  )
+                : finalizeStreamingParts(responseMessage.parts);
+
             const serializedMessage = {
               metadata: JSON.parse(JSON.stringify(metadata)),
               parts: JSON.parse(JSON.stringify(finalizedParts)),

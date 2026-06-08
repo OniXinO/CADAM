@@ -25,6 +25,14 @@ export const parametricArtifactSchema = z.object({
 export const parametricCompileOutputSchema = z.object({
   status: z.literal('success'),
   message: z.string(),
+  inspection: z
+    .object({
+      views: z.array(
+        z.enum(['ISO', 'FRONT', 'BACK', 'LEFT', 'RIGHT', 'TOP', 'BOTTOM']),
+      ),
+      imageAttached: z.boolean(),
+    })
+    .optional(),
 });
 
 export const answerUserSchema = z.object({
