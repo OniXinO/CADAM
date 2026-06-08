@@ -366,14 +366,13 @@ function buildChatModel(
   thinking: boolean,
   thinkingBudget: number = THINKING_BUDGET_TOKENS,
 ): { model: LanguageModel; providerOptions?: ProviderOptions } {
-  const isCappedThinking = thinkingBudget !== THINKING_BUDGET_TOKENS;
+  const hasCappedThinkingBudget =
+    thinking && thinkingBudget !== THINKING_BUDGET_TOKENS;
 
   if (providerFor(modelId) === 'openrouter') {
     return {
       model: providers.openrouter().chat(modelId, {
-        ...(thinking || isCappedThinking
-          ? { reasoning: { max_tokens: thinkingBudget } }
-          : {}),
+        ...(thinking ? { reasoning: { max_tokens: thinkingBudget } } : {}),
         usage: { include: true },
       }),
     };
@@ -386,27 +385,26 @@ function buildChatModel(
     const adaptiveThinking = usesAdaptiveAnthropicThinking(id);
     return {
       model: providers.anthropic()(id),
-      providerOptions:
-        thinking || isCappedThinking
-          ? {
-              anthropic: {
-                ...(adaptiveThinking
-                  ? {
-                      thinking: {
-                        type: 'adaptive' as const,
-                        display: 'summarized' as const,
-                      },
-                      effort: isCappedThinking ? 'low' : 'high',
-                    }
-                  : {
-                      thinking: {
-                        type: 'enabled' as const,
-                        budgetTokens: thinkingBudget,
-                      },
-                    }),
-              },
-            }
-          : undefined,
+      providerOptions: thinking
+        ? {
+            anthropic: {
+              ...(adaptiveThinking
+                ? {
+                    thinking: {
+                      type: 'adaptive' as const,
+                      display: 'summarized' as const,
+                    },
+                    effort: hasCappedThinkingBudget ? 'low' : 'high',
+                  }
+                : {
+                    thinking: {
+                      type: 'enabled' as const,
+                      budgetTokens: thinkingBudget,
+                    },
+                  }),
+            },
+          }
+        : undefined,
     };
   }
 
@@ -418,7 +416,7 @@ function buildChatModel(
         google: {
           thinkingConfig: {
             includeThoughts: true,
-            ...(thinking || isCappedThinking ? { thinkingBudget } : {}),
+            ...(thinking ? { thinkingBudget } : {}),
           },
         },
       },
