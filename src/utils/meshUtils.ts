@@ -158,10 +158,28 @@ export function isValidSTL(file: File): boolean {
   return validMimeTypes.includes(file.type) || file.type === '';
 }
 
-// Render any prebuilt THREE.Scene to a 1000×1000 PNG data URL using the same
-// camera framing (top-right-front isometric), HDR environment, and lighting
-// that both `generatePreview` and `generateColoredPreview` rely on.
-function renderSceneToDataUrl(scene: THREE.Scene): string {
+const INSPECTION_VIEWS = [
+  { name: 'ISO', direction: new THREE.Vector3(1, 1, 1) },
+  { name: 'FRONT', direction: new THREE.Vector3(0, 0, 1) },
+  { name: 'BACK', direction: new THREE.Vector3(0, 0, -1) },
+  { name: 'LEFT', direction: new THREE.Vector3(-1, 0, 0) },
+  { name: 'RIGHT', direction: new THREE.Vector3(1, 0, 0) },
+  { name: 'TOP', direction: new THREE.Vector3(0, 1, 0) },
+  { name: 'BOTTOM', direction: new THREE.Vector3(0, -1, 0) },
+] as const;
+
+function createPreviewRenderer(size: number) {
+  const renderer = new THREE.WebGLRenderer({
+    antialias: true,
+    preserveDrawingBuffer: true,
+  });
+  renderer.setSize(size, size);
+  renderer.toneMapping = THREE.NoToneMapping;
+  renderer.setPixelRatio(window.devicePixelRatio);
+  return renderer;
+}
+
+function frameScene(scene: THREE.Scene) {
   const box = new THREE.Box3().setFromObject(scene);
   const center = new THREE.Vector3();
   const size = new THREE.Vector3();
@@ -172,23 +190,17 @@ function renderSceneToDataUrl(scene: THREE.Scene): string {
   // padding) and as the camera's stand-off distance from `center`. Ortho has
   // no foreshortening, so distance only needs to keep the model inside the
   // near/far planes.
-  const diagonal = Math.sqrt(
-    size.x * size.x + size.y * size.y + size.z * size.z,
-  );
+  const diagonal =
+    Math.sqrt(size.x * size.x + size.y * size.y + size.z * size.z) || 1;
   const halfExtent = (diagonal / 2) * 1.1;
+  return { center, diagonal, halfExtent };
+}
 
-  const renderer = new THREE.WebGLRenderer({
-    antialias: true,
-    preserveDrawingBuffer: true,
-  });
-  renderer.setSize(1000, 1000);
-  renderer.toneMapping = THREE.NoToneMapping;
-  renderer.setPixelRatio(window.devicePixelRatio);
-
-  // Orthographic gives the clean technical-drawing look you want for thumbnails
-  // — parallel edges stay parallel, scale comparison reads correctly across
-  // different artifacts. Aspect is 1:1 since we render to a 1000×1000 PNG.
-  const camera = new THREE.OrthographicCamera(
+function createPreviewCamera(halfExtent: number, diagonal: number) {
+  // Orthographic gives the clean technical-drawing look you want for previews:
+  // parallel edges stay parallel, scale comparison reads correctly across
+  // different artifacts.
+  return new THREE.OrthographicCamera(
     -halfExtent,
     halfExtent,
     halfExtent,
@@ -196,15 +208,9 @@ function renderSceneToDataUrl(scene: THREE.Scene): string {
     0.1,
     diagonal * 10,
   );
-  // Top-right-front isometric framing — matches the live viewer's gizmo TFR
-  // corner instead of staring straight down +Z, which on a Z-up OpenSCAD
-  // STL/OFF produced a flat top-down view.
-  const isoOffset = new THREE.Vector3(1, 1, 1)
-    .normalize()
-    .multiplyScalar(diagonal * 2);
-  camera.position.copy(center).add(isoOffset);
-  camera.lookAt(center);
+}
 
+function createPreviewScene(renderer: THREE.WebGLRenderer, scene: THREE.Scene) {
   const pmremGenerator = new THREE.PMREMGenerator(renderer);
   const renderScene = new THREE.Scene();
   renderScene.background = new THREE.Color(0x3b3b3b);
@@ -218,6 +224,48 @@ function renderSceneToDataUrl(scene: THREE.Scene): string {
   renderScene.add(directionalLight);
 
   renderScene.add(scene);
+  return { renderScene, pmremGenerator };
+}
+
+function renderView({
+  camera,
+  center,
+  diagonal,
+  direction,
+}: {
+  camera: THREE.OrthographicCamera;
+  center: THREE.Vector3;
+  diagonal: number;
+  direction: THREE.Vector3;
+}) {
+  camera.position.copy(center).add(
+    direction
+      .clone()
+      .normalize()
+      .multiplyScalar(diagonal * 2),
+  );
+  camera.lookAt(center);
+  camera.updateProjectionMatrix();
+}
+
+// Render any prebuilt THREE.Scene to a 1000×1000 PNG data URL using the same
+// camera framing (top-right-front isometric), HDR environment, and lighting
+// that both `generatePreview` and `generateColoredPreview` rely on.
+function renderSceneToDataUrl(scene: THREE.Scene): string {
+  const { center, diagonal, halfExtent } = frameScene(scene);
+  const renderer = createPreviewRenderer(1000);
+  const camera = createPreviewCamera(halfExtent, diagonal);
+  const { renderScene, pmremGenerator } = createPreviewScene(renderer, scene);
+
+  // Top-right-front isometric framing — matches the live viewer's gizmo TFR
+  // corner instead of staring straight down +Z, which on a Z-up OpenSCAD
+  // STL/OFF produced a flat top-down view.
+  renderView({
+    camera,
+    center,
+    diagonal,
+    direction: INSPECTION_VIEWS[0].direction,
+  });
 
   renderer.render(renderScene, camera);
   const image = renderer.domElement.toDataURL('image/png');
@@ -225,6 +273,55 @@ function renderSceneToDataUrl(scene: THREE.Scene): string {
   pmremGenerator.dispose();
   renderer.dispose();
   return image;
+}
+
+function renderInspectionSceneToDataUrl(scene: THREE.Scene): string {
+  const tileSize = 512;
+  const columns = 3;
+  const rows = 3;
+  const sheet = document.createElement('canvas');
+  sheet.width = tileSize * columns;
+  sheet.height = tileSize * rows;
+  const context = sheet.getContext('2d');
+  if (!context) throw new Error('Failed to create inspection canvas');
+
+  const { center, diagonal, halfExtent } = frameScene(scene);
+  const renderer = createPreviewRenderer(tileSize);
+  const camera = createPreviewCamera(halfExtent, diagonal);
+  const { renderScene, pmremGenerator } = createPreviewScene(renderer, scene);
+
+  try {
+    context.fillStyle = '#2b2b2b';
+    context.fillRect(0, 0, sheet.width, sheet.height);
+    context.font =
+      '600 28px system-ui, -apple-system, BlinkMacSystemFont, sans-serif';
+    context.textBaseline = 'top';
+
+    for (let index = 0; index < INSPECTION_VIEWS.length; index += 1) {
+      const view = INSPECTION_VIEWS[index];
+      const x = (index % columns) * tileSize;
+      const y = Math.floor(index / columns) * tileSize;
+
+      renderView({
+        camera,
+        center,
+        diagonal,
+        direction: view.direction,
+      });
+      renderer.render(renderScene, camera);
+      context.drawImage(renderer.domElement, x, y, tileSize, tileSize);
+
+      context.fillStyle = 'rgba(0, 0, 0, 0.62)';
+      context.fillRect(x + 16, y + 16, 126, 42);
+      context.fillStyle = '#ffffff';
+      context.fillText(view.name, x + 28, y + 23);
+    }
+  } finally {
+    pmremGenerator.dispose();
+    renderer.dispose();
+  }
+
+  return sheet.toDataURL('image/png');
 }
 
 export const generatePreview = async (
@@ -312,6 +409,56 @@ export const generateColoredPreview = async (
   scene.add(rotated);
 
   return renderSceneToDataUrl(scene);
+};
+
+export const generateInspectionPreview = async ({
+  stl,
+  off,
+  fallbackColor = 0x00a6ff,
+}: {
+  stl: Blob;
+  off?: Blob | null;
+  fallbackColor?: number;
+}): Promise<string> => {
+  let scene: THREE.Scene | null = null;
+
+  if (off) {
+    const group = buildColoredGroupFromOff(await off.text(), fallbackColor);
+    if (group) {
+      const rotated = new THREE.Group();
+      rotated.rotation.x = -Math.PI / 2;
+
+      const box = new THREE.Box3().setFromObject(group);
+      if (!box.isEmpty()) {
+        const center = box.getCenter(new THREE.Vector3());
+        group.position.sub(center);
+      }
+      rotated.add(group);
+
+      scene = new THREE.Scene();
+      scene.add(rotated);
+    }
+  }
+
+  if (!scene) {
+    const arrayBuffer = await stl.arrayBuffer();
+    const loader = new STLLoader();
+    const geometry = loader.parse(arrayBuffer);
+    geometry.rotateX(-Math.PI / 2);
+    geometry.center();
+    geometry.computeVertexNormals();
+
+    const material = new THREE.MeshStandardMaterial({
+      color: fallbackColor,
+      metalness: 0.6,
+      roughness: 0.3,
+      envMapIntensity: 0.3,
+    });
+    scene = new THREE.Scene();
+    scene.add(new THREE.Mesh(geometry, material));
+  }
+
+  return renderInspectionSceneToDataUrl(scene);
 };
 
 export const applyMaterialAdjustments = (

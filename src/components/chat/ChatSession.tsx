@@ -9,7 +9,11 @@ import { previewScadColoredViaToolWorker } from '@/worker/toolWorker';
 import { apiUrl } from '@/services/api';
 import { messageRowToChatMessage, type ChatMessage } from '@/lib/aiMessages';
 import { supabase } from '@/lib/supabase';
-import { generateColoredPreview, generatePreview } from '@/utils/meshUtils';
+import {
+  generateColoredPreview,
+  generateInspectionPreview,
+  generatePreview,
+} from '@/utils/meshUtils';
 import type {
   AppUIMessage,
   ConversationSuggestionsUpdate,
@@ -290,45 +294,65 @@ export function ChatSession({
       }
 
       try {
-        // Render + upload the preview as part of the tool's execution,
-        // BEFORE `addToolOutput` triggers the auto-continuation. The
-        // server reads it back by toolCallId (see `previewPathForToolCall`
-        // in `aiChat.ts`) and the MessageBubble's `<ParametricImagePreview>`
-        // pulls from the same canonical path via `usePreview`. No path is
-        // returned in the tool output — both consumers derive it.
-        // Mirror VisualCard / ParametricImagePreview's get-or-generate path:
-        // prefer the colored OFF render so the cached thumbnail matches what
-        // the rest of the app shows. Fall back to the gray STL render if OFF
-        // is unavailable or empty.
+        // Upload both images before auto-continuation:
+        // - preview-* is the single ISO thumbnail the chat UI displays.
+        // - inspection-preview-* is the multi-view sheet the agent receives.
         const { stl, off } = await previewScadColoredViaToolWorker(input.code);
+        let inspectionUploaded = false;
         try {
           if (user?.id) {
-            let previewDataUrl: string | null = null;
+            const inspectionDataUrl = await generateInspectionPreview({
+              stl,
+              off,
+            });
+            const inspectionBlob = await fetch(inspectionDataUrl).then(
+              (response) => response.blob(),
+            );
+            const inspectionPath = `${user.id}/${conversation.id}/inspection-preview-${toolCall.toolCallId}`;
+            await supabase.storage
+              .from('images')
+              .upload(inspectionPath, inspectionBlob, {
+                contentType: 'image/png',
+                upsert: true,
+              });
+            inspectionUploaded = true;
+          }
+        } catch (uploadError) {
+          console.warn(
+            'Failed to upload OpenSCAD inspection preview:',
+            uploadError,
+          );
+        }
+
+        try {
+          if (user?.id) {
+            let thumbnailDataUrl: string | null = null;
             if (off) {
-              previewDataUrl = await generateColoredPreview(off);
+              thumbnailDataUrl = await generateColoredPreview(off);
             }
-            if (!previewDataUrl) {
-              previewDataUrl = await generatePreview(stl, 'stl');
+            if (!thumbnailDataUrl) {
+              thumbnailDataUrl = await generatePreview(stl, 'stl');
             }
-            const previewBlob = await fetch(previewDataUrl).then((response) =>
-              response.blob(),
+            const thumbnailBlob = await fetch(thumbnailDataUrl).then(
+              (response) => response.blob(),
             );
             const previewPath = `${user.id}/${conversation.id}/preview-${toolCall.toolCallId}`;
             await supabase.storage
               .from('images')
-              .upload(previewPath, previewBlob, {
+              .upload(previewPath, thumbnailBlob, {
                 contentType: 'image/png',
                 upsert: true,
               });
           }
         } catch (uploadError) {
-          console.warn('Failed to upload OpenSCAD preview:', uploadError);
+          console.warn('Failed to upload OpenSCAD thumbnail:', uploadError);
         }
 
         const output = {
           status: 'success' as const,
-          message:
-            'Compilation successful. The 3D model is now displayed to the user.',
+          message: inspectionUploaded
+            ? 'Compilation successful. Inspect the multi-view render in this tool result against the user request from every visible angle. If anything is missing, wrong, too simple, disconnected, non-printable, hidden from some view, or visually unclear, call build_parametric_model again with a corrected complete OpenSCAD script. If all views satisfy the request, give a concise final response.'
+            : 'Compilation successful, but the multi-view preview sheet was not available. Review the OpenSCAD you wrote against the user request. If anything is missing, wrong, too simple, disconnected, non-printable, or visually unclear, call build_parametric_model again with a corrected complete OpenSCAD script. If it satisfies the request, give a concise final response.',
         };
 
         const successPart = {
@@ -695,11 +719,11 @@ export function ChatSession({
   return (
     <>
       <ScrollArea
-        className="relative w-full max-w-none flex-1 self-center px-3 py-0 md:min-h-0 md:p-4"
+        className="relative min-w-0 max-w-full flex-1 self-center overflow-x-hidden px-3 py-0 md:min-h-0 md:p-4 [&_[data-radix-scroll-area-viewport]]:overflow-x-hidden"
         ref={scrollRef}
       >
         <div className="pointer-events-none sticky left-0 top-0 z-50 h-3 bg-gradient-to-b from-adam-bg-secondary-dark/90 to-transparent md:hidden" />
-        <div className="mx-auto flex max-w-3xl flex-col gap-4 pb-6 md:gap-8 md:pb-0">
+        <div className="mx-auto flex w-full min-w-0 max-w-3xl flex-col gap-4 pb-6 md:gap-8 md:pb-4">
           {branchNodes.map((node, index) => {
             const isLastMessage = index === branchNodes.length - 1;
             return (

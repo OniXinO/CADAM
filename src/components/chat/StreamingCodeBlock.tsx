@@ -54,7 +54,7 @@ export function StreamingCodeBlock({
   }, [visibleCode, showCaret]);
 
   return (
-    <div className="w-full overflow-hidden rounded-lg border border-white/[0.06] bg-adam-neutral-950/90 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
+    <div className="min-w-0 max-w-full overflow-hidden rounded-lg border border-white/[0.06] bg-adam-neutral-950/90 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
       <div className="flex h-7 items-center justify-between gap-3 border-b border-white/[0.06] px-3">
         <div className="flex min-w-0 flex-1 items-center gap-1.5 text-[10.5px] font-medium uppercase tracking-[0.08em] text-adam-neutral-400">
           <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-adam-blue/80" />
@@ -79,7 +79,7 @@ export function StreamingCodeBlock({
             work because the Viewport carries `h-full`. */}
         <ScrollArea
           ref={scrollRootRef}
-          className="w-full font-mono text-[11.5px] leading-[1.55] text-adam-text-primary/95 [&_[data-radix-scroll-area-viewport]]:max-h-[180px]"
+          className="min-w-0 max-w-full font-mono text-[11.5px] leading-[1.55] text-adam-text-primary/95 [&_[data-radix-scroll-area-viewport]]:max-h-[180px] [&_[data-radix-scroll-area-viewport]]:overflow-x-hidden"
         >
           <pre className="m-0 whitespace-pre-wrap break-words px-3 py-2.5">
             <code>{visibleCode}</code>

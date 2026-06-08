@@ -1524,8 +1524,8 @@ function TextAreaChat({
           }
         }}
       >
-        <div className="flex select-none items-center justify-between p-2">
-          <Avatar className="h-8 w-8">
+        <div className="flex select-none items-start justify-between p-2">
+          <Avatar className="mt-1 h-8 w-8">
             <div className="h-full w-full p-1.5">
               <img
                 src={`${import.meta.env.BASE_URL}/Adam-Logo.png`}
@@ -1548,7 +1548,7 @@ function TextAreaChat({
                 setInput(e.target.value);
               }}
               placeholder={placeholderAnim}
-              className="hide-scrollbar z-40 block h-auto min-h-0 w-full resize-none overflow-hidden whitespace-pre-line break-words border-none bg-adam-neutral-800 bg-transparent px-3 py-2 text-base text-adam-text-primary outline-none transition-all duration-500 placeholder:text-adam-text-secondary placeholder:opacity-[var(--placeholder-opacity)] placeholder:transition-all placeholder:duration-300 placeholder:ease-in-out hover:placeholder:blur-[0.2px] focus:border-0 focus:shadow-none focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 dark:text-gray-200 sm:px-4 sm:text-sm"
+              className="hide-scrollbar z-40 block h-auto min-h-10 w-full resize-none overflow-hidden whitespace-pre-line break-words border-none bg-adam-neutral-800 bg-transparent px-3 py-2 text-base leading-6 text-adam-text-primary outline-none transition-all duration-500 placeholder:text-adam-text-secondary placeholder:opacity-[var(--placeholder-opacity)] placeholder:transition-all placeholder:duration-300 placeholder:ease-in-out hover:placeholder:blur-[0.2px] focus:border-0 focus:shadow-none focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 dark:text-gray-200 sm:px-4 sm:text-sm"
               style={
                 {
                   '--placeholder-opacity': placeholderOpacity,
@@ -1558,7 +1558,7 @@ function TextAreaChat({
               rows={1}
             />
             <div
-              className="pointer-events-none col-start-1 row-start-1 w-full overflow-hidden whitespace-pre-wrap break-words px-3 py-2 text-sm opacity-0 sm:px-4"
+              className="pointer-events-none col-start-1 row-start-1 min-h-10 w-full overflow-hidden whitespace-pre-wrap break-words px-3 py-2 text-sm leading-6 opacity-0 sm:px-4"
               style={{ gridArea: '1 / -1' }}
             >
               <span>{input}</span>

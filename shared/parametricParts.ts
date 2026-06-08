@@ -59,8 +59,33 @@ export function getMeshPreferencesPart(
 export function getParametricText(parts: unknown): string {
   return asParametricParts(parts)
     .filter((part) => part.type === 'text')
-    .map((part) => part.text)
+    .map((part) => cleanAssistantText(part.text))
     .join('');
+}
+
+export function cleanAssistantText(text: string): string {
+  const attachmentLeak =
+    /(?:^|\n)[^\n{}]*(?:alt=media|preview sheet attached automatically)[^\n{}]*[})]?\s*/i.exec(
+      text,
+    );
+  if (attachmentLeak) {
+    text = text.slice(attachmentLeak.index + attachmentLeak[0].length);
+  }
+
+  const marker = /Drafting final message:\s*/i.exec(text);
+  if (!marker) return text;
+
+  const draft = text.slice(marker.index + marker[0].length).trimStart();
+  if (!draft) return '';
+
+  const quote = draft[0];
+  if (quote !== '"' && quote !== "'") return draft;
+
+  const quoteEnd = draft.indexOf(quote, 1);
+  if (quoteEnd === -1) return draft.slice(1).trim();
+
+  const finalText = draft.slice(quoteEnd + 1).trim();
+  return finalText || draft.slice(1, quoteEnd).trim();
 }
 
 export function getBuildParametricModelPart(parts: unknown) {

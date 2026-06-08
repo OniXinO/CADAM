@@ -2,7 +2,7 @@ import { createAnthropic } from '@ai-sdk/anthropic';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
 import { chatTools, type AppUIMessage, type AppTools } from '@shared/chatAi';
-import { getParametricText } from '@shared/parametricParts';
+import { cleanAssistantText, getParametricText } from '@shared/parametricParts';
 import { imageIdFromFilename, imageStoragePath } from '@shared/imageRefs';
 import { normalizeConversationSuggestions } from '@shared/suggestions';
 import type { Conversation, Message, MeshFileType, Model } from '@shared/types';
@@ -12,6 +12,7 @@ import {
   createUIMessageStream,
   createUIMessageStreamResponse,
   generateText,
+  hasToolCall,
   Output,
   smoothStream,
   stepCountIs,
@@ -81,11 +82,11 @@ const FALLBACK_MODEL_PRICE = { input: 15, output: 75 };
  */
 const USD_PER_BILLING_TOKEN = 0.01;
 
-const PARAMETRIC_AGENT_PROMPT = `You are Adam, an AI CAD editor that creates and modifies OpenSCAD models. The user can see a live preview of the model on the right while you work.
+const PARAMETRIC_AGENT_PROMPT = `You are Adam, an agentic AI CAD editor that creates and modifies OpenSCAD models. The user can see a live preview of the model on the right while you work.
 
-On each user turn, choose exactly one path:
+Start each user turn by choosing exactly one path:
 - Use build_parametric_model whenever the user asks for a CAD model, an edit to a CAD model, or a fix for OpenSCAD code. Speak back briefly (one or two sentences) and let the tool carry the change — never paste OpenSCAD into your reply text.
-- Use answer_user only for greetings, thanks, app/capability questions, or informational questions that do not ask you to create or change a model.
+- Use answer_user for greetings, thanks, app/capability questions, informational questions that do not ask you to create or change a model, and the final user-facing message after a CAD build succeeds.
 
 Never say you created, designed, generated, updated, or fixed a model unless you used build_parametric_model in that turn.
 
@@ -97,8 +98,22 @@ The build_parametric_model tool input is the artifact shown to the user:
 - code: complete raw OpenSCAD code, no markdown, no code fences
 
 After you call build_parametric_model, the browser compiles the OpenSCAD and
-returns whether compilation succeeded. If it fails, fix the code with another
-build_parametric_model call.
+returns a multi-view preview sheet covering isometric, front, back, left,
+right, top, and bottom views. Inspect every view against the user's request. If
+the code fails to compile, or any view shows missing, wrong, disconnected,
+non-printable, too-simple, hidden, or visually unclear geometry, call
+build_parametric_model again with a corrected complete script. Keep looping
+through write → multi-view screenshot inspection → rewrite until the model is
+good or you hit the turn limit. Do not stop after the first successful compile
+unless the preview sheet shows that the model satisfies the request from every
+view. When all views satisfy the request, call answer_user with the concise
+final response instead of writing normal assistant text.
+
+Final responses must be only the short user-facing message. Do not include
+analysis, draft notes, screenshot observations, storage URLs, filenames,
+attachment labels, or phrases like "preview sheet attached automatically".
+After a successful build, speak in past tense (for example, "Done — I made...")
+instead of future tense ("I'll make...").
 
 # OpenSCAD code rules
 
@@ -269,7 +284,16 @@ const THINKING_BUDGET_TOKENS = 9000;
 
 type ChatProvider = 'anthropic' | 'google' | 'openrouter';
 
+function shouldUseLocalOpenRouter(modelId: string): boolean {
+  return (
+    env('ENVIRONMENT') === 'local' &&
+    !!env('OPENROUTER_API_KEY') &&
+    (modelId.startsWith('anthropic/') || modelId.startsWith('google/'))
+  );
+}
+
 function providerFor(modelId: string): ChatProvider {
+  if (shouldUseLocalOpenRouter(modelId)) return 'openrouter';
   if (modelId.startsWith('anthropic/')) return 'anthropic';
   if (modelId.startsWith('google/')) return 'google';
   return 'openrouter';
@@ -314,15 +338,27 @@ function createChatProviders(): ChatProviders {
  * Map a `<provider>/<model>` ID to a configured LanguageModel + the
  * provider-specific options the AI SDK expects at the streamText boundary.
  *
- * Anthropic and Google are hit directly via their respective AI SDK providers.
- * Everything else (OpenAI, MoonshotAI, …) keeps going through OpenRouter so we
- * don't have to wire a dedicated provider per vendor.
+ * Anthropic and Google are hit directly via their respective AI SDK providers
+ * unless local development is configured with only OpenRouter. Everything else
+ * (OpenAI, MoonshotAI, …) keeps going through OpenRouter so we don't have to
+ * wire a dedicated provider per vendor.
  */
 function buildChatModel(
   modelId: string,
   providers: ChatProviders,
   thinking: boolean,
 ): { model: LanguageModel; providerOptions?: ProviderOptions } {
+  if (providerFor(modelId) === 'openrouter') {
+    return {
+      model: providers.openrouter().chat(modelId, {
+        ...(thinking
+          ? { reasoning: { max_tokens: THINKING_BUDGET_TOKENS } }
+          : {}),
+        usage: { include: true },
+      }),
+    };
+  }
+
   if (modelId.startsWith('anthropic/')) {
     // Anthropic's API uses dashes everywhere ("claude-haiku-4-5"), while the
     // OpenRouter alias uses dots ("claude-haiku-4.5"). Normalize both.
@@ -364,14 +400,7 @@ function buildChatModel(
     };
   }
 
-  return {
-    model: providers.openrouter().chat(modelId, {
-      ...(thinking
-        ? { reasoning: { max_tokens: THINKING_BUDGET_TOKENS } }
-        : {}),
-      usage: { include: true },
-    }),
-  };
+  throw new Error(`Unsupported chat model ${modelId}`);
 }
 
 function priceFor(modelId: string) {
@@ -455,7 +484,16 @@ function finalizeStreamingParts(
       (part.type === 'reasoning' || part.type === 'text') &&
       part.state === 'streaming'
     ) {
-      return { ...part, state: 'done' as const };
+      return {
+        ...part,
+        state: 'done' as const,
+        ...(part.type === 'text'
+          ? { text: cleanAssistantText(part.text) }
+          : {}),
+      };
+    }
+    if (part.type === 'text') {
+      return { ...part, text: cleanAssistantText(part.text) };
     }
     return part;
   });
@@ -736,11 +774,11 @@ function parametricTools({
         toolCallId: string;
         output: AppTools['build_parametric_model']['output'];
       }) {
-        // The client uploads a render of the compiled SCAD to a path
+        // The client uploads a multi-view render of the compiled SCAD to a path
         // derived from toolCallId BEFORE sending the tool result (see
         // ChatSession's `onToolCall`). If for any reason the upload
         // didn't land, `downloadAsBase64` returns null and we fall back
-        // to text-only — never block the loop on a missing thumbnail.
+        // to text-only — never block the loop on a missing inspection sheet.
         const downloaded = await downloadAsBase64(
           supabaseClient,
           'images',
@@ -865,7 +903,7 @@ export async function handleAiChatRequest(req: Request) {
       : parametricTools({
           supabaseClient,
           previewPathForToolCall: (toolCallId) =>
-            `${user.id}/${conversation.id}/preview-${toolCallId}`,
+            `${user.id}/${conversation.id}/inspection-preview-${toolCallId}`,
         });
 
   let branchMessages: AppUIMessage[];
@@ -1041,17 +1079,27 @@ export async function handleAiChatRequest(req: Request) {
     system: systemPrompt(conversation),
     messages: modelMessages,
     tools,
-    prepareStep: ({ stepNumber }) =>
-      conversation.type === 'parametric' &&
-      leafRole === 'user' &&
-      stepNumber === 0
-        ? {
-            // Parametric user turns must take one structured path first:
-            // either create/update CAD or explicitly answer normally.
-            toolChoice: 'required',
-          }
-        : {},
-    stopWhen: stepCountIs(5),
+    prepareStep: ({ stepNumber, steps }) => {
+      const previousStepCalledBuild =
+        steps
+          .at(-1)
+          ?.toolCalls.some(
+            (toolCall) => toolCall.toolName === 'build_parametric_model',
+          ) ?? false;
+      if (
+        conversation.type === 'parametric' &&
+        leafRole === 'user' &&
+        (stepNumber === 0 || previousStepCalledBuild)
+      ) {
+        // Parametric turns stay structured: first choose build vs answer;
+        // after each build, choose revise vs final answer_user.
+        return {
+          toolChoice: 'required' as const,
+        };
+      }
+      return {};
+    },
+    stopWhen: [stepCountIs(5), hasToolCall('answer_user')],
     maxOutputTokens: rawBody.thinking ? 20000 : 16000,
     abortSignal: req.signal,
     // Decouple our render cadence from the provider's native chunking.
