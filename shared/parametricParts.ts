@@ -69,7 +69,9 @@ export function cleanAssistantText(text: string): string {
       text,
     );
   if (attachmentLeak) {
-    text = text.slice(attachmentLeak.index + attachmentLeak[0].length);
+    text =
+      text.slice(0, attachmentLeak.index) +
+      text.slice(attachmentLeak.index + attachmentLeak[0].length);
   }
 
   const marker = /Drafting final message:\s*/i.exec(text);

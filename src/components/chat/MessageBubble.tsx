@@ -78,6 +78,16 @@ export function MessageBubble(props: MessageBubbleProps) {
   );
 }
 
+function isRecord(value: unknown): value is Record<PropertyKey, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function getStringField(value: unknown, key: string): string | undefined {
+  if (!isRecord(value)) return undefined;
+  const field = value[key];
+  return typeof field === 'string' ? field : undefined;
+}
+
 /**
  * Renders a user-attached image by downloading it from the private `images`
  * bucket (via {@link useImageData}) rather than trusting the part's `url`.
@@ -427,10 +437,9 @@ function AssistantBubble({
         if (
           (part.state === 'input-streaming' ||
             part.state === 'input-available') &&
-          part.input &&
-          typeof (part.input as { message?: unknown }).message === 'string'
+          getStringField(part.input, 'message')?.trim()
         ) {
-          return !!(part.input as { message: string }).message.trim();
+          return true;
         }
         return false;
       }),
@@ -514,10 +523,8 @@ function AssistantBubble({
             // `part.input` is a partial object during streaming — pull off
             // whatever `code` has arrived so far.
             const partialCode =
-              part.state === 'input-streaming' &&
-              part.input &&
-              typeof (part.input as { code?: unknown }).code === 'string'
-                ? (part.input as { code: string }).code
+              part.state === 'input-streaming'
+                ? (getStringField(part.input, 'code') ?? '')
                 : '';
             if (part.state === 'input-streaming') {
               return (
@@ -590,17 +597,16 @@ function AssistantBubble({
           }
 
           if (part.type === 'tool-answer_user') {
+            const partialAnswer =
+              part.state === 'input-streaming' ||
+              part.state === 'input-available'
+                ? getStringField(part.input, 'message')
+                : undefined;
             const answerMessage =
               part.state === 'output-available'
                 ? cleanAssistantText(part.output.message)
-                : (part.state === 'input-streaming' ||
-                      part.state === 'input-available') &&
-                    part.input &&
-                    typeof (part.input as { message?: unknown }).message ===
-                      'string'
-                  ? cleanAssistantText(
-                      (part.input as { message: string }).message,
-                    )
+                : partialAnswer
+                  ? cleanAssistantText(partialAnswer)
                   : '';
             if (!answerMessage.trim()) return null;
             return (
