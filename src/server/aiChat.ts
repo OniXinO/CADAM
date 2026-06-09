@@ -433,21 +433,30 @@ function bareModelId(modelId: string): string {
   return id.replace(/\./g, '-');
 }
 
+// The Claude 5 generation swaps the opus/sonnet/haiku tiers for code names
+// ("claude-fable-5", "claude-mythos-5", …). Match the `claude-<codename>-5`
+// shape rather than enumerating code names so future Claude 5 variants
+// inherit the same capability gates without a list update. Versioned 4.x ids
+// ("claude-opus-4-5", "claude-haiku-4-5") don't match: their tier name is
+// followed by "-4", not "-5".
+function isClaude5Model(modelId: string): boolean {
+  return /^claude-[a-z]+-5\b/.test(bareModelId(modelId));
+}
+
 function usesAdaptiveAnthropicThinking(modelId: string) {
-  // The Claude 5 generation (Fable, Mythos) uses adaptive thinking, as do
-  // Claude Opus/Sonnet 4.6+. Older 4.x models take the fixed-budget path.
-  const id = bareModelId(modelId);
-  if (/^claude-(?:fable|mythos)-5\b/.test(id)) return true;
-  const match = /^claude-(?:opus|sonnet)-4-(\d+)/.exec(id);
+  // The Claude 5 generation uses adaptive thinking, as do Claude Opus/Sonnet
+  // 4.6+. Older 4.x models take the fixed-budget path.
+  if (isClaude5Model(modelId)) return true;
+  const match = /^claude-(?:opus|sonnet)-4-(\d+)/.exec(bareModelId(modelId));
   return match ? Number(match[1]) >= 6 : false;
 }
 
 // Whether a model accepts a forced `tool_choice` (type: "tool" / "any").
-// The Claude 5 generation (Fable, Mythos) rejects forced tool use with
-// "tool_choice forces tool use is not compatible with this model" — for those
-// we must fall back to auto tool choice and steer via the system prompt.
+// The Claude 5 generation rejects forced tool use with "tool_choice forces
+// tool use is not compatible with this model" — for those we must fall back
+// to auto tool choice and steer via the system prompt.
 function supportsForcedToolChoice(modelId: string): boolean {
-  return !/^claude-(?:fable|mythos)-5\b/.test(bareModelId(modelId));
+  return !isClaude5Model(modelId);
 }
 
 function priceFor(modelId: string) {
@@ -1213,11 +1222,16 @@ export async function handleAiChatRequest(req: Request) {
       return {};
     },
     stopWhen: stepCountIs(conversation.type === 'parametric' ? 60 : 5),
+    // Thinking and visible response tokens share this pool. With adaptive
+    // thinking now always-on for Claude 5 / 4.6+, a heavy reasoning turn can
+    // spend 10k+ tokens before the answer starts — 32k keeps the visible
+    // response from getting squeezed. We stream, so SDK HTTP timeouts aren't
+    // a concern at this size.
     maxOutputTokens:
       conversation.type === 'parametric'
         ? PARAMETRIC_MAX_OUTPUT_TOKENS
         : thinkingEnabled
-          ? 20000
+          ? 32000
           : 16000,
     abortSignal: req.signal,
     // Decouple our render cadence from the provider's native chunking.
