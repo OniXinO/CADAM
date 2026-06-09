@@ -428,6 +428,17 @@ function usesAdaptiveAnthropicThinking(modelId: string) {
   return match ? Number(match[1]) >= 6 : false;
 }
 
+// Whether a model accepts a forced `tool_choice` (type: "tool" / "any").
+// The Claude 5 generation (Fable, Mythos) rejects forced tool use with
+// "tool_choice forces tool use is not compatible with this model" — for those
+// we must fall back to auto tool choice and steer via the system prompt.
+function supportsForcedToolChoice(modelId: string): boolean {
+  const id = modelId.startsWith('anthropic/')
+    ? modelId.slice('anthropic/'.length)
+    : modelId;
+  return !/^claude-(?:fable|mythos)-5\b/.test(id);
+}
+
 function priceFor(modelId: string) {
   const entry = MODEL_PRICES[modelId] ?? FALLBACK_MODEL_PRICE;
   return {
@@ -1154,12 +1165,20 @@ export async function handleAiChatRequest(req: Request) {
         leafRole === 'user' &&
         stepNumber === 0
       ) {
+        // Restrict the toolset to the build tool on the first step. Models
+        // that accept a forced tool_choice get it pinned; models that reject
+        // forced tool use (Claude 5 — Fable/Mythos) fall back to auto and rely
+        // on the system prompt to call build_parametric_model.
         return {
           activeTools: ['build_parametric_model' as never],
-          toolChoice: {
-            type: 'tool' as const,
-            toolName: 'build_parametric_model' as never,
-          },
+          ...(supportsForcedToolChoice(actualModelId)
+            ? {
+                toolChoice: {
+                  type: 'tool' as const,
+                  toolName: 'build_parametric_model' as never,
+                },
+              }
+            : {}),
         };
       }
       return {};
