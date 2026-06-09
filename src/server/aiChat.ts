@@ -424,9 +424,13 @@ function buildChatModel(
 // or the bare Anthropic ID — strip the prefix here so every gate is called the
 // same way regardless of which form the caller has on hand.
 function bareModelId(modelId: string): string {
-  return modelId.startsWith('anthropic/')
+  const id = modelId.startsWith('anthropic/')
     ? modelId.slice('anthropic/'.length)
     : modelId;
+  // Anthropic's API uses dashes ("claude-opus-4-6"); the OpenRouter alias
+  // uses dots ("claude-opus-4.6"). Normalize so the version regexes match
+  // either form.
+  return id.replace(/\./g, '-');
 }
 
 function usesAdaptiveAnthropicThinking(modelId: string) {
@@ -1128,14 +1132,22 @@ export async function handleAiChatRequest(req: Request) {
     provider: resolvedProvider,
   };
 
+  // Adaptive-thinking Anthropic models (Claude 5 — Fable/Mythos — and
+  // Opus/Sonnet 4.6+) get thinking enabled unconditionally: adaptive thinking
+  // lets the model decide when and how much to think, and on Fable 5 omitting
+  // it disables thinking entirely — no reasoning ever streams, and complex
+  // parametric turns degrade (especially combined with the auto tool-choice
+  // fallback). The client never sends `thinking: true` today, so without this
+  // the Anthropic thinking branch is dead code.
+  const thinkingEnabled =
+    (rawBody.thinking ?? false) ||
+    (resolvedProvider === 'anthropic' &&
+      usesAdaptiveAnthropicThinking(actualModelId));
+
   let chatLanguageModel: LanguageModel;
   let chatProviderOptions: ProviderOptions | undefined;
   try {
-    const built = buildChatModel(
-      actualModelId,
-      providers,
-      rawBody.thinking ?? false,
-    );
+    const built = buildChatModel(actualModelId, providers, thinkingEnabled);
     chatLanguageModel = built.model;
     chatProviderOptions = built.providerOptions;
   } catch (error) {
@@ -1157,7 +1169,7 @@ export async function handleAiChatRequest(req: Request) {
 
   const logContext = {
     ...baseLogContext,
-    thinking: rawBody.thinking ?? false,
+    thinking: thinkingEnabled,
   };
 
   // Parametric step 0 normally pins `build_parametric_model` via a forced
@@ -1204,7 +1216,7 @@ export async function handleAiChatRequest(req: Request) {
     maxOutputTokens:
       conversation.type === 'parametric'
         ? PARAMETRIC_MAX_OUTPUT_TOKENS
-        : rawBody.thinking
+        : thinkingEnabled
           ? 20000
           : 16000,
     abortSignal: req.signal,
