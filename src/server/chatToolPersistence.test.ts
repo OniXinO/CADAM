@@ -118,6 +118,20 @@ describe('hasPendingClientToolCall', () => {
       false,
     );
   });
+
+  it('treats a pending dynamic-tool as client-owned (symmetric with isDanglingToolPart)', () => {
+    assert.equal(
+      hasPendingClientToolCall([
+        { type: 'dynamic-tool', state: 'input-available' },
+      ]),
+      true,
+    );
+    // Symmetry guard: anything dangling that is a tool part is also pending.
+    assert.equal(
+      isDanglingToolPart({ type: 'dynamic-tool', state: 'input-available' }),
+      true,
+    );
+  });
 });
 
 describe('decidePersistAction — the clobber guard', () => {

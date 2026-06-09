@@ -1329,8 +1329,19 @@ export async function handleAiChatRequest(req: Request) {
                 ...serializedMessage,
                 parent_message_id: leafMessageId,
               }));
+            } else {
+              // persistAction === 'skip': the client owns this row's `parts`
+              // (it persists the resolved tool output). Still record this
+              // turn's billing metadata via a metadata-ONLY update — it touches
+              // a different column than the client's `parts` write, and
+              // Postgres re-evaluates concurrent same-row updates, so the
+              // client's parts are never clobbered.
+              ({ error } = await supabaseClient
+                .from('messages')
+                .update({ metadata: serializedMessage.metadata })
+                .eq('id', responseMessage.id)
+                .eq('conversation_id', conversation.id));
             }
-            // persistAction === 'skip' → client owns this row's parts.
 
             if (error) {
               logError(error, {

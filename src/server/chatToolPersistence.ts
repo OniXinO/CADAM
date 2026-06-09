@@ -21,15 +21,22 @@ export const DANGLING_TOOL_ERROR_TEXT =
   'Tool execution did not complete (the previous request was interrupted).';
 
 /**
+ * A message part that carries a tool call — either a statically-typed `tool-*`
+ * part or the SDK's `dynamic-tool` part. Shared by the dangling check and the
+ * pending check so the two can never drift out of sync (an asymmetry would let
+ * a pending `dynamic-tool` take the clobbering write path).
+ */
+function isToolPart(part: ToolPartLike): boolean {
+  return part.type === 'dynamic-tool' || part.type.startsWith('tool-');
+}
+
+/**
  * A tool-call part persisted without a result (stuck at `input-streaming` /
- * `input-available`). Covers both statically-typed `tool-*` parts and the
- * SDK's `dynamic-tool` part.
+ * `input-available`).
  */
 export function isDanglingToolPart(part: ToolPartLike): boolean {
-  const isToolPart =
-    part.type === 'dynamic-tool' || part.type.startsWith('tool-');
   return (
-    isToolPart &&
+    isToolPart(part) &&
     (part.state === 'input-streaming' || part.state === 'input-available')
   );
 }
@@ -63,7 +70,7 @@ export function hasPendingClientToolCall(
   parts: readonly ToolPartLike[],
 ): boolean {
   return parts.some(
-    (part) => part.type.startsWith('tool-') && part.state === 'input-available',
+    (part) => isToolPart(part) && part.state === 'input-available',
   );
 }
 

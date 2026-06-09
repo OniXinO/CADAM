@@ -232,6 +232,13 @@ export function ChatSession({
   // Latest `chat.messages` snapshot for use inside `onToolCall` (callbacks
   // baked at Chat-init time would otherwise close over the initial array).
   const messagesRef = useRef<AppUIMessage[]>(initialBranch);
+  // Set when persisting a tool's `output-available` to the DB fails. The
+  // server reads the branch from the DB (never from client-sent messages), so
+  // auto-resubmitting after a failed persist would continue against a stale
+  // branch — at best a wasted round-trip the server has to recover from. While
+  // this is set, `sendAutomaticallyWhen` returns false so the loop pauses and
+  // the user can retry. Reset at the top of each `handleToolCall`.
+  const persistFailedRef = useRef(false);
 
   const handleToolCall = useCallback(
     async ({
@@ -251,6 +258,9 @@ export function ChatSession({
       }
       const chat = chatRef.current;
       if (!chat) return;
+
+      // Fresh tool call → clear any prior persist-failure pause.
+      persistFailedRef.current = false;
 
       // Prefer the SDK's live `chat.messages` — it's always current.
       // `messagesRef.current` is a React-mirrored copy that lags one
@@ -273,11 +283,37 @@ export function ChatSession({
       if (toolCall.toolName === 'answer_user') {
         const output = answerUserInput(toolCall.input);
         if (!output) {
+          const errorText = 'answer_user input was missing a message.';
+          // Persist the error so the DB row isn't left with a dangling
+          // `input-available` tool call (which would 500 the next send before
+          // the server-side sanitizer rewrites it).
+          if (assistant) {
+            const nextParts = assistant.parts.map((existing) =>
+              existing.type === 'tool-answer_user' &&
+              existing.toolCallId === toolCall.toolCallId
+                ? ({
+                    type: 'tool-answer_user',
+                    toolCallId: toolCall.toolCallId,
+                    state: 'output-error',
+                    input: toolCall.input,
+                    errorText,
+                  } as AppUIMessage['parts'][number])
+                : existing,
+            ) as AppUIMessage['parts'];
+            try {
+              await onToolOutput(assistant.id, nextParts);
+            } catch (persistError) {
+              console.warn(
+                'Failed to persist answer_user error to DB:',
+                persistError,
+              );
+            }
+          }
           chat.addToolOutput({
             state: 'output-error',
             tool: 'answer_user',
             toolCallId: toolCall.toolCallId,
-            errorText: 'answer_user input was missing a message.',
+            errorText,
           });
           return;
         }
@@ -314,6 +350,12 @@ export function ChatSession({
               'Failed to persist answer_user output to DB:',
               persistError,
             );
+            toast({
+              title: "Couldn't save the reply",
+              description:
+                'Your message is shown but may not survive a refresh. Please retry if it disappears.',
+              variant: 'destructive',
+            });
           }
         }
 
@@ -366,28 +408,37 @@ export function ChatSession({
       // stuck `input-available` state, which would break every
       // subsequent send because the server can't continue a
       // conversation with an unresolved tool call).
+      //
+      // Persist BEFORE `addToolOutput` — same ordering as the success path.
+      // `addToolOutput` is what triggers `sendAutomaticallyWhen`, and the
+      // server continues from the DB branch, so the resolved (error) parts
+      // must be on disk before the resubmit can fire. A compile error SHOULD
+      // auto-continue (the model fixes it), so we don't pause here on a failed
+      // persist; the server-side sanitizer backstops a stale read.
       const finishWithError = async (errorText: string) => {
+        if (assistant) {
+          const errorPart = {
+            type: 'tool-build_parametric_model',
+            toolCallId: toolCall.toolCallId,
+            state: 'output-error',
+            input: toolCall.input,
+            errorText,
+          } as AppUIMessage['parts'][number];
+          const nextParts = buildNextParts(errorPart);
+          if (nextParts) {
+            try {
+              await onToolOutput(assistant.id, nextParts);
+            } catch (persistError) {
+              console.warn('Failed to persist tool error to DB:', persistError);
+            }
+          }
+        }
         chat.addToolOutput({
           state: 'output-error',
           tool: 'build_parametric_model',
           toolCallId: toolCall.toolCallId,
           errorText,
         });
-        if (!assistant) return;
-        const errorPart = {
-          type: 'tool-build_parametric_model',
-          toolCallId: toolCall.toolCallId,
-          state: 'output-error',
-          input: toolCall.input,
-          errorText,
-        } as AppUIMessage['parts'][number];
-        const nextParts = buildNextParts(errorPart);
-        if (!nextParts) return;
-        try {
-          await onToolOutput(assistant.id, nextParts);
-        } catch (persistError) {
-          console.warn('Failed to persist tool error to DB:', persistError);
-        }
       };
 
       const input = isParametricArtifact(toolCall.input)
@@ -490,6 +541,17 @@ export function ChatSession({
             await onToolOutput(assistant.id, nextParts);
           } catch (persistError) {
             console.warn('Failed to persist tool output to DB:', persistError);
+            // The server continues from the DB branch. If this build's output
+            // never landed, auto-resubmitting would run against a stale branch
+            // and discard a model the user can already see. Pause the loop and
+            // let them retry.
+            persistFailedRef.current = true;
+            toast({
+              title: "Couldn't save this step",
+              description:
+                "The model is shown but the build wasn't saved, so Adam paused. Please retry.",
+              variant: 'destructive',
+            });
           }
         }
 
@@ -504,7 +566,7 @@ export function ChatSession({
         );
       }
     },
-    [conversation.id, onToolOutput, onViewArtifact, user?.id],
+    [conversation.id, onToolOutput, onViewArtifact, toast, user?.id],
   );
 
   // ───────────────────────────────────────────────────────────────────────
@@ -517,10 +579,14 @@ export function ChatSession({
     messages: initialBranch,
     transport,
     onToolCall: handleToolCall,
-    sendAutomaticallyWhen:
-      conversation.type === 'parametric'
-        ? lastAssistantMessageIsCompleteWithParametricBuild
-        : lastAssistantMessageIsCompleteWithToolCalls,
+    // Pause the loop if a tool-output persist failed — resubmitting would run
+    // the server against a stale DB branch (see `persistFailedRef`).
+    sendAutomaticallyWhen: (ctx) => {
+      if (persistFailedRef.current) return false;
+      return conversation.type === 'parametric'
+        ? lastAssistantMessageIsCompleteWithParametricBuild(ctx)
+        : lastAssistantMessageIsCompleteWithToolCalls(ctx);
+    },
     // Out-of-band conversation-level signals (title + suggestions) arrive
     // here as transient data parts — they never land in `messages.parts`,
     // so we patch the conversation query cache directly. See
@@ -628,7 +694,8 @@ export function ChatSession({
       let dirty = false;
       const nextParts = msg.parts.map((p) => {
         if (
-          p.type === 'tool-build_parametric_model' &&
+          (p.type.startsWith('tool-') || p.type === 'dynamic-tool') &&
+          'state' in p &&
           (p.state === 'input-streaming' || p.state === 'input-available')
         ) {
           dirty = true;
