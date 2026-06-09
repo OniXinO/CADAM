@@ -421,6 +421,9 @@ function buildChatModel(
 }
 
 function usesAdaptiveAnthropicThinking(modelId: string) {
+  // The Claude 5 generation (Fable, Mythos) uses adaptive thinking, as do
+  // Claude Opus/Sonnet 4.6+. Older 4.x models take the fixed-budget path.
+  if (/^claude-(?:fable|mythos)-5\b/.test(modelId)) return true;
   const match = /^claude-(?:opus|sonnet)-4-(\d+)/.exec(modelId);
   return match ? Number(match[1]) >= 6 : false;
 }
