@@ -52,7 +52,7 @@ const MODEL_PRICES: Record<
   { input: number; output: number; cacheRead?: number; cacheWrite?: number }
 > = {
   // Anthropic
-  'anthropic/claude-opus-4.8': { input: 5, output: 25 },
+  'anthropic/claude-fable-5': { input: 10, output: 50 },
   'anthropic/claude-opus-4': { input: 15, output: 75 },
   'anthropic/claude-sonnet-4.6': { input: 3, output: 15 },
   'anthropic/claude-sonnet-4.5': { input: 3, output: 15 },
@@ -421,6 +421,9 @@ function buildChatModel(
 }
 
 function usesAdaptiveAnthropicThinking(modelId: string) {
+  // The Claude 5 generation (Fable, Mythos) uses adaptive thinking, as do
+  // Claude Opus/Sonnet 4.6+. Older 4.x models take the fixed-budget path.
+  if (/^claude-(?:fable|mythos)-5\b/.test(modelId)) return true;
   const match = /^claude-(?:opus|sonnet)-4-(\d+)/.exec(modelId);
   return match ? Number(match[1]) >= 6 : false;
 }
