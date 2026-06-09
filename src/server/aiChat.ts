@@ -27,6 +27,12 @@ import { billing, BillingClientError } from './billingClient';
 import { corsHeaders, isRecord } from './api';
 import { env, requiredEnv } from './env';
 import { logError } from './serverLog';
+import {
+  decidePersistAction,
+  hasPendingClientToolCall,
+  isDanglingToolPart,
+  resolveDanglingToolParts,
+} from './chatToolPersistence';
 import { handleMeshRequest } from './mesh';
 import { getAnonSupabaseClient } from './supabaseClient';
 
@@ -526,7 +532,40 @@ function dropTextFromParametricBuildMessage(
   return parts.filter((part) => part.type !== 'text') as AppUIMessage['parts'];
 }
 
-function messageRowToUIMessage(row: BranchMessageRow): AppUIMessage {
+function messageRowToUIMessage(
+  row: BranchMessageRow,
+  conversationId: string,
+): AppUIMessage {
+  const rawParts = Array.isArray(row.parts)
+    ? (row.parts as AppUIMessage['parts'])
+    : [];
+
+  const dangling = rawParts.filter(isDanglingToolPart);
+  if (dangling.length > 0) {
+    logError(
+      new Error(
+        `Resolved ${dangling.length} dangling tool call(s) in persisted branch. ` +
+          'Expected to be rare (genuine interruptions only) now that the onFinish ' +
+          'clobber guard holds — investigate the write path if this is frequent.',
+      ),
+      {
+        functionName: 'ai-chat',
+        statusCode: 200,
+        conversationId,
+        additionalContext: {
+          operation: 'resolve_dangling_tool_parts',
+          messageId: row.id,
+          role: row.role,
+          tools: dangling.map((part) => ({
+            type: part.type,
+            toolCallId: 'toolCallId' in part ? part.toolCallId : undefined,
+            state: 'state' in part ? part.state : undefined,
+          })),
+        },
+      },
+    );
+  }
+
   return {
     id: row.id,
     role: row.role,
@@ -534,7 +573,7 @@ function messageRowToUIMessage(row: BranchMessageRow): AppUIMessage {
       row.metadata && typeof row.metadata === 'object'
         ? (row.metadata as AppUIMessage['metadata'])
         : ({} as AppUIMessage['metadata']),
-    parts: Array.isArray(row.parts) ? (row.parts as AppUIMessage['parts']) : [],
+    parts: resolveDanglingToolParts(rawParts),
   };
 }
 
@@ -598,7 +637,7 @@ async function loadBranchFromDb({
   }
 
   return {
-    branch: path.map(messageRowToUIMessage),
+    branch: path.map((row) => messageRowToUIMessage(row, conversationId)),
     leafRole: path[path.length - 1].role,
   };
 }
@@ -1244,35 +1283,54 @@ export async function handleAiChatRequest(req: Request) {
               parts: JSON.parse(JSON.stringify(finalizedParts)),
             };
 
-            // `isContinuation` fires when the response stream extended an
-            // existing assistant message (the leaf was an assistant with a
-            // pending tool call). In that case the row already exists — we
-            // just update its parts in place and the leaf stays where it
-            // is.
+            // Does this turn end awaiting a CLIENT-side tool result? Our
+            // parametric tools (`build_parametric_model`, `answer_user`) have
+            // no server `execute` — the browser compiles / answers and is the
+            // sole authority for their result. The server only ever sees them
+            // `input-available` (pending).
+            const hasPendingToolCall = hasPendingClientToolCall(finalizedParts);
+
+            // What to do with this row — see `decidePersistAction`:
+            //   insert → new assistant row.
+            //   update → continuation with everything resolved / pure text.
+            //   skip   → continuation still ending in a pending CLIENT tool.
+            //            The browser persists the `output-available` version
+            //            itself (`onToolOutput`); a server write here — delayed
+            //            behind `result.totalUsage` + `billing.consume` — would
+            //            land last and clobber it back to `input-available`,
+            //            leaving a dangling tool call that 500s the next send.
+            //            Mid-loop builds dodge the race because the client's
+            //            compile takes seconds; the terminal `answer_user` is
+            //            instant, so the server reliably wins. Defer to client.
             //
-            // Otherwise we insert a NEW assistant whose parent is whatever
-            // the leaf was when the request came in. For a fresh user turn
-            // that's the user message we generated this response for; for
-            // a retry (client repointed the leaf back at the parent user
-            // message) it's the same parent, so the new assistant becomes
-            // a sibling of the one being re-rolled — which is what makes
-            // BranchNavigation light up. The `update_leaf_trigger` on
-            // `public.messages` automatically advances
-            // `current_message_leaf_id` to the new row, so we don't need a
-            // separate conversations update.
-            const { error } = isContinuation
-              ? await supabaseClient
-                  .from('messages')
-                  .update(serializedMessage)
-                  .eq('id', responseMessage.id)
-                  .eq('conversation_id', conversation.id)
-              : await supabaseClient.from('messages').insert({
-                  id: responseMessage.id,
-                  conversation_id: conversation.id,
-                  role: responseMessage.role,
-                  ...serializedMessage,
-                  parent_message_id: leafMessageId,
-                });
+            // Insert places a NEW assistant under whatever the leaf was: for a
+            // fresh user turn that's the user message; for a retry (client
+            // repointed the leaf back at the parent user message) it's the same
+            // parent, so the new assistant becomes a sibling — which is what
+            // makes BranchNavigation light up. The `update_leaf_trigger` on
+            // `public.messages` auto-advances `current_message_leaf_id`, so we
+            // don't touch the conversation row here.
+            const persistAction = decidePersistAction({
+              isContinuation,
+              hasPendingToolCall,
+            });
+            let error: { message: string } | null = null;
+            if (persistAction === 'update') {
+              ({ error } = await supabaseClient
+                .from('messages')
+                .update(serializedMessage)
+                .eq('id', responseMessage.id)
+                .eq('conversation_id', conversation.id));
+            } else if (persistAction === 'insert') {
+              ({ error } = await supabaseClient.from('messages').insert({
+                id: responseMessage.id,
+                conversation_id: conversation.id,
+                role: responseMessage.role,
+                ...serializedMessage,
+                parent_message_id: leafMessageId,
+              }));
+            }
+            // persistAction === 'skip' → client owns this row's parts.
 
             if (error) {
               logError(error, {
@@ -1290,11 +1348,6 @@ export async function handleAiChatRequest(req: Request) {
             // continuation `onFinish` will fire suggestions for the real
             // final state. Avoids a wasted Haiku call AND prevents
             // mid-turn placeholder pills.
-            const hasPendingToolCall = finalizedParts.some(
-              (part) =>
-                part.type.startsWith('tool-') &&
-                (part as { state?: string }).state === 'input-available',
-            );
             if (!hasPendingToolCall && env('ANTHROPIC_API_KEY')) {
               // MUST be awaited (not `void`). `createUIMessageStream`
               // closes the SSE controller as soon as the merged stream
