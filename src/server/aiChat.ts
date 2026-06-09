@@ -296,7 +296,7 @@ function jsonResponse(body: unknown, status: number) {
 }
 
 const THINKING_BUDGET_TOKENS = 9000;
-const PARAMETRIC_THINKING_BUDGET_TOKENS = 1024;
+const PARAMETRIC_MAX_OUTPUT_TOKENS = 64000;
 
 type ChatProvider = 'anthropic' | 'google' | 'openrouter';
 
@@ -405,7 +405,6 @@ function buildChatModel(
         google: {
           thinkingConfig: {
             includeThoughts: true,
-            ...(thinking ? { thinkingBudget } : {}),
           },
         },
       },
@@ -1076,9 +1075,6 @@ export async function handleAiChatRequest(req: Request) {
       actualModelId,
       providers,
       rawBody.thinking ?? false,
-      conversation.type === 'parametric'
-        ? PARAMETRIC_THINKING_BUDGET_TOKENS
-        : THINKING_BUDGET_TOKENS,
     );
     chatLanguageModel = built.model;
     chatProviderOptions = built.providerOptions;
@@ -1118,13 +1114,21 @@ export async function handleAiChatRequest(req: Request) {
       ) {
         return {
           activeTools: ['build_parametric_model' as never],
-          toolChoice: 'required' as const,
+          toolChoice: {
+            type: 'tool' as const,
+            toolName: 'build_parametric_model' as never,
+          },
         };
       }
       return {};
     },
     stopWhen: stepCountIs(conversation.type === 'parametric' ? 60 : 5),
-    maxOutputTokens: rawBody.thinking ? 20000 : 16000,
+    maxOutputTokens:
+      conversation.type === 'parametric'
+        ? PARAMETRIC_MAX_OUTPUT_TOKENS
+        : rawBody.thinking
+          ? 20000
+          : 16000,
     abortSignal: req.signal,
     // Decouple our render cadence from the provider's native chunking.
     // OpenRouter (and the underlying provider) sometimes emits text in
