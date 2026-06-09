@@ -420,12 +420,30 @@ function buildChatModel(
   throw new Error(`Unsupported chat model ${modelId}`);
 }
 
+// Capability gates below accept either the OpenRouter alias (`anthropic/claude-…`)
+// or the bare Anthropic ID — strip the prefix here so every gate is called the
+// same way regardless of which form the caller has on hand.
+function bareModelId(modelId: string): string {
+  return modelId.startsWith('anthropic/')
+    ? modelId.slice('anthropic/'.length)
+    : modelId;
+}
+
 function usesAdaptiveAnthropicThinking(modelId: string) {
   // The Claude 5 generation (Fable, Mythos) uses adaptive thinking, as do
   // Claude Opus/Sonnet 4.6+. Older 4.x models take the fixed-budget path.
-  if (/^claude-(?:fable|mythos)-5\b/.test(modelId)) return true;
-  const match = /^claude-(?:opus|sonnet)-4-(\d+)/.exec(modelId);
+  const id = bareModelId(modelId);
+  if (/^claude-(?:fable|mythos)-5\b/.test(id)) return true;
+  const match = /^claude-(?:opus|sonnet)-4-(\d+)/.exec(id);
   return match ? Number(match[1]) >= 6 : false;
+}
+
+// Whether a model accepts a forced `tool_choice` (type: "tool" / "any").
+// The Claude 5 generation (Fable, Mythos) rejects forced tool use with
+// "tool_choice forces tool use is not compatible with this model" — for those
+// we must fall back to auto tool choice and steer via the system prompt.
+function supportsForcedToolChoice(modelId: string): boolean {
+  return !/^claude-(?:fable|mythos)-5\b/.test(bareModelId(modelId));
 }
 
 function priceFor(modelId: string) {
@@ -1142,6 +1160,16 @@ export async function handleAiChatRequest(req: Request) {
     thinking: rawBody.thinking ?? false,
   };
 
+  // Parametric step 0 normally pins `build_parametric_model` via a forced
+  // tool_choice. Models that reject forced tool use (Claude 5 — Fable/Mythos)
+  // fall back to auto tool choice, where the model *might* answer with text
+  // instead of building. Track that fallback so we can detect — and log — a
+  // turn that finished without ever calling the build tool.
+  const usingAutoToolChoiceFallback =
+    conversation.type === 'parametric' &&
+    leafRole === 'user' &&
+    !supportsForcedToolChoice(actualModelId);
+
   const result = streamText({
     model: chatLanguageModel,
     providerOptions: chatProviderOptions,
@@ -1154,12 +1182,20 @@ export async function handleAiChatRequest(req: Request) {
         leafRole === 'user' &&
         stepNumber === 0
       ) {
+        // Restrict the toolset to the build tool on the first step. Models
+        // that accept a forced tool_choice get it pinned; models that reject
+        // forced tool use (Claude 5 — Fable/Mythos) fall back to auto and rely
+        // on the system prompt to call build_parametric_model.
         return {
           activeTools: ['build_parametric_model' as never],
-          toolChoice: {
-            type: 'tool' as const,
-            toolName: 'build_parametric_model' as never,
-          },
+          ...(supportsForcedToolChoice(actualModelId)
+            ? {
+                toolChoice: {
+                  type: 'tool' as const,
+                  toolName: 'build_parametric_model' as never,
+                },
+              }
+            : {}),
         };
       }
       return {};
@@ -1194,6 +1230,36 @@ export async function handleAiChatRequest(req: Request) {
           operation: 'stream_text',
         },
       });
+    },
+    // Observability for the auto-tool-choice fallback (Claude 5 / Fable /
+    // Mythos): without a forced tool_choice the model can finish a parametric
+    // turn as plain text, leaving the user with no built model and no error.
+    // Surface that degraded outcome so it's measurable instead of silent.
+    onFinish: ({ steps }) => {
+      if (!usingAutoToolChoiceFallback) return;
+      const calledBuildTool = steps.some((step) =>
+        step.toolCalls?.some(
+          (call) => call.toolName === 'build_parametric_model',
+        ),
+      );
+      if (!calledBuildTool) {
+        logError(
+          new Error(
+            'Parametric turn finished without calling build_parametric_model under auto tool-choice fallback',
+          ),
+          {
+            functionName: 'ai-chat',
+            statusCode: 500,
+            userId: logContext.userId,
+            conversationId: logContext.conversationId,
+            additionalContext: {
+              ...logContext,
+              operation: 'forced_tool_choice_fallback',
+              modelId: actualModelId,
+            },
+          },
+        );
+      }
     },
   });
 
