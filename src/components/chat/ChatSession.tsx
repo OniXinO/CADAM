@@ -8,6 +8,8 @@ import { useToast } from '@/hooks/use-toast';
 import { previewScadColoredViaToolWorker } from '@/worker/toolWorker';
 import { apiUrl } from '@/services/api';
 import { messageRowToChatMessage, type ChatMessage } from '@/lib/aiMessages';
+import { collectStuckToolRecovery } from '@/components/chat/stuckToolRecovery';
+import { AssistantRowMissingError } from '@/services/messageService';
 import { supabase } from '@/lib/supabase';
 import {
   generateColoredPreview,
@@ -688,35 +690,13 @@ export function ChatSession({
     if (recoveredChatRef.current === chat) return;
     recoveredChatRef.current = chat;
 
-    const stuckByMessageId = new Map<string, AppUIMessage['parts']>();
-    for (const msg of chat.messages as AppUIMessage[]) {
-      if (msg.role !== 'assistant') continue;
-      let dirty = false;
-      const nextParts = msg.parts.map((p) => {
-        if (
-          (p.type.startsWith('tool-') || p.type === 'dynamic-tool') &&
-          'state' in p &&
-          (p.state === 'input-streaming' || p.state === 'input-available')
-        ) {
-          dirty = true;
-          return {
-            ...p,
-            state: 'output-error' as const,
-            errorText:
-              'Tool execution did not complete in the previous session.',
-          };
-        }
-        if (
-          (p.type === 'reasoning' || p.type === 'text') &&
-          p.state === 'streaming'
-        ) {
-          dirty = true;
-          return { ...p, state: 'done' as const };
-        }
-        return p;
-      }) as AppUIMessage['parts'];
-      if (dirty) stuckByMessageId.set(msg.id, nextParts);
-    }
+    // `chat.status` is read once per chat+mount on purpose: a cached Chat
+    // that is mid-generation when ChatSession (re)mounts is not "stuck from
+    // a previous session", and collectStuckToolRecovery skips it entirely.
+    const stuckByMessageId = collectStuckToolRecovery({
+      status: chat.status,
+      messages: chat.messages as AppUIMessage[],
+    });
 
     if (stuckByMessageId.size === 0) return;
 
@@ -730,6 +710,17 @@ export function ChatSession({
 
     for (const [messageId, nextParts] of stuckByMessageId) {
       void onToolOutput(messageId, nextParts).catch((err) => {
+        if (err instanceof AssistantRowMissingError) {
+          // The interruption happened before the server's `onFinish` INSERT,
+          // so this assistant exists only in the cached in-memory chat. The
+          // DB branch (leaf = the user message) has no dangling tool call to
+          // repair, and the setMessages above already fixed the UI.
+          console.info(
+            'Stuck-tool recovery: assistant row was never persisted; ' +
+              'nothing to repair in DB (benign).',
+          );
+          return;
+        }
         console.warn('Failed to persist stuck-tool recovery:', err);
       });
     }

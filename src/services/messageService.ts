@@ -41,6 +41,17 @@ export async function persistUserMessage({
 }
 
 /**
+ * Thrown when `persistAssistantParts` matched no row even after retries —
+ * the assistant row was never INSERTed (the stream was interrupted before
+ * the server's `onFinish` ran). Callers that merely mirror in-memory state
+ * onto an existing row (load-time stuck-tool recovery) can treat this as
+ * benign: with no row, the DB branch has no dangling tool call to repair.
+ * Callers persisting NEW tool output must still surface it — the server
+ * continues from the DB branch, so a lost write means a stale continuation.
+ */
+export class AssistantRowMissingError extends Error {}
+
+/**
  * Persist updated `parts` on an existing assistant row. Used after the
  * client compiles a `build_parametric_model` tool call locally — we need
  * the DB row to reflect the completed tool output before the server reads
@@ -91,7 +102,7 @@ export async function persistAssistantParts({
       await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
     }
   }
-  throw new Error(
+  throw new AssistantRowMissingError(
     `persistAssistantParts matched no row after ${MAX_ATTEMPTS} attempts ` +
       `(messageId=${messageId}). The assistant message was never persisted.`,
   );
