@@ -9,10 +9,10 @@
 /** Minimal structural shape of a message part — all we need to reason about. */
 export type RecoveryPartLike = { type: string; state?: string };
 
-export type RecoveryMessageLike<T extends RecoveryPartLike> = {
+export type RecoveryMessageLike = {
   id: string;
   role: string;
-  parts: readonly T[];
+  parts: readonly RecoveryPartLike[];
 };
 
 export const STUCK_TOOL_ERROR_TEXT =
@@ -23,7 +23,9 @@ export const STUCK_TOOL_ERROR_TEXT =
  * and return the rewritten `parts` arrays keyed by message id (empty map →
  * nothing to recover). Tool calls stuck at `input-streaming` /
  * `input-available` become `output-error`; `streaming` text / reasoning
- * becomes `done`.
+ * becomes `done`. Every rewrite spreads the original part, so all
+ * caller-specific fields survive — the caller re-narrows the structural
+ * return to its own part type.
  *
  * Returns empty when the chat is ACTIVELY running (`streaming` /
  * `submitted`): a cached Chat instance survives ChatSession remounts
@@ -34,14 +36,14 @@ export const STUCK_TOOL_ERROR_TEXT =
  * The live session's own handlers (`finishWithError`, `onError`) own
  * failures from here; recovery is only for chats that LOADED broken.
  */
-export function collectStuckToolRecovery<T extends RecoveryPartLike>({
+export function collectStuckToolRecovery({
   status,
   messages,
 }: {
   status: string;
-  messages: ReadonlyArray<RecoveryMessageLike<T>>;
-}): Map<string, T[]> {
-  const stuckByMessageId = new Map<string, T[]>();
+  messages: readonly RecoveryMessageLike[];
+}): Map<string, RecoveryPartLike[]> {
+  const stuckByMessageId = new Map<string, RecoveryPartLike[]>();
   if (status === 'streaming' || status === 'submitted') {
     return stuckByMessageId;
   }
@@ -60,14 +62,14 @@ export function collectStuckToolRecovery<T extends RecoveryPartLike>({
           ...p,
           state: 'output-error',
           errorText: STUCK_TOOL_ERROR_TEXT,
-        } as unknown as T;
+        };
       }
       if (
         (p.type === 'reasoning' || p.type === 'text') &&
         p.state === 'streaming'
       ) {
         dirty = true;
-        return { ...p, state: 'done' } as unknown as T;
+        return { ...p, state: 'done' };
       }
       return p;
     });

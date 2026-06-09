@@ -693,10 +693,16 @@ export function ChatSession({
     // `chat.status` is read once per chat+mount on purpose: a cached Chat
     // that is mid-generation when ChatSession (re)mounts is not "stuck from
     // a previous session", and collectStuckToolRecovery skips it entirely.
+    //
+    // The scan is structurally typed (dependency-free for its unit tests),
+    // so its map comes back as `RecoveryPartLike[]` values. Every rewrite
+    // spreads the original part and only narrows tool/text `state`, so
+    // re-narrowing to our part union is sound — this is the one place the
+    // structural boundary is crossed.
     const stuckByMessageId = collectStuckToolRecovery({
       status: chat.status,
-      messages: chat.messages as AppUIMessage[],
-    });
+      messages: chat.messages,
+    }) as Map<string, AppUIMessage['parts']>;
 
     if (stuckByMessageId.size === 0) return;
 

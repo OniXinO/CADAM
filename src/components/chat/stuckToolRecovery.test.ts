@@ -75,18 +75,17 @@ describe('collectStuckToolRecovery', () => {
   });
 
   it('finishes streaming text and reasoning parts', () => {
+    const streamingTextMessage = {
+      id: 'a3',
+      role: 'assistant',
+      parts: [
+        { type: 'reasoning', state: 'streaming' },
+        { type: 'text', text: 'partial', state: 'streaming' },
+      ],
+    };
     const result = collectStuckToolRecovery({
       status: 'ready',
-      messages: [
-        {
-          id: 'a3',
-          role: 'assistant',
-          parts: [
-            { type: 'reasoning', state: 'streaming' },
-            { type: 'text', text: 'partial', state: 'streaming' },
-          ],
-        },
-      ],
+      messages: [streamingTextMessage],
     });
     assert.deepEqual(result.get('a3'), [
       { type: 'reasoning', state: 'done' },
@@ -95,25 +94,24 @@ describe('collectStuckToolRecovery', () => {
   });
 
   it('ignores resolved tools, user messages, and clean assistants', () => {
+    const userMessage = {
+      id: 'u1',
+      role: 'user',
+      // A user message can never be "stuck" even with odd part states.
+      parts: [{ type: 'text', text: 'hi', state: 'streaming' }],
+    };
+    const cleanAssistantMessage = {
+      id: 'a4',
+      role: 'assistant',
+      parts: [
+        { type: 'text', text: 'done', state: 'done' },
+        { type: 'tool-build_parametric_model', state: 'output-available' },
+        { type: 'tool-answer_user', state: 'output-error' },
+      ],
+    };
     const result = collectStuckToolRecovery({
       status: 'ready',
-      messages: [
-        {
-          id: 'u1',
-          role: 'user',
-          // A user message can never be "stuck" even with odd part states.
-          parts: [{ type: 'text', text: 'hi', state: 'streaming' }],
-        },
-        {
-          id: 'a4',
-          role: 'assistant',
-          parts: [
-            { type: 'text', text: 'done', state: 'done' },
-            { type: 'tool-build_parametric_model', state: 'output-available' },
-            { type: 'tool-answer_user', state: 'output-error' },
-          ],
-        },
-      ],
+      messages: [userMessage, cleanAssistantMessage],
     });
     assert.equal(result.size, 0);
   });
