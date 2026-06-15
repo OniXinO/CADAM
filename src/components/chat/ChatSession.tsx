@@ -27,7 +27,10 @@ import {
   lastAssistantMessageIsCompleteWithToolCalls,
 } from 'ai';
 import Tree from '@shared/Tree';
-import { isParametricArtifact } from '@shared/parametricParts';
+import {
+  hasRenderableScadCode,
+  isParametricArtifact,
+} from '@shared/parametricParts';
 import type {
   Conversation,
   Message,
@@ -72,6 +75,11 @@ interface ChatSessionProps {
   onChangeRating: (messageId: string, rating: number) => void;
   onViewArtifact: (artifact: ParametricArtifact, messageId: string) => void;
   onViewMesh: (meshId: string, messageId: string) => void;
+  /** Fired when the latest assistant turn settled without producing any
+   *  renderable model AND there's nothing else to show — i.e. the model
+   *  returned no SCAD code (#181). Lets the preview pane swap its blank
+   *  canvas for a clear error + retry instead of leaving the user guessing. */
+  onNoModel?: (info: { messageId: string; retry?: () => void }) => void;
   /** Fired whenever the SDK's submitted/streaming flag flips. Lets the
    *  parent show the bouncing loader in the preview pane while the model
    *  is still producing the next artifact. */
@@ -154,6 +162,7 @@ export function ChatSession({
   onChangeRating,
   onViewArtifact,
   onViewMesh,
+  onNoModel,
   onLoadingChange,
 }: ChatSessionProps) {
   const { user } = useAuth();
@@ -450,6 +459,20 @@ export function ChatSession({
       if (!input) {
         await finishWithError(
           'CAD tool input was not a valid OpenSCAD artifact.',
+        );
+        return;
+      }
+
+      // #181: the model occasionally "builds" with an empty body or a prose
+      // reply stuffed into `code`. `isParametricArtifact` only checks `code`
+      // is a string, so that passes — but compiling it yields no geometry and
+      // the viewer used to sit blank with no explanation. Catch it before the
+      // worker runs and finish the tool as an error so the preview pane can
+      // surface a clear, actionable message (and the agent loop can retry)
+      // instead of reporting a phantom success.
+      if (!hasRenderableScadCode(input.code)) {
+        await finishWithError(
+          "Adam didn't return any OpenSCAD code for that prompt.",
         );
         return;
       }
@@ -892,6 +915,32 @@ export function ChatSession({
   );
 
   // ───────────────────────────────────────────────────────────────────────
+  // No-model recovery (#181). When the latest turn settled without any
+  // renderable model AND there's nothing else to fall back to, tell the
+  // parent so the preview pane can show a clear error instead of a blank
+  // canvas. Gated on the stream being finished and on there being no
+  // renderable preview anywhere — a follow-up edit that fails still leaves
+  // the previously-built model on screen rather than wiping it.
+  // ───────────────────────────────────────────────────────────────────────
+  const lastNoModelMessageIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (isLoading) return;
+    if (findLatestPreview(messages)) {
+      lastNoModelMessageIdRef.current = null;
+      return;
+    }
+    const failed = findFailedBuildTurn(messages);
+    if (!failed) return;
+    if (lastNoModelMessageIdRef.current === failed.id) return;
+    lastNoModelMessageIdRef.current = failed.id;
+    const node = messageTree.allNodes.get(failed.id);
+    onNoModel?.({
+      messageId: failed.id,
+      retry: node ? () => void handleRetry(node, model) : undefined,
+    });
+  }, [isLoading, messages, messageTree, model, onNoModel, handleRetry]);
+
+  // ───────────────────────────────────────────────────────────────────────
   // Scroll-to-bottom on new content. Reads the Radix Viewport directly so
   // the user can still scroll up to re-read older turns without us forcing
   // them back down.
@@ -1004,7 +1053,10 @@ function findLatestPreview(messages: AppUIMessage[]): LatestPreview {
       if (
         part.type === 'tool-build_parametric_model' &&
         part.state !== 'input-streaming' &&
-        isParametricArtifact(part.input)
+        isParametricArtifact(part.input) &&
+        // #181: an empty / prose build is not a renderable preview — don't
+        // auto-select it, or the viewer goes blank with no explanation.
+        hasRenderableScadCode(part.input.code)
       ) {
         return {
           type: 'artifact',
@@ -1023,6 +1075,34 @@ function findLatestPreview(messages: AppUIMessage[]): LatestPreview {
         };
       }
     }
+  }
+  return null;
+}
+
+/**
+ * #181: did the LAST assistant turn attempt `build_parametric_model` but
+ * settle without renderable code? Returns the message id of that turn so the
+ * caller can surface a clear "no model" state.
+ *
+ * Only the build path counts as a failure: an `answer_user` reply or a plain
+ * text turn is the model intentionally NOT building (a question, a
+ * clarification), so we leave those alone to avoid false alarms.
+ */
+function findFailedBuildTurn(messages: AppUIMessage[]): { id: string } | null {
+  const last = messages[messages.length - 1];
+  if (!last || last.role !== 'assistant') return null;
+  if (last.parts.some((part) => part.type === 'tool-answer_user')) return null;
+  for (let partIndex = last.parts.length - 1; partIndex >= 0; partIndex -= 1) {
+    const part = last.parts[partIndex];
+    if (part.type !== 'tool-build_parametric_model') continue;
+    // Still streaming or awaiting the client's compile result — not settled.
+    if (part.state === 'input-streaming' || part.state === 'input-available') {
+      return null;
+    }
+    const renderable =
+      isParametricArtifact(part.input) &&
+      hasRenderableScadCode(part.input.code);
+    return renderable ? null : { id: last.id };
   }
   return null;
 }

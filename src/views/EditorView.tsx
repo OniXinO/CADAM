@@ -24,7 +24,7 @@ import {
 } from '@/lib/aiMessages';
 import parseParameters from '@shared/parseParameters';
 import { supabase } from '@/lib/supabase';
-import { updateParameter } from '@/lib/utils';
+import { cn, updateParameter } from '@/lib/utils';
 import {
   persistAssistantParts,
   persistUserMessage,
@@ -34,6 +34,7 @@ import {
 import type { DxfExporter } from '@/utils/downloadUtils';
 import type { AppUIMessage } from '@shared/chatAi';
 import {
+  hasRenderableScadCode,
   isParametricArtifact,
   replaceBuildParametricModelOutput,
 } from '@shared/parametricParts';
@@ -47,7 +48,7 @@ import type {
 } from '@shared/types';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useParams } from '@tanstack/react-router';
-import { Loader2, Share } from 'lucide-react';
+import { CircleAlert, Loader2, RotateCcw, Share } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { MessageItem } from '../types/misc.ts';
 import { ConversationView } from './ConversationView';
@@ -166,6 +167,9 @@ export default function EditorView() {
 type ActivePreview =
   | { type: 'artifact'; messageId: string; artifact: ParametricArtifact }
   | { type: 'mesh'; messageId: string; meshId: string }
+  // #181: the latest turn produced no renderable SCAD. Show an explanatory
+  // error + retry in the preview pane instead of a silent blank canvas.
+  | { type: 'error'; messageId: string; retry?: () => void }
   | null;
 
 /**
@@ -455,6 +459,18 @@ function ConversationEditor() {
     setActivePreview({ type: 'mesh', messageId, meshId });
     setMobilePreviewVersion((version) => version + 1);
   }, []);
+  // #181: the latest turn returned no renderable SCAD. Swap the preview
+  // pane's blank canvas for an explanatory error + retry instead.
+  const handleNoModel = useCallback(
+    ({ messageId, retry }: { messageId: string; retry?: () => void }) => {
+      setCurrentOutput(undefined);
+      setDxfExporter(() => null);
+      setParameters([]);
+      setActivePreview({ type: 'error', messageId, retry });
+      setMobilePreviewVersion((version) => version + 1);
+    },
+    [],
+  );
 
   // Serialize parameter writes (see `drainParameterWrites`): one queued
   // snapshot per message id, plus a flag so at most one persist is ever in
@@ -625,7 +641,9 @@ function ConversationEditor() {
         activePreview
           ? activePreview.type === 'artifact'
             ? `artifact:${activePreview.messageId}`
-            : `mesh:${activePreview.messageId}:${activePreview.meshId}`
+            : activePreview.type === 'mesh'
+              ? `mesh:${activePreview.messageId}:${activePreview.meshId}`
+              : `error:${activePreview.messageId}`
           : null
       }
       mobilePreviewVersion={mobilePreviewVersion}
@@ -716,6 +734,7 @@ function ConversationEditor() {
             onChangeRating={handleChangeRating}
             onViewArtifact={handleViewArtifact}
             onViewMesh={handleViewMesh}
+            onNoModel={handleNoModel}
             onLoadingChange={setIsChatStreaming}
           />
         </>
@@ -733,6 +752,8 @@ function ConversationEditor() {
             />
           ) : activePreview?.type === 'mesh' ? (
             <MeshPreview meshId={activePreview.meshId} />
+          ) : activePreview?.type === 'error' ? (
+            <NoModelPreview retry={activePreview.retry} />
           ) : (
             <div className="text-sm text-adam-text-secondary">
               Send a message to start creating
@@ -755,6 +776,8 @@ function ConversationEditor() {
             />
           ) : activePreview?.type === 'mesh' ? (
             <MeshPreview meshId={activePreview.meshId} />
+          ) : activePreview?.type === 'error' ? (
+            <NoModelPreview retry={activePreview.retry} />
           ) : (
             <div className="text-sm text-adam-text-secondary">
               Send a message to start creating
@@ -825,6 +848,53 @@ function mergeParameterDefaults(
   );
 }
 
+/**
+ * #181: shown in the preview pane when the latest turn produced no renderable
+ * SCAD code (empty / prose build, or the model answered without building).
+ * Mirrors the compile-error styling in `OpenSCADViewer`'s `FixWithAIButton`
+ * so the "something went wrong" affordance reads consistently, but with a
+ * message tuned to the no-geometry case and a retry wired to the chat's
+ * existing regenerate path.
+ */
+function NoModelPreview({ retry }: { retry?: () => void }) {
+  return (
+    <div className="flex h-full flex-col items-center justify-center gap-4 p-6">
+      <div className="flex flex-col items-center gap-3">
+        <div className="relative">
+          <div className="absolute inset-0 animate-ping rounded-full bg-adam-blue/20" />
+          <CircleAlert className="h-8 w-8 text-adam-blue" />
+        </div>
+        <div className="max-w-xs text-center">
+          <p className="text-sm font-medium text-adam-blue">
+            No 3D model returned
+          </p>
+          <p className="mt-1 text-xs text-adam-text-primary/60">
+            Adam didn't return a 3D model for that prompt. Try rephrasing your
+            prompt, or retry.
+          </p>
+        </div>
+      </div>
+      {retry && (
+        <Button
+          variant="ghost"
+          className={cn(
+            'group relative flex items-center gap-2 rounded-lg border',
+            'bg-gradient-to-br from-adam-blue/20 to-adam-neutral-800/70 p-3',
+            'border-adam-blue/30 text-adam-text-primary',
+            'transition-all duration-300 ease-in-out',
+            'hover:border-adam-blue/70 hover:bg-adam-blue/50 hover:text-white',
+            'focus:outline-none focus:ring-2 focus:ring-adam-blue/30',
+          )}
+          onClick={retry}
+        >
+          <RotateCcw className="h-4 w-4 transition-transform duration-300 group-hover:-rotate-12" />
+          <span className="relative text-sm font-medium">Retry</span>
+        </Button>
+      )}
+    </div>
+  );
+}
+
 type LatestPreview =
   | { type: 'artifact'; messageId: string; artifact: ParametricArtifact }
   | { type: 'mesh'; messageId: string; meshId: string }
@@ -846,7 +916,11 @@ function findLatestPreview(messages: AppUIMessage[]): LatestPreview {
       if (
         part.type === 'tool-build_parametric_model' &&
         part.state !== 'input-streaming' &&
-        isParametricArtifact(part.input)
+        isParametricArtifact(part.input) &&
+        // #181: skip empty / prose builds — they render to nothing, so they
+        // must not be picked as the active preview (that's the blank-canvas
+        // bug). A real build with a fallback is preferred over showing blank.
+        hasRenderableScadCode(part.input.code)
       ) {
         return {
           type: 'artifact',
