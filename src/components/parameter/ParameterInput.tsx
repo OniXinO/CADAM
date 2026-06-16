@@ -67,13 +67,13 @@ export function ParameterInput({
             );
             handleValueCommit(selected ? selected.value : next);
           }}
-          className="flex w-full flex-wrap justify-start gap-0.5 rounded-lg bg-adam-neutral-800 p-0.5"
+          className="flex w-full flex-wrap justify-start gap-0.5 rounded-lg bg-adam-neutral-900 p-0.5"
         >
           {paramState.options.map((option) => (
             <ToggleGroupItem
               key={String(option.value)}
               value={String(option.value)}
-              className="h-5 flex-1 rounded-md px-2 text-xs text-adam-neutral-300 transition-colors data-[state=on]:bg-adam-neutral-700 data-[state=on]:text-adam-text-primary [@media(hover:hover)]:hover:text-adam-text-primary"
+              className="h-5 flex-1 rounded-md px-2 text-xs text-adam-neutral-300 transition-colors hover:bg-transparent hover:text-adam-text-primary data-[state=on]:bg-adam-neutral-700 data-[state=on]:font-medium data-[state=on]:text-adam-text-primary data-[state=on]:shadow-sm"
             >
               {option.label ?? String(option.value)}
             </ToggleGroupItem>
