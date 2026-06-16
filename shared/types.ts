@@ -41,7 +41,10 @@ export type ParametricArtifact = {
   code: string;
 };
 
-export type ParameterOption = { value: string | number; label: string };
+// label is optional: an OpenSCAD customizer comment can list bare values
+// (e.g. `[Assembled, Exploded]`) with no `value:label` pair, in which case
+// the parser leaves label undefined and the UI falls back to the value.
+export type ParameterOption = { value: string | number; label?: string };
 
 export type ParameterRange = { min?: number; max?: number; step?: number };
 

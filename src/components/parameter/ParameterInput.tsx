@@ -46,30 +46,34 @@ export function ParameterInput({
   // only thing selectable is a valid option. Takes precedence over the
   // type-specific branches below.
   if (paramState.options && paramState.options.length > 0) {
+    const options = paramState.options;
     const currentValue = String(paramState.value);
     return (
       <div className="grid w-full grid-cols-[80px_1fr] items-center gap-3">
         <Label
+          // ToggleGroup renders a <div>, which htmlFor can't target, so the
+          // group is associated via aria-labelledby pointing at this id.
+          id={`${paramState.name}-label`}
           className="overflow-hidden text-ellipsis text-xs font-normal text-adam-neutral-300"
-          htmlFor={paramState.name}
         >
           {paramState.displayName}
         </Label>
         <ToggleGroup
           type="single"
+          aria-labelledby={`${paramState.name}-label`}
           value={currentValue}
           onValueChange={(next) => {
             // Radix emits '' when the active item is clicked again; ignore it
             // so a selection can never be cleared into an invalid empty state.
             if (!next) return;
-            const selected = paramState.options?.find(
+            const selected = options.find(
               (option) => String(option.value) === next,
             );
             handleValueCommit(selected ? selected.value : next);
           }}
           className="flex w-full flex-wrap justify-start gap-0.5 rounded-lg bg-adam-neutral-900 p-0.5"
         >
-          {paramState.options.map((option) => (
+          {options.map((option) => (
             <ToggleGroupItem
               key={String(option.value)}
               value={String(option.value)}
