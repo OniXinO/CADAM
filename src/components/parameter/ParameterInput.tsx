@@ -10,6 +10,7 @@ import {
 import { ParameterSlider } from '@/components/parameter/ParameterSlider';
 import { Label } from '@/components/ui/label';
 import { ColorPicker } from '@/components/parameter/ColorPicker';
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 
 export function ParameterInput({
   param,
@@ -39,6 +40,48 @@ export function ParameterInput({
     handleCommit(paramState, value);
   };
 
+  // Enum parameters (those with a fixed set of options, e.g. a "View Mode"
+  // of Assembled/Exploded) are a constrained choice — a free-text field lets
+  // you type a value the model can't honor. Render a segmented toggle so the
+  // only thing selectable is a valid option. Takes precedence over the
+  // type-specific branches below.
+  if (paramState.options && paramState.options.length > 0) {
+    const currentValue = String(paramState.value);
+    return (
+      <div className="grid w-full grid-cols-[80px_1fr] items-center gap-3">
+        <Label
+          className="overflow-hidden text-ellipsis text-xs font-normal text-adam-neutral-300"
+          htmlFor={paramState.name}
+        >
+          {paramState.displayName}
+        </Label>
+        <ToggleGroup
+          type="single"
+          value={currentValue}
+          onValueChange={(next) => {
+            // Radix emits '' when the active item is clicked again; ignore it
+            // so a selection can never be cleared into an invalid empty state.
+            if (!next) return;
+            const selected = paramState.options?.find(
+              (option) => String(option.value) === next,
+            );
+            handleValueCommit(selected ? selected.value : next);
+          }}
+          className="flex w-full flex-wrap justify-start gap-0.5 rounded-lg bg-adam-neutral-800 p-0.5"
+        >
+          {paramState.options.map((option) => (
+            <ToggleGroupItem
+              key={String(option.value)}
+              value={String(option.value)}
+              className="h-5 flex-1 rounded-md px-2 text-xs text-adam-neutral-300 transition-colors data-[state=on]:bg-adam-neutral-700 data-[state=on]:text-adam-text-primary [@media(hover:hover)]:hover:text-adam-text-primary"
+            >
+              {option.label ?? String(option.value)}
+            </ToggleGroupItem>
+          ))}
+        </ToggleGroup>
+      </div>
+    );
+  }
   if (!paramState.type || paramState.type === 'number') {
     return (
       <div className="grid w-full grid-cols-[80px_1fr] items-center gap-3">
