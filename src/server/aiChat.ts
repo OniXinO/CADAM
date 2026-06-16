@@ -1368,30 +1368,6 @@ export async function handleAiChatRequest(req: Request) {
               billingTokens,
             };
 
-            try {
-              // Drains the user's remaining balance to zero if the
-              // request cost more than they had. The billing service
-              // accepts the partial deduction, writes an audit row as
-              // `<operation>_partial`, and the pre-flight gate above
-              // will block the next request. Not an error path —
-              // intentional terminal state.
-              await billing.consume(user.email!, {
-                tokens: billingTokens,
-                operation:
-                  conversation.type === 'creative' ? 'chat' : 'parametric',
-                referenceId: responseMessage.id,
-              });
-            } catch (error) {
-              logError(error, {
-                functionName: 'ai-chat',
-                statusCode:
-                  error instanceof BillingClientError ? error.status : 502,
-                userId: user.id,
-                conversationId: conversation.id,
-                additionalContext: { operation: 'billing_consume' },
-              });
-            }
-
             const finalizedParts =
               conversation.type === 'parametric'
                 ? dropTextFromParametricBuildMessage(
@@ -1411,18 +1387,29 @@ export async function handleAiChatRequest(req: Request) {
             // `input-available` (pending).
             const hasPendingToolCall = hasPendingClientToolCall(finalizedParts);
 
+            // Persist the row BEFORE billing. `build_parametric_model` is
+            // resolved client-side: the browser compiles, then UPDATEs this
+            // row to attach the tool output (`persistAssistantParts`). That
+            // UPDATE matches nothing until this INSERT lands, so the browser
+            // retries on a ~1.7s window and otherwise surfaces "Couldn't save
+            // this step". `billing.consume` is a non-fatal external round-trip
+            // (caught + logged below) and the persist doesn't depend on it —
+            // running it after keeps its latency out of the browser's race
+            // window. The row must exist as soon as the stream closes.
+            //
             // What to do with this row — see `decidePersistAction`:
             //   insert → new assistant row.
             //   update → continuation with everything resolved / pure text.
             //   skip   → continuation still ending in a pending CLIENT tool.
             //            The browser persists the `output-available` version
             //            itself (`onToolOutput`); a server write here — delayed
-            //            behind `result.totalUsage` + `billing.consume` — would
-            //            land last and clobber it back to `input-available`,
-            //            leaving a dangling tool call that 500s the next send.
-            //            Mid-loop builds dodge the race because the client's
-            //            compile takes seconds; the terminal `answer_user` is
-            //            instant, so the server reliably wins. Defer to client.
+            //            behind `result.totalUsage` and the network write —
+            //            would land last and clobber it back to
+            //            `input-available`, leaving a dangling tool call that
+            //            500s the next send. Mid-loop builds dodge the race
+            //            because the client's compile takes seconds; the
+            //            terminal `answer_user` is instant, so the server
+            //            reliably wins. Defer to client.
             //
             // Insert places a NEW assistant under whatever the leaf was: for a
             // fresh user turn that's the user message; for a retry (client
@@ -1471,6 +1458,31 @@ export async function handleAiChatRequest(req: Request) {
                 userId: user.id,
                 conversationId: conversation.id,
                 additionalContext: { operation: 'persist_response_message' },
+              });
+            }
+
+            try {
+              // Drains the user's remaining balance to zero if the
+              // request cost more than they had. The billing service
+              // accepts the partial deduction, writes an audit row as
+              // `<operation>_partial`, and the pre-flight gate above
+              // will block the next request. Not an error path —
+              // intentional terminal state. Runs after the persist above so
+              // its latency never delays the row the client is waiting on.
+              await billing.consume(user.email!, {
+                tokens: billingTokens,
+                operation:
+                  conversation.type === 'creative' ? 'chat' : 'parametric',
+                referenceId: responseMessage.id,
+              });
+            } catch (error) {
+              logError(error, {
+                functionName: 'ai-chat',
+                statusCode:
+                  error instanceof BillingClientError ? error.status : 502,
+                userId: user.id,
+                conversationId: conversation.id,
+                additionalContext: { operation: 'billing_consume' },
               });
             }
 
