@@ -1182,14 +1182,22 @@ export async function handleAiChatRequest(req: Request) {
   };
 
   // Parametric step 0 normally pins `build_parametric_model` via a forced
-  // tool_choice. Models that reject forced tool use (Claude 5 — Fable/Mythos)
-  // fall back to auto tool choice, where the model *might* answer with text
-  // instead of building. Track that fallback so we can detect — and log — a
-  // turn that finished without ever calling the build tool.
+  // tool_choice. Two cases fall back to auto tool choice instead — where the
+  // model *might* answer with text instead of building:
+  //   1. Models that reject forced tool use outright (Claude 5 — Fable/Mythos).
+  //   2. Any turn with extended thinking enabled — Anthropic rejects a forced
+  //      tool_choice while thinking is on ("Thinking may not be enabled when
+  //      tool_choice forces tool use"). Adaptive thinking is on by default for
+  //      Claude 5 / Opus·Sonnet 4.6+, so those land here too.
+  // Both rely on the system prompt to steer the build tool call. Track the
+  // fallback so we can detect — and log — a turn that finished without ever
+  // calling the build tool.
+  const forceBuildToolChoice =
+    supportsForcedToolChoice(actualModelId) && !thinkingEnabled;
   const usingAutoToolChoiceFallback =
     conversation.type === 'parametric' &&
     leafRole === 'user' &&
-    !supportsForcedToolChoice(actualModelId);
+    !forceBuildToolChoice;
 
   const result = streamText({
     model: chatLanguageModel,
@@ -1203,13 +1211,13 @@ export async function handleAiChatRequest(req: Request) {
         leafRole === 'user' &&
         stepNumber === 0
       ) {
-        // Restrict the toolset to the build tool on the first step. Models
-        // that accept a forced tool_choice get it pinned; models that reject
-        // forced tool use (Claude 5 — Fable/Mythos) fall back to auto and rely
-        // on the system prompt to call build_parametric_model.
+        // Restrict the toolset to the build tool on the first step. Turns that
+        // accept a forced tool_choice get it pinned; turns that reject forced
+        // tool use (Claude 5, or any thinking-enabled turn) fall back to auto
+        // and rely on the system prompt to call build_parametric_model.
         return {
           activeTools: ['build_parametric_model' as never],
-          ...(supportsForcedToolChoice(actualModelId)
+          ...(forceBuildToolChoice
             ? {
                 toolChoice: {
                   type: 'tool' as const,
