@@ -8,6 +8,16 @@ import { AuthContext, type BillingStatus, getLevel } from './AuthContext';
 import { apiJson } from '@/services/api';
 import { z } from 'zod';
 
+// Build an absolute, same-frontend redirect URL for Supabase auth emails / OAuth.
+// Uses the current origin + Vite base path so links return to whichever frontend
+// initiated them (adam.new/cadam, app.adamcad.com, Vercel previews) rather than
+// falling back to the project's Site URL (which points at the workspace app).
+function getAppRedirectUrl(path: string) {
+  const basePath = import.meta.env.BASE_URL.replace(/\/$/, '');
+
+  return `${window.location.origin}${basePath}${path}`;
+}
+
 const LOCAL_BILLING_STATUS: BillingStatus = {
   user: { hasTrialed: false },
   subscription: {
@@ -227,7 +237,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const { error: signUpError } = await supabase.auth.signUp({
       email,
       password,
-      options: { data: { full_name: name } },
+      options: {
+        data: { full_name: name },
+        emailRedirectTo: getAppRedirectUrl('/'),
+      },
     });
     if (signUpError) throw signUpError;
   };
@@ -240,7 +253,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const signInWithMagicLink = async (email: string) => {
     const { error } = await supabase.auth.signInWithOtp({
       email,
-      options: { shouldCreateUser: true },
+      options: {
+        shouldCreateUser: true,
+        emailRedirectTo: getAppRedirectUrl('/'),
+      },
     });
     if (error) throw error;
   };
@@ -255,7 +271,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const resetPassword = async (email: string) => {
-    const { error } = await supabase.auth.resetPasswordForEmail(email);
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: getAppRedirectUrl('/update-password'),
+    });
     if (error) throw error;
   };
 
