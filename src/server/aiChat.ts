@@ -315,6 +315,20 @@ function providerFor(modelId: string): ChatProvider {
 type AnthropicProvider = ReturnType<typeof createAnthropic>;
 type GoogleProvider = ReturnType<typeof createGoogleGenerativeAI>;
 
+// The Vercel AI SDK's Anthropic provider expects ANTHROPIC_BASE_URL to already
+// include the "/v1" path segment (its built-in default is
+// "https://api.anthropic.com/v1"). Some environments — notably the Claude
+// Code/Desktop app — export the bare host "https://api.anthropic.com", which is
+// what the official @anthropic-ai/sdk wants but makes this provider POST to
+// "/messages" and 404. Normalize a "/v1"-less override so it still works; return
+// undefined when unset so the SDK keeps owning its own default.
+function normalizedAnthropicBaseURL(): string | undefined {
+  const raw = env('ANTHROPIC_BASE_URL').trim();
+  if (!raw) return undefined;
+  const base = raw.replace(/\/+$/, '');
+  return base.endsWith('/v1') ? base : `${base}/v1`;
+}
+
 type ChatProviders = {
   anthropic: () => AnthropicProvider;
   google: () => GoogleProvider;
@@ -327,9 +341,13 @@ function createChatProviders(): ChatProviders {
   let openrouter: ReturnType<typeof createOpenRouter> | undefined;
   return {
     anthropic: () => {
-      anthropic ??= createAnthropic({
-        apiKey: requiredEnv('ANTHROPIC_API_KEY'),
-      });
+      if (!anthropic) {
+        const baseURL = normalizedAnthropicBaseURL();
+        anthropic = createAnthropic({
+          apiKey: requiredEnv('ANTHROPIC_API_KEY'),
+          ...(baseURL ? { baseURL } : {}),
+        });
+      }
       return anthropic;
     },
     google: () => {
