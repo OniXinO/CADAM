@@ -53,9 +53,9 @@ export function UpdatePasswordView() {
         <div className="rounded-lg bg-adam-bg-secondary-dark p-8 shadow-md">
           <div className="mb-4 flex flex-col items-center justify-center gap-2">
             <img
-              src={`${import.meta.env.BASE_URL}/adam-logo.svg`}
-              alt="Adam Logo"
-              className="mr-2 h-8 w-8"
+              src={`${import.meta.env.BASE_URL}/cadam-logo.svg`}
+              alt="CADAM Logo"
+              className="h-8 w-auto"
             />
             <h1 className="text-2xl font-semibold text-white">
               Update Password
