@@ -522,11 +522,16 @@ function usdCostFromUsage(modelId: string, usage: LanguageModelUsage): number {
   );
 }
 
+function billingMultiplier(): number {
+  const raw = Number(env('CADAM_BILLING_MULTIPLIER'));
+  return Number.isFinite(raw) && raw > 0 ? raw : 1;
+}
+
 function billingTokensFromUsage(
   modelId: string,
   usage: LanguageModelUsage,
 ): number {
-  const usdCost = usdCostFromUsage(modelId, usage);
+  const usdCost = usdCostFromUsage(modelId, usage) * billingMultiplier();
   return Math.max(1, Math.ceil(usdCost / USD_PER_BILLING_TOKEN));
 }
 
