@@ -14,12 +14,15 @@ import { TrialDialog } from '@/components/auth/TrialDialog';
  * then and the pill would pop in. Animating on mount fades it in whenever it
  * actually appears.
  *
- * `TrialDialog` is mounted lazily on click so its `useSubscriptionProducts`
- * query doesn't fire for every free-plan visitor who never opens it.
+ * `TrialDialog` is mounted on first open (not up front) so its
+ * `useSubscriptionProducts` query doesn't fire for every free-plan visitor who
+ * never opens it — and then stays mounted so Radix can play its close
+ * animation, which a `{open && ...}` unmount would skip.
  */
 export function FreePlanTrialPill() {
   const { user, billing, isLoading } = useAuth();
   const [trialOpen, setTrialOpen] = useState(false);
+  const [dialogMounted, setDialogMounted] = useState(false);
 
   const level = getLevel(billing);
   const hasTrialed = billing?.user.hasTrialed ?? false;
@@ -30,18 +33,21 @@ export function FreePlanTrialPill() {
 
   return (
     <>
-      <div className="duration-[350ms] mb-6 inline-flex items-center gap-3 rounded-full border border-white/10 bg-white/5 px-4 py-1.5 text-sm shadow-[0_1px_3px_rgba(0,0,0,0.04)] ease-out animate-in fade-in slide-in-from-bottom-1">
+      <div className="duration-[350ms] inline-flex items-center gap-3 rounded-full border border-white/10 bg-white/5 px-4 py-1.5 text-sm shadow-[0_1px_3px_rgba(0,0,0,0.04)] ease-out animate-in fade-in slide-in-from-bottom-1">
         <span className="text-adam-text-secondary">Free plan</span>
         <span className="h-4 w-px bg-white/10" aria-hidden="true" />
         <button
           type="button"
-          onClick={() => setTrialOpen(true)}
+          onClick={() => {
+            setDialogMounted(true);
+            setTrialOpen(true);
+          }}
           className="font-medium text-adam-blue transition-colors hover:text-adam-blue/80"
         >
           Start free trial
         </button>
       </div>
-      {trialOpen && (
+      {dialogMounted && (
         <TrialDialog open={trialOpen} onOpenChange={setTrialOpen} />
       )}
     </>
