@@ -135,7 +135,7 @@ function DesktopSidebar({ isSidebarOpen, setIsSidebarOpen }: SidebarProps) {
               <div className="flex w-full">
                 <img
                   className="mx-auto h-8 w-full"
-                  src={`${import.meta.env.BASE_URL}/adam-logo-full.svg`}
+                  src={`${import.meta.env.BASE_URL}/cadam-logo.svg`}
                   alt="Logo"
                 />
               </div>
