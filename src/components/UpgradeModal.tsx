@@ -58,6 +58,11 @@ function creditsBadge(level: PlanLevel, product: BillingProduct | undefined) {
 export function UpgradeModal({ open, onOpenChange }: UpgradeModalProps) {
   const { billing } = useAuth();
   const currentLevel = getLevel(billing);
+  // The 7-day free trial is a Pro-only offer, available once per user. Only
+  // free-tier users who haven't trialed yet are eligible — for everyone else
+  // the Pro button stays a normal "Get Pro".
+  const canTrial =
+    currentLevel === 'free' && !(billing?.user.hasTrialed ?? false);
   const { data: products = [] } = useSubscriptionProducts();
   const { mutate: subscribe, isPending: isSubscribing } =
     useSubscriptionService();
@@ -71,8 +76,15 @@ export function UpgradeModal({ open, onOpenChange }: UpgradeModalProps) {
     if (level === currentLevel) return;
     setActiveLevel(level);
     if (currentLevel === 'free' && priceId) {
+      // Pro is the only trial-eligible tier; match the button's
+      // "Start a free trial" label by actually requesting the 7-day trial.
+      const isTrial = level === 'pro' && canTrial;
       subscribe(
-        { priceId, source: 'upgrade_modal' },
+        {
+          priceId,
+          source: isTrial ? 'upgrade_modal_trial' : 'upgrade_modal',
+          ...(isTrial ? { trialPeriodDays: 7 } : {}),
+        },
         { onSettled: () => setActiveLevel(null) },
       );
     } else if (currentLevel !== 'free') {
@@ -171,6 +183,8 @@ export function UpgradeModal({ open, onOpenChange }: UpgradeModalProps) {
                       'Current plan'
                     ) : level === 'free' ? (
                       'Downgrade'
+                    ) : level === 'pro' && canTrial ? (
+                      'Start a free trial'
                     ) : (
                       `Get ${displayName}`
                     )}
