@@ -10,6 +10,7 @@ CADAM turns plain language into real, printable, fully parametric CAD.
 
 | Model | What it shows | Controls |
 | --- | --- | --- |
+| [V8 engine](13-v8-engine.md) | complete V8 — banks, heads, valve covers, manifold, headers, crank, pistons, oil pan | 22 dims · 8 colors |
 | [9-cylinder radial aircraft engine](10-radial-aircraft-engine.md) | nine finned cylinders in a radial star + prop hub | 15 dims · 6 colors |
 | [Turbofan jet engine](11-turbofan-jet-engine.md) | full engine — fan, bypass cowl, core stages, exhaust plug | 2 dims · 10 colors |
 | [Axial turbine blisk](12-axial-turbine-blisk.md) | ring of twisted aerofoil blades on a keyed hub | 14 dims · 1 color |

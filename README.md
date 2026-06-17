@@ -72,6 +72,12 @@ A showcase of what CADAM builds from a single plain-language description — fro
   <thead><tr><th>Model</th><th>Prompt</th><th>Controls</th><th>Output</th></tr></thead>
   <tbody>
     <tr>
+      <td><a href="benchmarks/13-v8-engine.md"><strong>V8 engine</strong></a></td>
+      <td>A complete V8 internal combustion engine: two banks of four cylinders in a 90° V, cylinder heads with ribbed valve covers, an intake manifold in the valley, exhaust headers down each bank, a crankshaft with counterweights, pistons and connecting rods, a front pulley, and an oil pan.</td>
+      <td>22 dims<br>8 colors</td>
+      <td><img src="benchmarks/13-v8-engine.gif" alt="V8 engine orbit" width="200"></td>
+    </tr>
+    <tr>
       <td><a href="benchmarks/10-radial-aircraft-engine.md"><strong>9-cylinder radial aircraft engine</strong></a></td>
       <td>Design a 9-cylinder radial aircraft engine: a central round crankcase with nine finned cylinders arranged evenly in a star pattern around it, each cylinder with stacked cooling fins and a domed cylinder head, and a central propeller shaft hub at the front.</td>
       <td>15 dims<br>6 colors</td>
