@@ -1,4 +1,10 @@
 <div align="center">
+  <a href="https://adam.new/cadam">
+    <img src="./public/cadam-launch.gif" alt="CADAM — text-to-CAD live demo" width="100%">
+  </a>
+</div>
+
+<div align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="./public/Github-Banner-Dark.png">
     <source media="(prefers-color-scheme: light)" srcset="./public/Github-Banner-Light.png">
@@ -49,14 +55,6 @@
 | **Parameter Extraction**   | Automatically identifies adjustable dimensions       |
 | **Smart Updates**          | Efficient parameter changes without AI re-generation |
 | **Custom Fonts**           | Built-in Geist font support for text in models       |
-
-## 🎬 Demo
-
-<div align="center">
-  <video src="https://github.com/user-attachments/assets/f6b1905e-1603-4ad0-b196-12c1d7bf87b2" width="100%" controls>
-    <a href="https://github.com/user-attachments/assets/f6b1905e-1603-4ad0-b196-12c1d7bf87b2">Watch the demo video</a>
-  </video>
-</div>
 
 ## 📺 Screenshots
 
