@@ -957,27 +957,27 @@ export function ChatSession({
             `src/server/aiChat.ts`). We hide them while a stream is in
             flight; the freshly-arrived pills replace the stale ones
             when streaming finishes. */}
-        {/* Out of tokens: surface the upgrade / "Start a trial" prompt
+        {/* Out of tokens: surface the upgrade / "Start a free trial" prompt
             inline above the (disabled) input. The transient toast from
             `billingAwareFetch` covers the instant the send fails; this
-            persistent message keeps the path to keep chatting visible. */}
-        {isDisabled ? (
-          <div className="mx-auto max-w-3xl">
-            <LimitReachedMessage />
-          </div>
-        ) : (
-          !isLoading && (
+            persistent message keeps the path to keep chatting visible. Gated
+            on `!isLoading` like the pills so it never overlaps a stream that's
+            still terminating after a 402. */}
+        {!isLoading &&
+          (isDisabled ? (
+            <div className="mx-auto max-w-3xl">
+              <LimitReachedMessage />
+            </div>
+          ) : (
             <div className="mx-auto max-w-3xl pt-1">
               <SuggestionPills
                 suggestions={conversation.settings?.suggestions ?? []}
                 onSelect={(suggestion) =>
                   void handleSend([{ type: 'text', text: suggestion }])
                 }
-                disabled={isDisabled}
               />
             </div>
-          )
-        )}
+          ))}
         <TextAreaChat
           type={conversation.type}
           onSubmit={(parts) => void handleSend(parts)}

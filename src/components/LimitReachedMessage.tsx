@@ -76,7 +76,7 @@ function LimitReachedSpan({ onTrialClick }: { onTrialClick?: () => void }) {
           className="cursor-pointer text-adam-blue hover:underline"
           onClick={onTrialClick}
         >
-          Start a trial
+          Start a free trial
         </span>{' '}
         to experience all Pro features for 7 days, completely free.
       </span>
