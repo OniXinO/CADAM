@@ -59,14 +59,14 @@ module assemble_engine() {
 module cutaway_cutter() {
     if(cutaway) {
         intersection() {
-             // Diagonal cut plane along cylinder axis
-             translate([0, 50, 0])
+             // Diagonal cut plane along right cylinder axis
              rotate([0, bank_angle, 0])
-             translate([0.1, 0, -50])
-             cube([80, 100, 150]);
+             // Massive bounding box starting at main journal 3 to cleanly slice front-right
+             translate([0.1, 56, -150])
+             cube([300, 200, 400]);
              
-             // Limit strictly to right half to preserve left side
-             translate([0, 50, -50]) cube([100, 100, 150]);
+             // Limit strictly to right side of the engine to preserve left bank
+             translate([0.1, 56, -150]) cube([300, 200, 400]);
         }
     }
 }
@@ -88,14 +88,33 @@ module engine_block() {
             }
             // Rear bell housing flange
             translate([-26, -4, -10]) cube([52, 4, 30]);
+            
+            // Main bearing supports (bulkheads) connecting block to crank
+            for(y = main_y) {
+                translate([-15, y, -15]) cube([30, 8, 15]);
+            }
         }
         
         // Hollow out valley
         translate([-10, -1, 20]) cube([20, 122, 40]);
         
-        // Hollow out crankcase
-        translate([0, -1, 0]) rotate([-90,0,0]) cylinder(r=18, h=122);
-        translate([-18, -1, -20]) cube([36, 122, 20]); 
+        // Hollow out crankcase bays between the bulkheads
+        for(i = [0:3]) {
+            y_start_hollow = main_y[i] + 8;
+            hollow_len = main_y[i+1] - y_start_hollow;
+            if (hollow_len > 0) {
+                translate([0, y_start_hollow, 0]) rotate([-90,0,0]) cylinder(r=18, h=hollow_len);
+                translate([-18, y_start_hollow, -20]) cube([36, hollow_len, 20]);
+            }
+        }
+        // Front and rear crank clearance
+        translate([0, -5, 0]) rotate([-90,0,0]) cylinder(r=18, h=5);
+        translate([-18, -5, -20]) cube([36, 5, 20]);
+        translate([0, 120, 0]) rotate([-90,0,0]) cylinder(r=18, h=5);
+        translate([-18, 120, -20]) cube([36, 5, 20]);
+        
+        // Cut the shaft hole for the crank through the solid bulkheads perfectly matching radius
+        translate([0, -10, 0]) rotate([-90,0,0]) cylinder(r=5, h=140);
         
         // Cylinder bores
         for(i=[0:3]) {
@@ -146,12 +165,17 @@ module head_shape(ang) {
 
 module spark_plugs() {
     color("White")
-    for(i=[0:3]) {
-        y_s = pin_y_start[i] + 10;
-        // Right
-        rotate([0, bank_angle, 0]) translate([14, y_s, deck_height + 9]) rotate([0, 90, 0]) cylinder(r=2, h=8);
-        // Left
-        rotate([0, -bank_angle, 0]) translate([-14, y_s, deck_height + 9]) rotate([0, -90, 0]) cylinder(r=2, h=8);
+    difference() {
+        union() {
+            for(i=[0:3]) {
+                y_s = pin_y_start[i] + 10;
+                // Right
+                rotate([0, bank_angle, 0]) translate([14, y_s, deck_height + 9]) rotate([0, 90, 0]) cylinder(r=2, h=8);
+                // Left
+                rotate([0, -bank_angle, 0]) translate([-14, y_s, deck_height + 9]) rotate([0, -90, 0]) cylinder(r=2, h=8);
+            }
+        }
+        cutaway_cutter();
     }
 }
 
@@ -278,33 +302,27 @@ module header_pipe(ang, dir, y) {
 
 module front_accessories() {
     color(block_color)
-    difference() {
-        union() {
-            // Timing cover
-            hull() {
-                translate([-25, 120, -10]) cube([50, 4, 20]);
-                translate([-15, 120, 40]) cube([30, 4, 10]);
-            }
-            // Water pump
-            translate([0, 124, 30]) rotate([-90,0,0]) cylinder(r=12, h=8);
-            // Water pump pulley
-            color(pulley_color) translate([0, 132, 30]) rotate([-90,0,0]) {
-                cylinder(r=10, h=8);
-                translate([0,0,8]) cylinder(r=8, h=2);
-            }
+    union() {
+        // Timing cover
+        hull() {
+            translate([-25, 120, -10]) cube([50, 4, 20]);
+            translate([-15, 120, 40]) cube([30, 4, 10]);
         }
-        cutaway_cutter();
+        // Water pump
+        translate([0, 124, 30]) rotate([-90,0,0]) cylinder(r=12, h=8);
+        // Water pump pulley
+        color(pulley_color) translate([0, 132, 30]) rotate([-90,0,0]) {
+            cylinder(r=10, h=8);
+            translate([0,0,8]) cylinder(r=8, h=2);
+        }
     }
 }
 
 module alternator() {
     color("LightGray")
-    difference() {
-        union() {
-            translate([20, 125, 40]) rotate([-90,0,0]) cylinder(r=8, h=10);
-            color(pulley_color) translate([20, 135, 40]) rotate([-90,0,0]) cylinder(r=6, h=5);
-        }
-        cutaway_cutter();
+    union() {
+        translate([20, 125, 40]) rotate([-90,0,0]) cylinder(r=8, h=10);
+        color(pulley_color) translate([20, 135, 40]) rotate([-90,0,0]) cylinder(r=6, h=5);
     }
 }
 
@@ -321,34 +339,22 @@ module belt() {
             translate([0, 133, 0]) rotate([-90,0,0]) cylinder(r=14, h=6);
             translate([20, 134, 40]) rotate([-90,0,0]) cylinder(r=4, h=6);
         }
-        cutaway_cutter();
     }
 }
 
 module fan() {
     color("Silver")
-    difference() {
-        union() {
-            translate([0, 142, 30]) rotate([-90,0,0]) cylinder(r=5, h=2);
-            for(a=[0:72:359]) {
-                rotate([0, a, 0])
-                translate([5, 142.5, 30])
-                rotate([20, 0, 0]) 
-                cube([25, 2, 8]);
-            }
-        }
-        cutaway_cutter();
+    union() {
+        translate([0, 142, 30]) rotate([-90,0,0]) cylinder(r=5, h=2);
+        // Fan blades removed per user request
     }
 }
 
 module front_pulley() {
     color(pulley_color)
-    difference() {
-        translate([0, 124, 0]) rotate([-90,0,0]) {
-            cylinder(r=12, h=8);
-            translate([0,0,8]) cylinder(r=16, h=8);
-        }
-        cutaway_cutter();
+    translate([0, 124, 0]) rotate([-90,0,0]) {
+        cylinder(r=12, h=8);
+        translate([0,0,8]) cylinder(r=16, h=8);
     }
 }
 
@@ -377,7 +383,14 @@ module engine_stand() {
 
 module internals(crank_angle_offset=0) {
     color(internals_color) {
-        // Main journals
+        
+        // Front extension connecting to front pulley
+        translate([0, 120, 0]) rotate([-90,0,0]) cylinder(r=5, h=20);
+        
+        // Rear extension connecting to flywheel
+        translate([0, -10, 0]) rotate([-90,0,0]) cylinder(r=5, h=10);
+        
+        // Main journals nested in bulkheads
         for(y = main_y) {
             translate([0, y, 0]) {
                 translate([0, 4, 0]) rotate([-90,0,0]) cylinder(r=5, h=8, center=true);
