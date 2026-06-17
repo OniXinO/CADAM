@@ -62,6 +62,104 @@
 
 <img src="./public/screenshot-2.jpeg" alt="CADAM Screenshot 2" />
 
+## 🧪 Benchmarks
+
+A showcase of what CADAM builds from a single plain-language description — from full multi-part machines down to clean parametric parts. Each model below started from the prompt shown and came out as fully parametric OpenSCAD, ready to export as `.STL`, `.SCAD`, or `.DXF`. The source and a short write-up for each live in [`benchmarks/`](benchmarks/); the orbiting previews are rendered with [`benchmarks/render.sh`](benchmarks/render.sh).
+
+### Complex machines & assemblies
+
+<table>
+  <thead><tr><th>Model</th><th>Prompt</th><th>Controls</th><th>Output</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><a href="benchmarks/13-v8-engine.md"><strong>V8 engine</strong></a></td>
+      <td>A complete V8 internal combustion engine: two banks of four cylinders in a 90° V, cylinder heads with ribbed valve covers, an intake manifold in the valley, exhaust headers down each bank, a crankshaft with counterweights, pistons and connecting rods, a front pulley, and an oil pan.</td>
+      <td>22 dims<br>8 colors</td>
+      <td><img src="benchmarks/13-v8-engine.gif" alt="V8 engine orbit" width="200"></td>
+    </tr>
+    <tr>
+      <td><a href="benchmarks/10-radial-aircraft-engine.md"><strong>9-cylinder radial aircraft engine</strong></a></td>
+      <td>Design a 9-cylinder radial aircraft engine: a central round crankcase with nine finned cylinders arranged evenly in a star pattern around it, each cylinder with stacked cooling fins and a domed cylinder head, and a central propeller shaft hub at the front.</td>
+      <td>15 dims<br>6 colors</td>
+      <td><img src="benchmarks/10-radial-aircraft-engine.gif" alt="9-cylinder radial aircraft engine orbit" width="200"></td>
+    </tr>
+    <tr>
+      <td><a href="benchmarks/11-turbofan-jet-engine.md"><strong>Turbofan jet engine</strong></a></td>
+      <td>A complete high-bypass turbofan: a front fan you can see into, a bypass cowl, an internal core with compressor/turbine stages, outlet guide vanes, and an exhaust plug.</td>
+      <td>2 dims<br>10 colors</td>
+      <td><img src="benchmarks/11-turbofan-jet-engine.gif" alt="Turbofan jet engine orbit" width="200"></td>
+    </tr>
+    <tr>
+      <td><a href="benchmarks/12-axial-turbine-blisk.md"><strong>Axial turbine blisk</strong></a></td>
+      <td>Model an axial-flow turbine blisk (bladed disk) like a jet engine compressor stage: a central hub with a shaft bore and a single ring of about 28 thin aerofoil blades around the rim, each blade clearly twisted along its height from root to tip like a real turbine blade.</td>
+      <td>14 dims<br>1 color</td>
+      <td><img src="benchmarks/12-axial-turbine-blisk.gif" alt="Axial turbine blisk orbit" width="200"></td>
+    </tr>
+  </tbody>
+</table>
+
+### Parametric fundamentals
+
+<table>
+  <thead><tr><th>Model</th><th>Prompt</th><th>Controls</th><th>Output</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><a href="benchmarks/01-twisted-hex-vase.md"><strong>Twisted hexagonal vase</strong></a></td>
+      <td>Design a twisted hexagonal vase: a hollow shell about 150 mm tall that tapers from a 70 mm base to a 50 mm mouth, with the hexagonal cross-section twisting 120 degrees from bottom to top, a 2 mm wall, and a closed bottom.</td>
+      <td>6 dims<br>1 color</td>
+      <td><img src="benchmarks/01-twisted-hex-vase.gif" alt="Twisted hexagonal vase orbit" width="200"></td>
+    </tr>
+    <tr>
+      <td><a href="benchmarks/02-knurled-control-knob.md"><strong>Knurled control knob</strong></a></td>
+      <td>Make a knurled control knob 40 mm in diameter and 22 mm tall with a diamond-knurled grip, a raised pointer mark on top, a 6 mm D-shaped shaft bore, and an M3 set-screw hole through the side.</td>
+      <td>15 dims<br>2 colors</td>
+      <td><img src="benchmarks/02-knurled-control-knob.gif" alt="Knurled control knob orbit" width="200"></td>
+    </tr>
+    <tr>
+      <td><a href="benchmarks/03-hex-bolt-and-nut.md"><strong>Hex bolt &amp; nut — real threads</strong></a></td>
+      <td>Create an M12 hex bolt 45 mm long with a real threaded shaft and a standard hex head, plus its matching hex nut, placed side by side.</td>
+      <td>3 dims<br>2 colors</td>
+      <td><img src="benchmarks/03-hex-bolt-and-nut.gif" alt="Hex bolt &amp; nut — real threads orbit" width="200"></td>
+    </tr>
+    <tr>
+      <td><a href="benchmarks/04-honeycomb-bracket.md"><strong>Honeycomb lightweight bracket</strong></a></td>
+      <td>Design a 90-degree angle mounting bracket with 80x80 mm flanges that are 5 mm thick, lightened with a hexagonal honeycomb cutout pattern on both faces, four M5 mounting holes, and a filleted inside corner.</td>
+      <td>13 dims<br>1 color</td>
+      <td><img src="benchmarks/04-honeycomb-bracket.gif" alt="Honeycomb lightweight bracket orbit" width="200"></td>
+    </tr>
+    <tr>
+      <td><a href="benchmarks/05-naca-airfoil-wing.md"><strong>NACA 2412 tapered wing</strong></a></td>
+      <td>Model a tapered aircraft wing section using a real NACA 2412 airfoil: 120 mm root chord tapering to 80 mm tip over a 200 mm span, with two spanwise spar tubes and a few lightening holes.</td>
+      <td>9 dims<br>1 color</td>
+      <td><img src="benchmarks/05-naca-airfoil-wing.gif" alt="NACA 2412 tapered wing orbit" width="200"></td>
+    </tr>
+    <tr>
+      <td><a href="benchmarks/06-threaded-jar-and-lid.md"><strong>Threaded jar &amp; screw-on lid</strong></a></td>
+      <td>Create a small storage jar with external screw threads at the neck and a matching screw-on lid with internal threads. Jar body 60 mm diameter, 70 mm tall, 2.5 mm walls; show the lid unscrewed and sitting beside the jar.</td>
+      <td>9 dims<br>2 colors</td>
+      <td><img src="benchmarks/06-threaded-jar-and-lid.gif" alt="Threaded jar &amp; screw-on lid orbit" width="200"></td>
+    </tr>
+    <tr>
+      <td><a href="benchmarks/07-bevel-gear-drive.md"><strong>Right-angle bevel gear drive</strong></a></td>
+      <td>Build a right-angle bevel gear drive: a 24-tooth bevel gear on a vertical shaft meshing at 90 degrees with a 16-tooth bevel pinion on a horizontal shaft, each on a short stub shaft.</td>
+      <td>9 dims<br>3 colors</td>
+      <td><img src="benchmarks/07-bevel-gear-drive.gif" alt="Right-angle bevel gear drive orbit" width="200"></td>
+    </tr>
+    <tr>
+      <td><a href="benchmarks/08-centrifugal-impeller.md"><strong>Centrifugal pump impeller</strong></a></td>
+      <td>Design a centrifugal pump impeller: a 90 mm diameter back-plate with a central 12 mm bore and a raised hub, and seven backward-curved blades that sweep from the hub out to the rim, each blade curving smoothly along its path.</td>
+      <td>10 dims<br>1 color</td>
+      <td><img src="benchmarks/08-centrifugal-impeller.gif" alt="Centrifugal pump impeller orbit" width="200"></td>
+    </tr>
+    <tr>
+      <td><a href="benchmarks/09-herringbone-planetary-gearbox.md"><strong>Herringbone planetary gear stage</strong></a></td>
+      <td>Model a herringbone planetary gear stage at module 1.5: a central sun gear with 18 teeth, three planet gears with 18 teeth each meshing around it, an internal ring gear with 54 teeth, and a carrier plate linking the three planet axles. Color the sun, planets, ring, and carrier differently.</td>
+      <td>10 dims<br>4 colors</td>
+      <td><img src="benchmarks/09-herringbone-planetary-gearbox.gif" alt="Herringbone planetary gear stage orbit" width="200"></td>
+    </tr>
+  </tbody>
+</table>
+
 ## 🚀 Quick Start
 
 ```bash
