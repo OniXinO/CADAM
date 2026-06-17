@@ -68,7 +68,6 @@ export function SignUpView() {
               alt="CADAM Logo"
               className="h-8 w-auto"
             />
-            <h1 className="text-xl font-semibold text-white">Create Account</h1>
           </div>
           <div className="w-full py-2">
             <Button

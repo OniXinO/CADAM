@@ -283,8 +283,8 @@ export function SignInView() {
           <div className="mb-4 flex flex-col items-center justify-center">
             <div>
               <img
-                src={`${import.meta.env.BASE_URL}/adam-logo-full.svg`}
-                alt="Adam Logo"
+                src={`${import.meta.env.BASE_URL}/cadam-logo.svg`}
+                alt="CADAM Logo"
                 className="w-32"
               />
             </div>
