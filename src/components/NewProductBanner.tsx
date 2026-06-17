@@ -1,6 +1,6 @@
 import { ArrowRight, X } from 'lucide-react';
 import posthog from 'posthog-js';
-import { useEffect, useState, useSyncExternalStore } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 
@@ -77,11 +77,24 @@ export function NewProductBanner() {
     readDismissed,
     () => true,
   );
+  // Tracks the exit-fallback timer so it can be cancelled if the card unmounts
+  // mid-exit (e.g. navigating away during the 450ms window) — otherwise the
+  // callback fires on a stale fiber.
+  const dismissTimeoutRef = useRef<number | null>(null);
 
   useEffect(() => {
     const frame = requestAnimationFrame(() => setEntered(true));
     return () => cancelAnimationFrame(frame);
   }, []);
+
+  useEffect(
+    () => () => {
+      if (dismissTimeoutRef.current !== null) {
+        window.clearTimeout(dismissTimeoutRef.current);
+      }
+    },
+    [],
+  );
 
   if (dismissed && !dismissing) {
     return null;
@@ -98,7 +111,10 @@ export function NewProductBanner() {
   const dismiss = () => {
     setDismissing(true);
     writeDismissed(true);
-    window.setTimeout(() => setDismissing(false), 450);
+    dismissTimeoutRef.current = window.setTimeout(() => {
+      dismissTimeoutRef.current = null;
+      setDismissing(false);
+    }, 450);
   };
 
   const handleCtaClick = () => {
@@ -113,7 +129,7 @@ export function NewProductBanner() {
   return (
     <div
       className={cn(
-        'group relative mx-auto max-w-xl rounded-xl border border-white/10 bg-adam-bg-dark shadow-[0_8px_30px_rgba(0,0,0,0.35)] transition will-change-transform hover:border-white/20 hover:shadow-[0_12px_40px_rgba(0,0,0,0.45)]',
+        'group relative mx-auto max-w-xl rounded-xl border border-white/10 bg-adam-bg-dark shadow-[0_8px_30px_rgba(0,0,0,0.35)] transition will-change-[transform,opacity] hover:border-white/20 hover:shadow-[0_12px_40px_rgba(0,0,0,0.45)]',
         // Decelerate in over 500ms; accelerate out a touch faster on dismiss.
         dismissing
           ? 'pointer-events-none duration-300 ease-in'
@@ -128,6 +144,10 @@ export function NewProductBanner() {
           event.target === event.currentTarget &&
           event.propertyName === 'opacity'
         ) {
+          if (dismissTimeoutRef.current !== null) {
+            window.clearTimeout(dismissTimeoutRef.current);
+            dismissTimeoutRef.current = null;
+          }
           setDismissing(false);
         }
       }}
