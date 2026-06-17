@@ -11,6 +11,7 @@ import { Model } from '@shared/types';
 import { MessageItem } from '../types/misc.ts';
 import { LimitReachedMessage } from '@/components/LimitReachedMessage';
 import { LowPromptsWarningMessage } from '@/components/LowPromptsWarningMessage';
+import { NewProductBanner } from '@/components/NewProductBanner';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import { cn } from '@/lib/utils';
 import { SelectedItemsContext } from '@/contexts/SelectedItemsContext';
@@ -267,7 +268,7 @@ export function PromptView() {
           </div>
         )}
 
-        <main className="flex h-full w-full flex-col items-center justify-center px-4 md:px-8">
+        <main className="relative flex h-full w-full flex-col items-center justify-center px-4 md:px-8">
           <div className="mx-auto flex max-w-3xl flex-col items-center justify-center">
             <h1
               className={cn(
@@ -371,6 +372,15 @@ export function PromptView() {
                   to start generating
                 </p>
               )}
+            </div>
+          </div>
+
+          {/* Float the banner in the gap between the (vertically centered)
+              composer and the bottom edge: a band over the lower third, with
+              the card centered inside it, instead of glued to bottom-0. */}
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 top-[55%] flex items-center justify-center px-4 md:px-8">
+            <div className="pointer-events-auto w-full max-w-xl">
+              <NewProductBanner />
             </div>
           </div>
         </main>
