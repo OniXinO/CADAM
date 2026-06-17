@@ -1,5 +1,6 @@
 import { MessageBubble } from '@/components/chat/MessageBubble';
 import { SuggestionPills } from '@/components/chat/SuggestionPills';
+import { LimitReachedMessage } from '@/components/LimitReachedMessage';
 import TextAreaChat from '@/components/TextAreaChat';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { useAuth } from '@/contexts/AuthContext';
@@ -956,16 +957,26 @@ export function ChatSession({
             `src/server/aiChat.ts`). We hide them while a stream is in
             flight; the freshly-arrived pills replace the stale ones
             when streaming finishes. */}
-        {!isLoading && (
-          <div className="mx-auto max-w-3xl pt-1">
-            <SuggestionPills
-              suggestions={conversation.settings?.suggestions ?? []}
-              onSelect={(suggestion) =>
-                void handleSend([{ type: 'text', text: suggestion }])
-              }
-              disabled={isDisabled}
-            />
+        {/* Out of tokens: surface the upgrade / "Start a trial" prompt
+            inline above the (disabled) input. The transient toast from
+            `billingAwareFetch` covers the instant the send fails; this
+            persistent message keeps the path to keep chatting visible. */}
+        {isDisabled ? (
+          <div className="mx-auto max-w-3xl">
+            <LimitReachedMessage />
           </div>
+        ) : (
+          !isLoading && (
+            <div className="mx-auto max-w-3xl pt-1">
+              <SuggestionPills
+                suggestions={conversation.settings?.suggestions ?? []}
+                onSelect={(suggestion) =>
+                  void handleSend([{ type: 'text', text: suggestion }])
+                }
+                disabled={isDisabled}
+              />
+            </div>
+          )
         )}
         <TextAreaChat
           type={conversation.type}
