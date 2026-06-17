@@ -28,8 +28,13 @@ export function FreePlanTrialPill() {
   const hasTrialed = billing?.user.hasTrialed ?? false;
 
   // Only signed-in free-plan users who can still start a trial, and only once
-  // billing has resolved so the pill never flashes on a paid user.
-  if (!user || isLoading || level !== 'free' || hasTrialed) return null;
+  // billing has resolved. The `!billing` guard matters because the billing
+  // query throws on error — leaving `isLoading` false but `billing` null — and
+  // `getLevel(null)` reads as 'free'. Without it, a paid user whose billing
+  // fetch transiently fails would be shown the trial pill.
+  if (!user || isLoading || !billing || level !== 'free' || hasTrialed) {
+    return null;
+  }
 
   return (
     <>
