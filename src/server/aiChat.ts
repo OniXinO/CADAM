@@ -1403,13 +1403,12 @@ export async function handleAiChatRequest(req: Request) {
             //   skip   → continuation still ending in a pending CLIENT tool.
             //            The browser persists the `output-available` version
             //            itself (`onToolOutput`); a server write here — delayed
-            //            behind `result.totalUsage` and the network write —
-            //            would land last and clobber it back to
-            //            `input-available`, leaving a dangling tool call that
-            //            500s the next send. Mid-loop builds dodge the race
-            //            because the client's compile takes seconds; the
-            //            terminal `answer_user` is instant, so the server
-            //            reliably wins. Defer to client.
+            //            behind `result.totalUsage` — would land last and
+            //            clobber it back to `input-available`, leaving a
+            //            dangling tool call that 500s the next send. Mid-loop
+            //            builds dodge the race because the client's compile
+            //            takes seconds; the terminal `answer_user` is instant,
+            //            so the server reliably wins. Defer to client.
             //
             // Insert places a NEW assistant under whatever the leaf was: for a
             // fresh user turn that's the user message; for a retry (client
