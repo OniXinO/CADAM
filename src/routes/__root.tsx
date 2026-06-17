@@ -34,7 +34,16 @@ function RootDocument({ children }: { children: React.ReactNode }) {
           name="viewport"
           content="width=device-width, initial-scale=1.0, viewport-fit=cover"
         />
-        <link rel="icon" type="image/x-icon" href={assetUrl('adam-icon.ico')} />
+        <link
+          rel="icon"
+          type="image/svg+xml"
+          href={assetUrl('cadam-icon.svg')}
+        />
+        <link
+          rel="icon"
+          type="image/x-icon"
+          href={assetUrl('cadam-icon.ico')}
+        />
         <HeadContent />
       </head>
       <body>
