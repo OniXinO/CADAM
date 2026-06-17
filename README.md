@@ -60,16 +60,6 @@
 
 <img src="./public/screenshot-2.jpeg" alt="CADAM Screenshot 2" />
 
-<details>
-  <summary>More screenshots</summary>
-
-  <br/>
-  <img src="./public/screenshot-1.jpeg" alt="CADAM Screenshot 1" />
-  <br/>
-  <img src="./public/screenshot-3.jpeg" alt="CADAM Screenshot 3" />
-
-</details>
-
 ## 🚀 Quick Start
 
 ```bash
