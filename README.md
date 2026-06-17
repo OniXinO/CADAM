@@ -53,7 +53,9 @@
 ## 🎬 Demo
 
 <div align="center">
-  <video src="https://github.com/user-attachments/assets/f6b1905e-1603-4ad0-b196-12c1d7bf87b2" width="100%" controls></video>
+  <video src="https://github.com/user-attachments/assets/f6b1905e-1603-4ad0-b196-12c1d7bf87b2" width="100%" controls>
+    <a href="https://github.com/user-attachments/assets/f6b1905e-1603-4ad0-b196-12c1d7bf87b2">Watch the demo video</a>
+  </video>
 </div>
 
 ## 📺 Screenshots
