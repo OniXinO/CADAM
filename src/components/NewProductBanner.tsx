@@ -167,7 +167,7 @@ export function NewProductBanner() {
             with Onshape and Fusion a tad smaller and tucked behind it on either
             side. The overlap reads as "Adam plugs into both your CAD tools."
             On hover the two tools ease outward to reveal themselves. */}
-        <div className="flex shrink-0 items-center -space-x-3">
+        <div className="pointer-events-none flex shrink-0 items-center -space-x-3">
           <div className="grid size-10 translate-y-1 -rotate-6 place-items-center rounded-lg border border-white/10 bg-adam-neutral-950 transition-transform duration-300 ease-out group-hover:-translate-x-1.5 group-hover:-rotate-[9deg]">
             <img
               alt="Onshape"
@@ -206,7 +206,14 @@ export function NewProductBanner() {
           // rule, so on hover only the background darkens (to neutral-200), the
           // text stays black. Explicit white focus ring because the app sets no
           // `.dark` class — the default `ring-ring` would be near-black/invisible.
-          className="shrink-0 gap-1.5 bg-white font-semibold text-black transition-colors hover:bg-neutral-200 focus-visible:ring-2 focus-visible:ring-white/80 focus-visible:ring-offset-2 focus-visible:ring-offset-adam-bg-dark sm:mr-3"
+          //
+          // after:absolute after:inset-0 stretches this link's hit area over the
+          // whole card (its nearest positioned ancestor), so a click anywhere on
+          // the banner opens adam.new and fires the same event — maximizing the
+          // clickable surface. The dismiss button (z-10) sits above this overlay,
+          // and the logo cluster opts out via pointer-events-none, so both still
+          // get their own clicks.
+          className="shrink-0 gap-1.5 bg-white font-semibold text-black transition-colors after:absolute after:inset-0 after:content-[''] hover:bg-neutral-200 focus-visible:ring-2 focus-visible:ring-white/80 focus-visible:ring-offset-2 focus-visible:ring-offset-adam-bg-dark sm:mr-3"
           size="sm"
           variant="light"
         >
