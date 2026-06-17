@@ -274,7 +274,7 @@ export function PromptView() {
                 it mounting after billing resolves — or never showing for paid
                 users — never reflows the centered greeting. */}
             <div className="relative flex flex-col items-center">
-              <div className="absolute bottom-full left-1/2 mb-6 w-max -translate-x-1/2">
+              <div className="absolute bottom-full left-1/2 mb-16 w-max -translate-x-1/2">
                 <FreePlanTrialPill />
               </div>
               <h1
