@@ -11,6 +11,7 @@ import { Model } from '@shared/types';
 import { MessageItem } from '../types/misc.ts';
 import { LimitReachedMessage } from '@/components/LimitReachedMessage';
 import { LowPromptsWarningMessage } from '@/components/LowPromptsWarningMessage';
+import { FreePlanTrialPill } from '@/components/FreePlanTrialPill';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import { cn } from '@/lib/utils';
 import { SelectedItemsContext } from '@/contexts/SelectedItemsContext';
@@ -269,16 +270,24 @@ export function PromptView() {
 
         <main className="flex h-full w-full flex-col items-center justify-center px-4 md:px-8">
           <div className="mx-auto flex max-w-3xl flex-col items-center justify-center">
-            <h1
-              className={cn(
-                'mb-8 text-center text-2xl font-medium text-adam-text-primary md:text-3xl lg:text-4xl',
-                'motion-safe:transition-opacity motion-safe:duration-1000 motion-safe:ease-out',
-                isLoaded ? 'opacity-100' : 'opacity-0',
-              )}
-            >
-              {getTimeBasedGreeting}
-              {firstName ? `, ${firstName}` : ''}!
-            </h1>
+            {/* The pill floats above the greeting (absolute, out of flow) so
+                it mounting after billing resolves — or never showing for paid
+                users — never reflows the centered greeting. */}
+            <div className="relative flex flex-col items-center">
+              <div className="absolute bottom-full left-1/2 mb-6 w-max -translate-x-1/2">
+                <FreePlanTrialPill />
+              </div>
+              <h1
+                className={cn(
+                  'mb-8 text-center text-2xl font-medium text-adam-text-primary md:text-3xl lg:text-4xl',
+                  'motion-safe:transition-opacity motion-safe:duration-1000 motion-safe:ease-out',
+                  isLoaded ? 'opacity-100' : 'opacity-0',
+                )}
+              >
+                {getTimeBasedGreeting}
+                {firstName ? `, ${firstName}` : ''}!
+              </h1>
+            </div>
           </div>
           <div className="flex w-full flex-col items-center">
             <div className="w-full max-w-3xl space-y-4 pb-12">
