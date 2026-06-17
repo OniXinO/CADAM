@@ -27,6 +27,10 @@
 
 ---
 
+## 🌐 Try it live
+
+**👉 [adam.new/cadam](https://adam.new/cadam)**. Generate a CAD model in seconds, right in your browser. No install required.
+
 ## ✨ Features
 
 - 🤖 **AI-Powered Generation** - Transform natural language and images into 3D models
@@ -46,17 +50,11 @@
 | **Smart Updates**          | Efficient parameter changes without AI re-generation |
 | **Custom Fonts**           | Built-in Geist font support for text in models       |
 
-## 📸 Demo
+## 🎬 Demo
 
-<!-- Add demo GIFs or screenshots here -->
-<!-- Example format:
-![CADAM Demo](./demo/demo.gif)
-
-### Example: Creating a parametric gear
-![Gear Example](./demo/gear-example.png)
--->
-
-> 🎬 **Try it live:** https://adam.new/cadam
+<div align="center">
+  <video src="https://github.com/user-attachments/assets/f6b1905e-1603-4ad0-b196-12c1d7bf87b2" width="100%" controls></video>
+</div>
 
 ## 📺 Screenshots
 
