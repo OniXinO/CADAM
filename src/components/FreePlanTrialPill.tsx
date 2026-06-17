@@ -1,20 +1,23 @@
 import { useState } from 'react';
 import { getLevel, useAuth } from '@/contexts/AuthContext';
 import { TrialDialog } from '@/components/auth/TrialDialog';
-import { cn } from '@/lib/utils';
 
 /**
  * "Free plan | Start free trial" pill shown above the greeting for signed-in
  * free-plan users who haven't used their trial yet — the CADAM port of the
- * workspace pill. It stays hidden while billing is loading (`isLoading`) so it
- * never flashes on a paying user, and once the trial has been used the pill
- * disappears entirely. The CTA opens the existing 7-day trial flow.
+ * workspace pill. It renders nothing until billing has resolved (so it never
+ * flashes on a paying user) and disappears once the trial has been used.
  *
- * `reveal` is the shared fade gate: the page holds the pill back until the
- * greeting chrome is ready so the pill fades in with the rest of the view
- * instead of popping in the moment billing alone resolves.
+ * The fade is mount-triggered (`animate-in fade-in`) rather than driven by a
+ * parent `reveal` gate: because the pill only mounts after the network-backed
+ * billing query resolves, a parent opacity flag would already be `true` by
+ * then and the pill would pop in. Animating on mount fades it in whenever it
+ * actually appears.
+ *
+ * `TrialDialog` is mounted lazily on click so its `useSubscriptionProducts`
+ * query doesn't fire for every free-plan visitor who never opens it.
  */
-export function FreePlanTrialPill({ reveal }: { reveal: boolean }) {
+export function FreePlanTrialPill() {
   const { user, billing, isLoading } = useAuth();
   const [trialOpen, setTrialOpen] = useState(false);
 
@@ -27,15 +30,9 @@ export function FreePlanTrialPill({ reveal }: { reveal: boolean }) {
 
   return (
     <>
-      <div
-        className={cn(
-          'mb-6 inline-flex items-center gap-3 rounded-full border border-white/10 bg-white/5 px-4 py-1.5 text-sm shadow-[0_1px_3px_rgba(0,0,0,0.04)]',
-          'motion-safe:transition-opacity motion-safe:duration-1000 motion-safe:ease-out',
-          reveal ? 'opacity-100' : 'opacity-0',
-        )}
-      >
+      <div className="duration-[350ms] mb-6 inline-flex items-center gap-3 rounded-full border border-white/10 bg-white/5 px-4 py-1.5 text-sm shadow-[0_1px_3px_rgba(0,0,0,0.04)] ease-out animate-in fade-in slide-in-from-bottom-1">
         <span className="text-adam-text-secondary">Free plan</span>
-        <span className="h-4 w-px bg-white/10" />
+        <span className="h-4 w-px bg-white/10" aria-hidden="true" />
         <button
           type="button"
           onClick={() => setTrialOpen(true)}
@@ -44,7 +41,9 @@ export function FreePlanTrialPill({ reveal }: { reveal: boolean }) {
           Start free trial
         </button>
       </div>
-      <TrialDialog open={trialOpen} onOpenChange={setTrialOpen} />
+      {trialOpen && (
+        <TrialDialog open={trialOpen} onOpenChange={setTrialOpen} />
+      )}
     </>
   );
 }

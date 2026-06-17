@@ -270,7 +270,7 @@ export function PromptView() {
 
         <main className="flex h-full w-full flex-col items-center justify-center px-4 md:px-8">
           <div className="mx-auto flex max-w-3xl flex-col items-center justify-center">
-            <FreePlanTrialPill reveal={isLoaded} />
+            <FreePlanTrialPill />
             <h1
               className={cn(
                 'mb-8 text-center text-2xl font-medium text-adam-text-primary md:text-3xl lg:text-4xl',
