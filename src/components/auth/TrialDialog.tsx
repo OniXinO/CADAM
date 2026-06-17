@@ -36,6 +36,10 @@ export function TrialDialog({
       p.active,
   );
 
+  // Derive the credit allowance from the live Pro product rather than
+  // hardcoding it, so the dialog can't drift from the actual plan.
+  const proCredits = proMonthly?.tokenAmount;
+
   const handleSubscribe = () => {
     if (!user) {
       navigate({ to: '/signin' });
@@ -80,7 +84,9 @@ export function TrialDialog({
           <li className="flex items-center gap-2">
             <Check className="h-4 w-4 text-adam-neutral-100" />
             <span className="text-adam-neutral-100">
-              5,000 tokens per month
+              {proCredits !== undefined
+                ? `${proCredits.toLocaleString()} credits per month`
+                : 'Monthly Pro credits'}
             </span>
           </li>
           <li className="flex items-center gap-2">
