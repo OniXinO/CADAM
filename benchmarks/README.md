@@ -6,17 +6,27 @@ OpenSCAD — adjustable dimensions and colours, ready to export as `.STL`, `.SCA
 The `.scad` source for each model is included here, so they double as a record of how well
 CADAM turns plain language into real, printable, fully parametric CAD.
 
-| # | Model | What it shows | Controls |
-| --- | --- | --- | --- |
-| [1](01-twisted-hex-vase.md) | Twisted hexagonal vase | generative twist-loft, hollow shell with solid floor | 6 dims · 1 color |
-| [2](02-knurled-control-knob.md) | Knurled control knob | diamond knurling, D-bore + set screw, pointer | 15 dims · 2 colors |
-| [3](03-hex-bolt-and-nut.md) | Hex bolt & nut | **real ISO threads** (BOSL2 `screw`/`nut`) | 3 dims · 2 colors |
-| [4](04-honeycomb-bracket.md) | Honeycomb bracket | generative hex lattice, filleted L-bracket | 13 dims · 1 color |
-| [5](05-naca-airfoil-wing.md) | NACA 2412 wing | true airfoil from the NACA equations, tapered loft | 9 dims · 1 color |
-| [6](06-threaded-jar-and-lid.md) | Threaded jar & lid | two **mating** threaded parts | 9 dims · 2 colors |
-| [7](07-bevel-gear-drive.md) | Bevel gear drive | meshing bevel gear pair at 90° | 9 dims · 3 colors |
-| [8](08-centrifugal-impeller.md) | Centrifugal impeller | 7 swept backward-curved blades | 10 dims · 1 color |
-| [9](09-herringbone-planetary-gearbox.md) | Planetary gear stage | full epicyclic assembly, herringbone teeth | 10 dims · 4 colors |
+### Complex machines & assemblies
+
+| Model | What it shows | Controls |
+| --- | --- | --- |
+| [9-cylinder radial aircraft engine](10-radial-aircraft-engine.md) | nine finned cylinders in a radial star + prop hub | 15 dims · 6 colors |
+| [Turbofan jet engine](11-turbofan-jet-engine.md) | full engine — fan, bypass cowl, core stages, exhaust plug | 2 dims · 10 colors |
+| [Axial turbine blisk](12-axial-turbine-blisk.md) | ring of twisted aerofoil blades on a keyed hub | 14 dims · 1 color |
+
+### Parametric fundamentals
+
+| Model | What it shows | Controls |
+| --- | --- | --- |
+| [Twisted hexagonal vase](01-twisted-hex-vase.md) | generative twist-loft, hollow shell with solid floor | 6 dims · 1 color |
+| [Knurled control knob](02-knurled-control-knob.md) | diamond knurling, D-bore + set screw, pointer | 15 dims · 2 colors |
+| [Hex bolt & nut](03-hex-bolt-and-nut.md) | **real ISO threads** (BOSL2 `screw`/`nut`) | 3 dims · 2 colors |
+| [Honeycomb bracket](04-honeycomb-bracket.md) | generative hex lattice, filleted L-bracket | 13 dims · 1 color |
+| [NACA 2412 wing](05-naca-airfoil-wing.md) | true airfoil from the NACA equations, tapered loft | 9 dims · 1 color |
+| [Threaded jar & lid](06-threaded-jar-and-lid.md) | two **mating** threaded parts | 9 dims · 2 colors |
+| [Bevel gear drive](07-bevel-gear-drive.md) | meshing bevel gear pair at 90° | 9 dims · 3 colors |
+| [Centrifugal impeller](08-centrifugal-impeller.md) | 7 swept backward-curved blades | 10 dims · 1 color |
+| [Planetary gear stage](09-herringbone-planetary-gearbox.md) | full epicyclic assembly, herringbone teeth | 10 dims · 4 colors |
 
 ## Regenerating the GIFs
 
