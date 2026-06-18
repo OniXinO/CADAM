@@ -252,11 +252,7 @@ export function PromptView() {
         )}
       >
         {!user && (
-          <div className="fixed right-4 top-4 z-10 flex flex-row items-center gap-2">
-            {/* Hidden on the smallest screens so it never crowds the Sign
-                Up / Sign In CTAs on a phone; signed-in users get it next to
-                the credits counter instead (see Layout). */}
-            <ProductHuntButton className="hidden sm:inline-flex" />
+          <div className="fixed right-4 top-4 z-10 flex flex-row gap-2">
             <Button
               variant="light"
               onClick={() => navigate({ to: '/signup' })}
@@ -339,6 +335,10 @@ export function PromptView() {
                   </div>
                 )}
               </div>
+              {/* Signed-out visitors get the launch pill below the composer;
+                  signed-in users get it in the top-right header next to the
+                  credits counter instead (see Layout). */}
+              {!user && <ProductHuntButton center />}
               {!isLoading && user && !limitReached && !lowPrompts && (
                 <div className="flex flex-wrap justify-center gap-2">
                   {EXTENSION_PILLS.map(({ href, event, label }) => (

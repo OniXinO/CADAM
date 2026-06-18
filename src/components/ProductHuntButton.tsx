@@ -35,21 +35,31 @@ function ProductHuntLogo({ className }: { className?: string }) {
 /**
  * Time-boxed "upvote us on Product Hunt" badge. Branded with Product Hunt's
  * mark + orange so it reads as special against the neutral UI, but kept to a
- * single pill so it stays out of the way — it sits in the top-right header next
- * to the credits counter. Returns null once {@link LAUNCH_ENDS_AT} passes, so
- * the launch promo cleans up after itself (and leaves no empty node behind).
+ * single pill so it stays out of the way. Returns null once
+ * {@link LAUNCH_ENDS_AT} passes, so the launch promo cleans up after itself
+ * (and leaves no empty node behind).
  *
- * The label collapses to just "Product Hunt" below `md` so the pill stays
- * compact in the cramped mobile top bar; the verb returns on wider screens.
+ * Two placements on the home page:
+ * - `center` — a roomy standalone pill centered below the prompt composer,
+ *   shown to signed-out visitors. Always shows the full "Upvote us on" verb.
+ * - default — an inline pill for the cramped top-right header, shown to
+ *   signed-in users beside the credits counter. The label collapses to just
+ *   "Product Hunt" below `md` so it stays compact in the mobile top bar.
  */
-export function ProductHuntButton({ className }: { className?: string }) {
+export function ProductHuntButton({
+  className,
+  center = false,
+}: {
+  className?: string;
+  center?: boolean;
+}) {
   // Only needs to be correct at mount; the launch window is measured in days,
   // so there's no need to tick a timer to hide it mid-session.
   if (new Date() > LAUNCH_ENDS_AT) {
     return null;
   }
 
-  return (
+  const link = (
     <a
       href={PRODUCT_HUNT_URL}
       target="_blank"
@@ -57,7 +67,7 @@ export function ProductHuntButton({ className }: { className?: string }) {
       onClick={() => {
         try {
           posthog.capture('product_hunt_upvote_click', {
-            location: 'home_header',
+            location: center ? 'home_prompt' : 'home_header',
           });
         } catch {
           // Analytics failures (e.g. blocked by an ad-blocker) must never
@@ -71,10 +81,17 @@ export function ProductHuntButton({ className }: { className?: string }) {
     >
       <ProductHuntLogo className="size-4 shrink-0" />
       <span>
-        <span className="hidden md:inline">Upvote us on </span>
+        <span className={center ? undefined : 'hidden md:inline'}>
+          Upvote us on{' '}
+        </span>
         <span className="font-semibold text-[#FF6154]">Product Hunt</span>
       </span>
       <ArrowUpRight className="h-3.5 w-3.5 text-[#FF6154] transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5" />
     </a>
   );
+
+  // Wrapping inside the component (not the caller) keeps the null-on-expiry
+  // behaviour gap-free: when retired, the whole node — wrapper included —
+  // disappears, leaving no empty centered row in the composer's space-y stack.
+  return center ? <div className="flex justify-center">{link}</div> : link;
 }
