@@ -4,6 +4,7 @@ import { PanelLeft } from 'lucide-react';
 
 import { Sidebar } from './Sidebar';
 import { CreditsButton } from './CreditsButton';
+import { ProductHuntButton } from './ProductHuntButton';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { useIsMobile } from '@/hooks/useIsMobile';
@@ -70,12 +71,15 @@ export function Layout() {
               The `!user` branch above returns early, so no `user` guard here. */}
           {location.pathname === '/' && (
             <div
-              className={`absolute z-20 transition-all duration-300 ease-in-out ${
+              className={`absolute z-20 flex items-center gap-2 transition-all duration-300 ease-in-out ${
                 isSidebarOpen && !isMobile
                   ? 'right-[2.25rem] top-[2.25rem]'
                   : 'right-3.5 top-3.5'
               }`}
             >
+              {/* Launch promo — sits just left of the credits counter, self-hides
+                  after the Product Hunt window closes. */}
+              <ProductHuntButton />
               <CreditsButton />
             </div>
           )}

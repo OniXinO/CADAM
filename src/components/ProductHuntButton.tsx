@@ -33,10 +33,14 @@ function ProductHuntLogo({ className }: { className?: string }) {
 }
 
 /**
- * Time-boxed "upvote us on Product Hunt" badge for the home page. Branded with
- * Product Hunt's mark + orange so it reads as special against the neutral UI,
- * but kept to a single pill so it stays out of the way. Returns null once
- * {@link LAUNCH_ENDS_AT} passes, so the launch promo cleans up after itself.
+ * Time-boxed "upvote us on Product Hunt" badge. Branded with Product Hunt's
+ * mark + orange so it reads as special against the neutral UI, but kept to a
+ * single pill so it stays out of the way — it sits in the top-right header next
+ * to the credits counter. Returns null once {@link LAUNCH_ENDS_AT} passes, so
+ * the launch promo cleans up after itself (and leaves no empty node behind).
+ *
+ * The label collapses to just "Product Hunt" below `md` so the pill stays
+ * compact in the cramped mobile top bar; the verb returns on wider screens.
  */
 export function ProductHuntButton({ className }: { className?: string }) {
   // Only needs to be correct at mount; the launch window is measured in days,
@@ -46,33 +50,31 @@ export function ProductHuntButton({ className }: { className?: string }) {
   }
 
   return (
-    // Self-centering wrapper so callers can drop <ProductHuntButton /> straight
-    // into a stacked layout: after the launch window the component returns null
-    // and leaves no empty row (and no stray vertical gap).
-    <div className={cn('flex justify-center', className)}>
-      <a
-        href={PRODUCT_HUNT_URL}
-        target="_blank"
-        rel="noopener noreferrer"
-        onClick={() => {
-          try {
-            posthog.capture('product_hunt_upvote_click', {
-              location: 'prompt_view',
-            });
-          } catch {
-            // Analytics failures (e.g. blocked by an ad-blocker) must never
-            // block the link's navigation.
-          }
-        }}
-        className="group inline-flex items-center gap-2 rounded-full border border-[#FF6154]/40 bg-[#FF6154]/10 px-4 py-1.5 text-sm text-adam-text-primary transition-colors hover:border-[#FF6154]/70 hover:bg-[#FF6154]/15"
-      >
-        <ProductHuntLogo className="size-4 shrink-0" />
-        <span>
-          Upvote us on{' '}
-          <span className="font-semibold text-[#FF6154]">Product Hunt</span>
-        </span>
-        <ArrowUpRight className="h-3.5 w-3.5 text-[#FF6154] transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5" />
-      </a>
-    </div>
+    <a
+      href={PRODUCT_HUNT_URL}
+      target="_blank"
+      rel="noopener noreferrer"
+      onClick={() => {
+        try {
+          posthog.capture('product_hunt_upvote_click', {
+            location: 'home_header',
+          });
+        } catch {
+          // Analytics failures (e.g. blocked by an ad-blocker) must never
+          // block the link's navigation.
+        }
+      }}
+      className={cn(
+        'group inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border border-[#FF6154]/40 bg-[#FF6154]/10 px-3 py-1.5 text-sm font-medium text-adam-text-primary shadow-sm transition-colors hover:border-[#FF6154]/70 hover:bg-[#FF6154]/15',
+        className,
+      )}
+    >
+      <ProductHuntLogo className="size-4 shrink-0" />
+      <span>
+        <span className="hidden md:inline">Upvote us on </span>
+        <span className="font-semibold text-[#FF6154]">Product Hunt</span>
+      </span>
+      <ArrowUpRight className="h-3.5 w-3.5 text-[#FF6154] transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5" />
+    </a>
   );
 }
