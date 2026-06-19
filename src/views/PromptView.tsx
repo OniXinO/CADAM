@@ -12,7 +12,6 @@ import { MessageItem } from '../types/misc.ts';
 import { LimitReachedMessage } from '@/components/LimitReachedMessage';
 import { LowPromptsWarningMessage } from '@/components/LowPromptsWarningMessage';
 import { NewProductBanner } from '@/components/NewProductBanner';
-import { ProductHuntButton } from '@/components/ProductHuntButton';
 import { FreePlanTrialPill } from '@/components/FreePlanTrialPill';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import { cn } from '@/lib/utils';
@@ -335,10 +334,6 @@ export function PromptView() {
                   </div>
                 )}
               </div>
-              {/* Signed-out visitors get the launch pill below the composer;
-                  signed-in users get it in the top-right header next to the
-                  credits counter instead (see Layout). */}
-              {!user && <ProductHuntButton center />}
               {!isLoading && user && !limitReached && !lowPrompts && (
                 <div className="flex flex-wrap justify-center gap-2">
                   {EXTENSION_PILLS.map(({ href, event, label }) => (
