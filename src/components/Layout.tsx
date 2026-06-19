@@ -4,7 +4,6 @@ import { PanelLeft } from 'lucide-react';
 
 import { Sidebar } from './Sidebar';
 import { CreditsButton } from './CreditsButton';
-import { ProductHuntButton } from './ProductHuntButton';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { useIsMobile } from '@/hooks/useIsMobile';
@@ -77,9 +76,6 @@ export function Layout() {
                   : 'right-3.5 top-3.5'
               }`}
             >
-              {/* Launch promo — sits just left of the credits counter, self-hides
-                  after the Product Hunt window closes. */}
-              <ProductHuntButton />
               <CreditsButton />
             </div>
           )}
