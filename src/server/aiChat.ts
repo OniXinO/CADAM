@@ -73,6 +73,9 @@ const MODEL_PRICES: Record<
 
   // MoonshotAI
   'moonshotai/kimi-k2.6': { input: 0.6, output: 2.5 },
+
+  // Z.AI
+  'z-ai/glm-5.2': { input: 1.2, output: 4.1 },
 };
 
 const FALLBACK_MODEL_PRICE = { input: 15, output: 75 };

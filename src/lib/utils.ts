@@ -264,14 +264,13 @@ export const PARAMETRIC_MODELS: ModelConfig[] = [
     supportsVision: true,
   },
   {
-    id: 'google/gemini-3.5-flash',
-    name: 'Gemini 3.5 Flash',
-    description:
-      'High-efficiency Google multimodal model with fast coding and reasoning',
-    provider: 'Google',
+    id: 'z-ai/glm-5.2',
+    name: 'GLM 5.2',
+    description: 'Z.AI model with strong agentic coding and reasoning',
+    provider: 'Z.AI',
     supportsTools: true,
     supportsThinking: true,
-    supportsVision: true,
+    supportsVision: false,
   },
 ];
 
