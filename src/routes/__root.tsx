@@ -1,6 +1,6 @@
 import { createRootRoute, HeadContent, Scripts } from '@tanstack/react-router';
 import App from '@/App';
-import '@/index.css';
+import appCss from '@/index.css?url';
 
 const assetUrl = (path: string) =>
   `${import.meta.env.BASE_URL.replace(/\/?$/, '/')}${path.replace(/^\//, '')}`;
@@ -8,6 +8,7 @@ const assetUrl = (path: string) =>
 export const Route = createRootRoute({
   head: () => ({
     meta: [{ title: 'CADAM' }],
+    links: [{ rel: 'stylesheet', href: appCss }],
   }),
   component: RootComponent,
   errorComponent: ({ error }) => (
