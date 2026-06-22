@@ -7,6 +7,8 @@ export default {
     './app/**/*.{ts,tsx}',
     './src/**/*.{ts,tsx}',
     './node_modules/streamdown/dist/**/*.{js,mjs}',
+    './.storybook/**/*.{js,ts,jsx,tsx}',
+    './src/**/*.stories.{js,ts,jsx,tsx,mdx}',
   ],
   safelist: ['w-6', 'w-7', 'w-8', 'w-9', 'w-10', 'w-11', 'w-12'],
   theme: {

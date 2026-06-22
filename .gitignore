@@ -33,3 +33,12 @@ dist-ssr
 # other secret files
 .env.local
 .env.langfuse
+
+# Agent / tooling working dirs (not part of the app)
+.agents/
+.claude/
+.onlook/worktrees/
+.onlook/run-log.jsonl
+
+# Storybook / Onlook render cache (build artifacts)
+.storybook-cache/
