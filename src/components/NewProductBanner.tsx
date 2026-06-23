@@ -7,7 +7,7 @@ import { cn } from '@/lib/utils';
 // Copy lives in one place so the owner can swap headline/subtext/CTA without
 // touching the markup. See the PR summary for runner-up options.
 const COPY = {
-  headline: 'The new Adam is here',
+  headline: 'The new Adam for professional workflows is here',
   subtext:
     'Adam now works inside your real CAD in Onshape and Fusion, editing models, BOMs, and drawings.',
   cta: 'Try now',
