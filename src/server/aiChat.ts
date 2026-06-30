@@ -444,11 +444,12 @@ function buildChatModel(
 
 // Capability gates below accept either the OpenRouter alias (`anthropic/claude-…`)
 // or the bare Anthropic ID — strip the prefix here so every gate is called the
-// same way regardless of which form the caller has on hand.
+// same way regardless of which form the caller has on hand. Drop *any* provider
+// prefix (everything up to the last "/"), not just "anthropic/", so a model
+// routed through another provider (e.g. "openrouter/anthropic/claude-fable-5")
+// still matches the `^claude-…` regexes instead of silently slipping past them.
 function bareModelId(modelId: string): string {
-  const id = modelId.startsWith('anthropic/')
-    ? modelId.slice('anthropic/'.length)
-    : modelId;
+  const id = modelId.slice(modelId.lastIndexOf('/') + 1);
   // Anthropic's API uses dashes ("claude-opus-4-6"); the OpenRouter alias
   // uses dots ("claude-opus-4.6"). Normalize so the version regexes match
   // either form.
@@ -473,12 +474,18 @@ function usesAdaptiveAnthropicThinking(modelId: string) {
   return match ? Number(match[1]) >= 6 : false;
 }
 
+// The reasoning-tier Claude 5 models (Fable, Mythos) reject a forced
+// `tool_choice` outright ("tool_choice forces tool use is not compatible with
+// this model"). Other Claude 5 tiers — notably Sonnet 5 — accept a forced
+// tool_choice on the first-party API, provided thinking is disabled for that
+// step (see the per-step override in the parametric flow).
+function rejectsForcedToolChoice(modelId: string): boolean {
+  return /^claude-(?:fable|mythos)\b/.test(bareModelId(modelId));
+}
+
 // Whether a model accepts a forced `tool_choice` (type: "tool" / "any").
-// The Claude 5 generation rejects forced tool use with "tool_choice forces
-// tool use is not compatible with this model" — for those we must fall back
-// to auto tool choice and steer via the system prompt.
 function supportsForcedToolChoice(modelId: string): boolean {
-  return !isClaude5Model(modelId);
+  return !rejectsForcedToolChoice(modelId);
 }
 
 function priceFor(modelId: string) {
@@ -1208,19 +1215,21 @@ export async function handleAiChatRequest(req: Request) {
     thinking: thinkingEnabled,
   };
 
-  // Parametric step 0 normally pins `build_parametric_model` via a forced
-  // tool_choice. Two cases fall back to auto tool choice instead — where the
-  // model *might* answer with text instead of building:
-  //   1. Models that reject forced tool use outright (Claude 5 — Fable/Mythos).
-  //   2. Any turn with extended thinking enabled — Anthropic rejects a forced
-  //      tool_choice while thinking is on ("Thinking may not be enabled when
-  //      tool_choice forces tool use"). Adaptive thinking is on by default for
-  //      Claude 5 / Opus·Sonnet 4.6+, so those land here too.
-  // Both rely on the system prompt to steer the build tool call. Track the
-  // fallback so we can detect — and log — a turn that finished without ever
-  // calling the build tool.
-  const forceBuildToolChoice =
-    supportsForcedToolChoice(actualModelId) && !thinkingEnabled;
+  // Parametric step 0 pins `build_parametric_model` via a forced tool_choice
+  // whenever the model accepts one. Anthropic rejects a forced tool_choice
+  // while thinking is on ("Thinking may not be enabled when tool_choice forces
+  // tool use"), so for thinking-enabled Anthropic models we disable thinking
+  // for just that first step (see `prepareStep` below); later steps keep their
+  // adaptive thinking. Only the reasoning-tier Claude 5 models (Fable/Mythos),
+  // which reject forced tool use outright, fall back to auto tool choice and
+  // rely on the system prompt to steer the build call — a fragile path where
+  // the model *might* answer with text instead of building. Track that fallback
+  // so we can detect — and log — a turn that finished without building.
+  const forceBuildToolChoice = supportsForcedToolChoice(actualModelId);
+  const disableThinkingForBuildStep =
+    forceBuildToolChoice &&
+    thinkingEnabled &&
+    resolvedProvider === 'anthropic';
   const usingAutoToolChoiceFallback =
     conversation.type === 'parametric' &&
     leafRole === 'user' &&
@@ -1238,10 +1247,14 @@ export async function handleAiChatRequest(req: Request) {
         leafRole === 'user' &&
         stepNumber === 0
       ) {
-        // Restrict the toolset to the build tool on the first step. Turns that
-        // accept a forced tool_choice get it pinned; turns that reject forced
-        // tool use (Claude 5, or any thinking-enabled turn) fall back to auto
-        // and rely on the system prompt to call build_parametric_model.
+        // Restrict the toolset to the build tool on the first step. Models that
+        // accept a forced tool_choice get it pinned; the reasoning-tier Claude 5
+        // models (Fable/Mythos) reject forced tool use and fall back to auto,
+        // relying on the system prompt to call build_parametric_model.
+        // When pinning the tool on a thinking-enabled Anthropic model, thinking
+        // must be off for this step (Anthropic rejects forced tool use while
+        // thinking is on) — disable it here only; later steps keep the adaptive
+        // thinking configured in buildChatModel.
         return {
           activeTools: ['build_parametric_model' as never],
           ...(forceBuildToolChoice
@@ -1250,6 +1263,13 @@ export async function handleAiChatRequest(req: Request) {
                   type: 'tool' as const,
                   toolName: 'build_parametric_model' as never,
                 },
+                ...(disableThinkingForBuildStep
+                  ? {
+                      providerOptions: {
+                        anthropic: { thinking: { type: 'disabled' as const } },
+                      },
+                    }
+                  : {}),
               }
             : {}),
         };
