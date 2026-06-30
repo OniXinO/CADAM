@@ -53,6 +53,7 @@ const MODEL_PRICES: Record<
 > = {
   // Anthropic
   'anthropic/claude-opus-4.8': { input: 5, output: 25 },
+  'anthropic/claude-sonnet-5': { input: 2, output: 10 },
   'anthropic/claude-opus-4': { input: 15, output: 75 },
   'anthropic/claude-sonnet-4.6': { input: 3, output: 15 },
   'anthropic/claude-sonnet-4.5': { input: 3, output: 15 },
