@@ -255,6 +255,15 @@ export const PARAMETRIC_MODELS: ModelConfig[] = [
     supportsVision: true,
   },
   {
+    id: 'anthropic/claude-sonnet-5',
+    name: 'Claude Sonnet 5',
+    description: 'Frontier Anthropic model balancing speed and reasoning',
+    provider: 'Anthropic',
+    supportsTools: true,
+    supportsThinking: true,
+    supportsVision: true,
+  },
+  {
     id: 'openai/gpt-5.5',
     name: 'GPT-5.5',
     description: 'Latest OpenAI model for reliable CAD generation',
