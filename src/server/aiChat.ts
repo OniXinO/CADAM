@@ -444,11 +444,12 @@ function buildChatModel(
 
 // Capability gates below accept either the OpenRouter alias (`anthropic/claude-…`)
 // or the bare Anthropic ID — strip the prefix here so every gate is called the
-// same way regardless of which form the caller has on hand.
+// same way regardless of which form the caller has on hand. Drop *any* provider
+// prefix (everything up to the last "/"), not just "anthropic/", so a model
+// routed through another provider (e.g. "openrouter/anthropic/claude-fable-5")
+// still matches the `^claude-…` regexes instead of silently slipping past them.
 function bareModelId(modelId: string): string {
-  const id = modelId.startsWith('anthropic/')
-    ? modelId.slice('anthropic/'.length)
-    : modelId;
+  const id = modelId.slice(modelId.lastIndexOf('/') + 1);
   // Anthropic's API uses dashes ("claude-opus-4-6"); the OpenRouter alias
   // uses dots ("claude-opus-4.6"). Normalize so the version regexes match
   // either form.
