@@ -193,7 +193,7 @@ export function ModelSelector({
           <DropdownMenuItem
             key={model.id}
             className={cn(
-              'cursor-pointer rounded-md bg-adam-neutral-700 px-4 py-3 transition-colors duration-150 focus:bg-adam-bg-secondary-dark',
+              'cursor-pointer rounded-md bg-adam-neutral-700 px-4 py-2 transition-colors duration-150 focus:bg-adam-bg-secondary-dark',
               selectedModel === model.id && 'bg-adam-neutral-800',
               !!model.disabled && 'cursor-not-allowed opacity-50',
             )}
@@ -204,26 +204,14 @@ export function ModelSelector({
             }}
             disabled={!!model.disabled}
           >
-            <div className="flex-1">
-              <div className="flex items-center">
-                <span
-                  className={cn(
-                    'font-medium',
-                    focused ? 'text-white' : 'text-adam-text-primary',
-                  )}
-                >
-                  {model.name}
-                </span>
-              </div>
-              <p
-                className={cn(
-                  'mt-0.5 text-xs',
-                  focused ? 'text-white' : 'text-gray-400',
-                )}
-              >
-                {model.description}
-              </p>
-            </div>
+            <span
+              className={cn(
+                'text-sm font-medium',
+                focused ? 'text-white' : 'text-adam-text-primary',
+              )}
+            >
+              {model.name}
+            </span>
           </DropdownMenuItem>
         ))}
       </DropdownMenuContent>
