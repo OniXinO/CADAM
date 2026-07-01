@@ -248,7 +248,7 @@ export const PARAMETRIC_MODELS: ModelConfig[] = [
   {
     id: 'anthropic/claude-fable-5',
     name: 'Claude Fable 5',
-    description: 'Most intelligent Anthropic model for complex reasoning',
+    description: 'Most capable Anthropic model; best reasoning at highest cost',
     provider: 'Anthropic',
     supportsTools: true,
     supportsThinking: true,
@@ -257,7 +257,7 @@ export const PARAMETRIC_MODELS: ModelConfig[] = [
   {
     id: 'anthropic/claude-opus-4.8',
     name: 'Claude Opus 4.8',
-    description: 'Most powerful Anthropic model for complex reasoning',
+    description: 'Powerful Anthropic model for complex reasoning',
     provider: 'Anthropic',
     supportsTools: true,
     supportsThinking: true,
