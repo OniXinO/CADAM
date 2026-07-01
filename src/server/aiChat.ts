@@ -52,6 +52,7 @@ const MODEL_PRICES: Record<
   { input: number; output: number; cacheRead?: number; cacheWrite?: number }
 > = {
   // Anthropic
+  'anthropic/claude-fable-5': { input: 10, output: 50 },
   'anthropic/claude-opus-4.8': { input: 5, output: 25 },
   'anthropic/claude-sonnet-5': { input: 2, output: 10 },
   'anthropic/claude-opus-4': { input: 15, output: 75 },
@@ -1227,9 +1228,7 @@ export async function handleAiChatRequest(req: Request) {
   // so we can detect — and log — a turn that finished without building.
   const forceBuildToolChoice = supportsForcedToolChoice(actualModelId);
   const disableThinkingForBuildStep =
-    forceBuildToolChoice &&
-    thinkingEnabled &&
-    resolvedProvider === 'anthropic';
+    forceBuildToolChoice && thinkingEnabled && resolvedProvider === 'anthropic';
   const usingAutoToolChoiceFallback =
     conversation.type === 'parametric' &&
     leafRole === 'user' &&
